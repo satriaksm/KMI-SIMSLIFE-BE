@@ -44,23 +44,21 @@ jobs:
             whoami
             hostname
 
-            # Pastikan kepemilikan dan izin benar
+            # Pastikan kepemilikan & izin benar (jika perlu)
             sudo chown -R "$USER:$USER" "$REPO_DIR"
-            git config --global --add safe.directory "$REPO_DIR"
 
             cd "$REPO_DIR"
             pwd
 
-            test -d .git || { echo "Not a git repo at $(pwd)"; exit 1; }
-            git remote -v
-            git fetch --all --prune
-            git checkout -f staging
-            git reset --hard origin/staging
-            git clean -fd
+            # Pastikan folder penting ada
+            mkdir -p storage/{app,framework/{cache,sessions,views},logs} bootstrap/cache
 
+            # Install deps di server
             composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+
             php artisan migrate --force
             php artisan config:cache
             php artisan route:cache
+
             sudo systemctl reload php8.3-fpm || sudo systemctl restart php8.3-fpm
             sudo systemctl reload nginx || sudo systemctl restart nginx
