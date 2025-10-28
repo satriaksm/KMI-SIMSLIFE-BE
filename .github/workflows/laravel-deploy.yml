@@ -12,7 +12,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Upload hanya yang dibutuhkan (tanpa exclude)
+      - name: Prepare target dir
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script_stop: true
+          script: |
+            sudo mkdir -p /var/www/KMI-SIMSLIFE-BE
+            sudo chown -R "$USER:$USER" /var/www/KMI-SIMSLIFE-BE
+
       - name: Upload app to server
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -21,20 +31,10 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           overwrite: true
           target: /var/www/KMI-SIMSLIFE-BE
-          source: |
-            app
-            bootstrap
-            config
-            database
-            public
-            resources
-            routes
-            artisan
-            composer.json
-            composer.lock
+          source: app,bootstrap,config,database,public,resources,routes,artisan,composer.json,composer.lock
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v0.1.8
+        uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
@@ -42,7 +42,6 @@ jobs:
           script_stop: true
           debug: true
           command_timeout: 30m
-        env:
           script: |
             set -Eeuo pipefail
             REPO_DIR=/var/www/KMI-SIMSLIFE-BE
@@ -53,12 +52,9 @@ jobs:
             sudo chown -R "$USER:$USER" "$REPO_DIR"
             cd "$REPO_DIR"
 
-            # Pastikan folder penting ada
             mkdir -p storage/{app,framework/{cache,sessions,views},logs} bootstrap/cache
 
-            # Install deps di server
             composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
-
             php artisan migrate --force
             php artisan config:cache
             php artisan route:cache
