@@ -12,21 +12,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+      # Upload hanya yang dibutuhkan (tanpa exclude)
+      - name: Upload app to server
+        uses: appleboy/scp-action@v0.1.7
         with:
-          php-version: "8.3"
-          extensions: mbstring, bcmath, xml, ctype, json, curl, tokenizer, mysql
-          coverage: none
-
-      - name: Install Composer dependencies
-        run: |
-          composer install --no-dev --optimize-autoloader
-
-      - name: Generate Laravel key & optimize
-        run: |
-          php artisan config:cache
-          php artisan route:cache
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          overwrite: true
+          target: /var/www/KMI-SIMSLIFE-BE
+          source: |
+            app
+            bootstrap
+            config
+            database
+            public
+            resources
+            routes
+            artisan
+            composer.json
+            composer.lock
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v0.1.8
@@ -37,6 +42,7 @@ jobs:
           script_stop: true
           debug: true
           command_timeout: 30m
+        env:
           script: |
             set -Eeuo pipefail
             REPO_DIR=/var/www/KMI-SIMSLIFE-BE
@@ -44,11 +50,8 @@ jobs:
             whoami
             hostname
 
-            # Pastikan kepemilikan & izin benar (jika perlu)
             sudo chown -R "$USER:$USER" "$REPO_DIR"
-
             cd "$REPO_DIR"
-            pwd
 
             # Pastikan folder penting ada
             mkdir -p storage/{app,framework/{cache,sessions,views},logs} bootstrap/cache
