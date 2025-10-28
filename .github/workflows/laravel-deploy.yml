@@ -39,17 +39,25 @@ jobs:
           command_timeout: 30m
           script: |
             set -Eeuo pipefail
+            REPO_DIR=/var/www/KMI-SIMSLIFE-BE
+
             whoami
             hostname
-            cd /var/www/KMI-SIMSLIFE-BE
+
+            # Pastikan kepemilikan dan izin benar
+            sudo chown -R "$USER:$USER" "$REPO_DIR"
+            git config --global --add safe.directory "$REPO_DIR"
+
+            cd "$REPO_DIR"
             pwd
-            # Pastikan ini repo git dan remote benar
+
             test -d .git || { echo "Not a git repo at $(pwd)"; exit 1; }
             git remote -v
             git fetch --all --prune
             git checkout -f staging
             git reset --hard origin/staging
             git clean -fd
+
             composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
             php artisan migrate --force
             php artisan config:cache
