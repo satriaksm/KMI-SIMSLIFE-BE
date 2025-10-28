@@ -27,7 +27,6 @@ jobs:
         run: |
           php artisan config:cache
           php artisan route:cache
-          php artisan view:cache
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v0.1.8
