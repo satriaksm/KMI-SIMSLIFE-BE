@@ -6,7 +6,7 @@ use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 
 Route::get('/', function () {
-    return response()->json(['status' => 'API is running']);
+    return response()->json(['status' => 'API is & CI/CD running']);
 });
 
 Route::prefix('auth')->group(function () {
