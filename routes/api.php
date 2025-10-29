@@ -4,11 +4,14 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
+use Illuminate\Container\Attributes\Auth;
 
+// Debug
 Route::get('/', function () {
     return response()->json(['status' => 'API is & CI/CD running']);
 });
 
+// Authencation Routes
 Route::prefix('auth')->group(function () {
     // Public routes
     Route::post('/register', [AuthController::class, 'register'])->name('auth.register');
@@ -32,4 +35,13 @@ Route::prefix('auth')->group(function () {
     Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
         Route::get('/me', [AuthController::class, 'me'])->name('auth.me');
     });
+
+    Route::middleware(['auth:sanctum', 'role:customer'])->group(function () {
+        Route::post('/merchant-register', [AuthController::class, 'registerMerchant'])->name('merchants.register');
+    });
+});
+
+// Views Routes
+Route::middleware(['auth:sanctum'])->group(function () {
+
 });
