@@ -11,19 +11,17 @@ class RoleMiddleware
     public function handle(Request $request, Closure $next, string $roles): Response
     {
         $user = $request->user();
-        if (! $user) {
+        if (!$user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        // Support "admin|manager" or "admin,manager"
+        // Support "admin|manager" atau "admin,manager"
         $required = preg_split('/[|,]/', $roles) ?: [];
         $required = array_values(array_filter(array_map('trim', $required)));
 
-        if (! $user->relationLoaded('roles')) {
-            $user->load('roles');
-        }
-
-        if (! $user->hasAnyRole($required)) {
+        // Cek role tanpa dependency ke hasAnyRole()
+        $hasRole = $user->roles()->whereIn('name', $required)->exists();
+        if (!$hasRole) {
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 

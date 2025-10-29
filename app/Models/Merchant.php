@@ -19,6 +19,8 @@ class Merchant extends Model
         'name',
         'description',
         'logo_path',
+        'status',
+        'response_at',
     ];
 
     // Relasi ke user

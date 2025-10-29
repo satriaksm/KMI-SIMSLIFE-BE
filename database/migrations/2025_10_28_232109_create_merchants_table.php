@@ -18,6 +18,8 @@ return new class extends Migration {
             $table->string('name');
             $table->string('description')->nullable();
             $table->string('logo_path')->nullable();
+            $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');
+            $table->timestamp('response_at')->nullable();
             $table->timestamps();
         });
     }
