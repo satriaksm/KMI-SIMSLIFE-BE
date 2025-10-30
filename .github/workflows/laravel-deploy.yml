@@ -34,7 +34,7 @@ jobs:
           source: app,bootstrap,config,database,public,resources,routes,artisan,composer.json,composer.lock
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
@@ -45,17 +45,24 @@ jobs:
           script: |
             set -Eeuo pipefail
             REPO_DIR=/var/www/KMI-SIMSLIFE-BE
-
-            whoami
-            hostname
-
-            sudo chown -R "$USER:$USER" "$REPO_DIR"
             cd "$REPO_DIR"
 
             mkdir -p storage/{app,framework/{cache,sessions,views},logs} bootstrap/cache
 
-            composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+            composer install --prefer-dist --no-interaction --optimize-autoloader
+
+            # penting: paksa Laravel baca .env terbaru
+            php artisan optimize:clear
+
+            # set permission sebelum artisan jalan
+            sudo chown -R www-data:www-data storage bootstrap/cache
+            sudo find storage -type d -exec chmod 775 {} \;
+            sudo find storage -type f -exec chmod 664 {} \;
+            sudo chmod -R ug+rwX bootstrap/cache
+
+            # migrate (tanpa seeder/factory di production)
             php artisan migrate --force
+
             php artisan config:cache
             php artisan route:cache
 
