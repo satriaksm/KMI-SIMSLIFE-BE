@@ -30,10 +30,21 @@ class PasswordResetController extends Controller
                 ->header('Retry-After', $seconds);
         }
 
-        // Hindari user enumeration: selalu 200 bila bukan throttled
-        return $status === Password::RESET_LINK_SENT
-            ? response()->json(['message' => __('passwords.sent')])
-            : response()->json(['message' => 'Tautan reset kata sandi telah dikirim.']);
+        if ($status === Password::INVALID_USER) {
+            return response()->json([
+                'message' => 'Email tidak terdaftar.',
+            ], 404);
+        }
+
+        if ($status === Password::RESET_LINK_SENT) {
+            return response()->json([
+                'message' => __('passwords.sent'),
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Tautan reset kata sandi telah dikirim.',
+        ]);
     }
 
     public function reset(Request $request)
