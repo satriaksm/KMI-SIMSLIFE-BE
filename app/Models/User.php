@@ -19,6 +19,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'phone',
         'password',
         'profile_picture_path',
+        'nik',
         'status',
     ];
 

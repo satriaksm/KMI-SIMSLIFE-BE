@@ -18,9 +18,33 @@ class PasswordResetController extends Controller
 
         $status = Password::sendResetLink($request->only('email'));
 
-        return $status === Password::RESET_LINK_SENT
-            ? response()->json(['message' => __($status)])
-            : response()->json(['message' => __($status)], 422);
+        if ($status === Password::RESET_THROTTLED) {
+            $broker = config('auth.defaults.passwords', 'users');
+            $seconds = (int) config("auth.passwords.{$broker}.throttle", 60);
+
+            return response()
+                ->json([
+                    'message' => __('passwords.throttled'),
+                    'retry_after' => $seconds,
+                ], 429)
+                ->header('Retry-After', $seconds);
+        }
+
+        if ($status === Password::INVALID_USER) {
+            return response()->json([
+                'message' => 'Email tidak terdaftar.',
+            ], 404);
+        }
+
+        if ($status === Password::RESET_LINK_SENT) {
+            return response()->json([
+                'message' => __('passwords.sent'),
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Tautan reset kata sandi telah dikirim.',
+        ]);
     }
 
     public function reset(Request $request)
@@ -34,7 +58,7 @@ class PasswordResetController extends Controller
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
             function ($user, $password) {
-                $user->forceFill(['password' => $password]);
+                $user->forceFill(['password' => Hash::make($password)]);
                 $user->setRememberToken(Str::random(60));
                 $user->save();
 

@@ -12,36 +12,54 @@ class EmailVerificationController extends Controller
 {
     public function verify(Request $request, $id, $hash)
     {
+        $frontend = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+
+        // Validasi signature dari email
+        if (!URL::hasValidSignature($request)) {
+            return redirect()->away($frontend . '/verify-email?status=invalid');
+        }
+
         $user = User::findOrFail($id);
 
+        // Cek hash email
         if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
-            return response()->json(['message' => 'Invalid verification link.'], 403);
+            return redirect()->away($frontend . '/verify-email?status=invalid');
         }
 
+        // Jika sudah pernah terverifikasi
         if ($user->hasVerifiedEmail()) {
-            return response()->json(['message' => 'Email already verified.']);
+            return redirect()->away($frontend . '/verify-email?status=already_verified&email=' . urlencode($user->email));
         }
 
+        // Tandai sebagai terverifikasi
         if ($user->markEmailAsVerified()) {
             event(new Verified($user));
         }
 
-        return response()->json(['message' => 'Email verified.']);
+        return redirect()->away($frontend . '/verify-email?status=verified&email=' . urlencode($user->email));
     }
 
     public function send(Request $request)
     {
-        if ($request->user()->hasVerifiedEmail()) {
-            return response()->json(['message' => 'Email already verified.']);
-        }
-
-        // Optional: ensure request is from a signed route to avoid abuse
-        if (!URL::hasValidSignature($request)) {
-            // If you keep 'signed' middleware on the route, this check is redundant
-        }
-
         $request->user()->sendEmailVerificationNotification();
+        return response()->json(['message' => 'Verification link sent.'], 202);
+    }
 
-        return response()->json(['message' => 'Verification link sent.']);
+    public function resendPublic(Request $request)
+    {
+        $request->validate(['email' => ['required', 'email']]);
+        $user = User::where('email', $request->input('email'))->first();
+
+        // Samakan respons agar tidak bocorkan apakah email terdaftar
+        if (!$user) {
+            return response()->json(['message' => 'If the email exists, a verification link has been sent.'], 200);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json(['message' => 'Email already verified.'], 200);
+        }
+
+        $user->sendEmailVerificationNotification();
+        return response()->json(['message' => 'Verification link sent.'], 202);
     }
 }

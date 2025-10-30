@@ -2,46 +2,74 @@
 
 namespace App\Http\Controllers\Auth;
 
-use Illuminate\Routing\Controller as Controller;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Auth\Events\Registered;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Routing\Controller as Controller;
+use Illuminate\Support\Facades\Validator;
 
 class AuthController extends Controller
 {
+
+
     public function register(Request $request)
     {
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
-            'phone' => ['nullable', 'string', 'max:30'],
-            'password' => ['required', 'confirmed', Password::min(8)],
-            'role' => ['nullable', 'string'], // optional: name/slug of role to attach
-        ]);
+        $validator = Validator::make(
+            $request->all(),
+            [
+                'name' => ['required', 'string', 'max:255'],
+                'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+                'phone' => ['nullable', 'string', 'max:13'],
+                'nik' => ['required', 'string', 'size:16', 'unique:users,nik'],
+                'password' => [
+                    'required',
+                    'confirmed',
+                    Password::min(8),
+                    'regex:/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_]).+$/',
+                ],
+            ],
+            [
+                'name.required' => 'Nama wajib diisi.',
+                'email.required' => 'Email wajib diisi.',
+                'email.email' => 'Format email tidak valid.',
+                'email.unique' => 'Email sudah terdaftar.',
+                'password.required' => 'Password wajib diisi.',
+                'password.confirmed' => 'Konfirmasi password tidak cocok.',
+                'password.min' => 'Password minimal 8 karakter.',
+                'password.regex' => 'Password harus mengandung huruf besar, angka, dan simbol (!@#$%^&*-_).',
+                'nik.size' => 'NIK harus 16 karakter.',
+            ]
+        );
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Data yang diberikan tidak valid.',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $data = $validator->validated();
 
         $user = User::create([
             'name' => $data['name'],
             'email' => $data['email'],
             'phone' => $data['phone'] ?? null,
-            'password' => $data['password'],
+            'nik' => $data['nik'],
+            'password' => Hash::make($data['password']),
             'status' => 'active',
         ]);
 
-        // Attach default role by name only
-        $roleKey = $data['role'] ?? 'user';
-        $role = Role::where('name', $roleKey)->first();
-        if ($role) {
-            $user->roles()->attach($role->id);
-        }
+        // Tetapkan role default 'customer'
+        $role = Role::firstOrCreate(['name' => 'customer']);
+        $user->roles()->syncWithoutDetaching([$role->id]);
 
-        // Send email verification
-        $user->sendEmailVerificationNotification();
+        event(new Registered($user)); // kirim email verifikasi
 
         return response()->json([
-            'message' => 'Registered. Please verify your email.',
-            'user' => $user->load('roles'),
+            'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',
         ], 201);
     }
 
@@ -56,10 +84,16 @@ class AuthController extends Controller
         $user = User::with('roles')->where('email', $credentials['email'])->first();
 
         if (!$user || !Hash::check($credentials['password'], $user->password)) {
-            return response()->json(['message' => 'Invalid credentials.'], 422);
+            return response()->json(['message' => 'Kredensial tidak valid.'], 422);
         }
 
-        // Create token abilities from role names only
+        if (!$user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email belum terverifikasi.',
+                'need_verify' => true,
+            ], 403);
+        }
+
         $abilities = $user->roles->map(fn($r) => 'role:' . strtolower($r->name))->all();
         if (empty($abilities)) {
             $abilities = ['*'];
