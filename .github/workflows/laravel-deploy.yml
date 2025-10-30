@@ -13,14 +13,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Prepare target dir
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script_stop: true
           script: |
+            set -Eeuo pipefail
             sudo mkdir -p /var/www/KMI-SIMSLIFE-BE
+            # berikan ke user SSH agar langkah berikut bisa tulis
             sudo chown -R "$USER:$USER" /var/www/KMI-SIMSLIFE-BE
 
       - name: Upload app to server
@@ -47,24 +49,31 @@ jobs:
             REPO_DIR=/var/www/KMI-SIMSLIFE-BE
             cd "$REPO_DIR"
 
+            # 1) Siapkan folder yang diperlukan + izin sebelum composer/artisan
             mkdir -p storage/{app,framework/{cache,sessions,views},logs} bootstrap/cache
+            # pastikan user SSH bisa tulis saat menjalankan artisan/composer
+            chown -R "$USER:$USER" storage bootstrap/cache
+            chmod -R ug+rwX storage bootstrap/cache
+            touch storage/logs/laravel.log || true
+            chmod 664 storage/logs/laravel.log || true
 
-            composer install --prefer-dist --no-interaction --optimize-autoloader
+            # 2) Install vendor (package:discover akan menulis ke bootstrap/cache)
+            composer install --prefer-dist --no-interaction --optimize-autoloader --no-dev
 
-            # penting: paksa Laravel baca .env terbaru
+            # 3) Jalankan artisan (cache clear lalu migrate)
             php artisan optimize:clear
+            php artisan migrate --force
 
-            # set permission sebelum artisan jalan
+            # 4) Build cache untuk performa
+            php artisan config:cache
+            php artisan route:cache
+
+            # 5) Serahkan izin runtime ke www-data (PHP-FPM)
             sudo chown -R www-data:www-data storage bootstrap/cache
             sudo find storage -type d -exec chmod 775 {} \;
             sudo find storage -type f -exec chmod 664 {} \;
             sudo chmod -R ug+rwX bootstrap/cache
 
-            # migrate (tanpa seeder/factory di production)
-            php artisan migrate --force
-
-            php artisan config:cache
-            php artisan route:cache
-
+            # 6) Reload services
             sudo systemctl reload php8.3-fpm || sudo systemctl restart php8.3-fpm
             sudo systemctl reload nginx || sudo systemctl restart nginx
