@@ -19,7 +19,7 @@ Route::prefix('auth')->group(function () {
     Route::post('/reset-password', [PasswordResetController::class, 'reset'])->name('password.update');
     Route::get('/verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
         ->middleware(['signed', 'throttle:6,1'])
-        ->name('verification.verify');
+        ->name('api.verification.verify');
 
     // Protected
     Route::middleware('auth:sanctum')->group(function () {
@@ -58,4 +58,3 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('/merchants/{merchant}/reject', [MerchantController::class, 'reject'])->name('merchants.reject');
     });
 });
-
