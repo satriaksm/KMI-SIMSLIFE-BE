@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Auth\Notifications\ResetPassword;
@@ -22,6 +23,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if (app()->environment('production')) {
+            URL::forceScheme('https'); // pastikan signed URL pakai https
+        }
+
         // Verifikasi Email (pakai URL signed default dari Laravel)
         VerifyEmail::toMailUsing(function ($notifiable, string $url) {
             return (new MailMessage)
