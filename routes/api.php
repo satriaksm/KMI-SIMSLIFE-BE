@@ -7,8 +7,9 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\SegmentationController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
+use App\Http\Controllers\CommunityPostController;
 
-Route::get('/', fn() => response()->json(['status' => 'API is & CI/CD running']));
+Route::get('/', fn() => response()->json(['status' => 'API & CI/CD are running']));
 
 // Auth routes (JSON only)
 Route::prefix('auth')->group(function () {
@@ -57,4 +58,16 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('/merchants/{merchant}/approve', [MerchantController::class, 'approve'])->name('merchants.approve');
         Route::post('/merchants/{merchant}/reject', [MerchantController::class, 'reject'])->name('merchants.reject');
     });
+
+    // Community Posts
+    Route::prefix('community')->group(function () {
+        Route::get('/posts', [CommunityPostController::class, 'index']);
+        Route::get('/posts/popular', [CommunityPostController::class, 'popular']);
+        Route::post('/posts', [CommunityPostController::class, 'store']);
+        Route::get('/posts/{slug}', [CommunityPostController::class, 'show']);
+        Route::put('/posts/{id}', [CommunityPostController::class, 'update']);
+        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy']);
+        Route::get('/my-posts', [CommunityPostController::class, 'myPosts']);
+    });
+
 });
