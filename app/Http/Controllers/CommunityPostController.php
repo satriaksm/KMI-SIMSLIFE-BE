@@ -3,10 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\CommunityPost;
+use App\Models\CommunityPostImage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 
 class CommunityPostController
 {
@@ -50,7 +53,11 @@ class CommunityPostController
      */
     public function index(Request $request)
     {
-        $query = CommunityPost::with(['user'])
+        $query = CommunityPost::with([
+            'user:id,name,profile_picture_path', 
+            'images' => function ($query) {
+                $query->ordered()->limit(3);
+            }])
             ->published()
             ->recent();
 
@@ -130,11 +137,17 @@ class CommunityPostController
             'post_title' => 'required|string|max:255',
             'post_content' => 'required|string',
             'post_status' => 'sometimes|in:draft,published,archived',
+            'images' => 'nullable|array|max:5|',
+            'images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:2048',
         ], [
             'post_title.required' => 'The post title field is required.',
             'post_title.max' => 'The post title must not exceed 255 characters.',
             'post_content.required' => 'The post content field is required.',
             'post_status.in' => 'Invalid post status. Must be draft, published, or archived.',
+            'images.max' => 'You can upload maximum 5 image per post',
+            'images.*.image' => 'Each file must be an image.',
+            'images.*.mimes' => 'Images must be in JPEG, PNG, JPG, GIF, or WebP format.',
+            'images.*.max' => 'Each image must not exceed 2MB.',
         ]);
 
         if ($validator->fails()) {
@@ -153,17 +166,27 @@ class CommunityPostController
                 'post_status' => $request->post_status ?? 'published',
             ]);
 
-            // Load relationships
-            $post->load('user:id,name,profile_picture_path');
+            if ($request->hasFile('images')) {
+                $this->uploadPostImages($post, $request->file('images'));
+            }
 
-            $resource = $this->formatPostResource($post);
+            // Load relationships
+            $post->load([
+                'user:id,name,profile_picture_path',
+                'images' => fn($q) => $q->ordered()
+            ]);
+
+            $resource = $this->formatPostResource($post, true);
 
             return response()->json($resource, 201)
                 ->header('Location', route('community.posts.show', ['slug' => $post->post_slug]));
 
         } catch (\Exception $e) {
+            if (isset($post)) {
+                $post->delete();
+            }
+
             return response()->json([
-                'success' => false,
                 'message' => 'Failed to create post',
                 'error' => $e->getMessage(),
             ], 500);
@@ -208,7 +231,10 @@ class CommunityPostController
     public function show($slug)
     {
 
-        $post = CommunityPost::with(['user:id,name,profile_picture_path'])
+        $post = CommunityPost::with([
+            'user:id,name,profile_picture_path',
+            'images' => fn($q) => $q->ordered()
+            ])
             ->where('post_slug', $slug)
             ->published()
             ->first();
@@ -294,6 +320,9 @@ class CommunityPostController
             'post_title' => 'sometimes|string|max:255',
             'post_content' => 'sometimes|string',
             'post_status' => 'sometimes|in:draft,published,archived',
+            'new_images' => 'nullable|array|max:5',
+            'remove_image_ids' => 'nullable|array',
+            'remove_image_ids.*' => 'integer|exists:community_post_images,id',
         ], [
             'post_title.max' => 'The post title must not exceed 255 characters.',
             'post_status.in' => 'Invalid post status. Must be draft, published, or archived.',
@@ -318,10 +347,35 @@ class CommunityPostController
                 $updateData['post_status'] = $request->postStatus;
             }
 
-            $post->update($updateData);
-            $post->load('user:id,name,profile_picture_path');
+            if (!empty($updateData)) {
+                $post->update($updateData);
+            }
 
-            return response()->json($this->formatPostResource($post), 200);
+            // Remove images if requested
+            if ($request->filled('remove_image_ids')) {
+                $this->removePostImages($post, $request->remove_image_ids);
+            }
+
+            // Upload new images
+            if ($request->hasFile('new_images')) {
+                $currentImagesCount = $post->images()->count();
+                $newImagesCount = count($request->file('new_images'));
+                
+                if ($currentImagesCount + $newImagesCount > 5) {
+                    return response()->json([
+                        'message' => 'Cannot upload new images. Maximum 5 images per post.',
+                    ], 422);
+                }
+
+                $this->uploadPostImages($post, $request->file('new_images'), null, $currentImagesCount);
+            }
+
+            $post->load([
+                'user:id,name,profile_picture_path',
+                'images' => fn($q) => $q->ordered()
+            ]);
+
+            return response()->json($this->formatPostResource($post, true), 200);
 
         } catch (\Exception $e) {
             return response()->json([
@@ -414,7 +468,10 @@ class CommunityPostController
     {
         $limit = min($request->get('limit', 10), 50);
 
-        $posts = CommunityPost::with(['user'])
+        $posts = CommunityPost::with([
+            'user:id,name,profile_picture_path',
+            'images' => fn($q) => $q->ordered()->limit(1)
+            ])
             ->published()
             ->popular($limit)
             ->get();
@@ -469,7 +526,10 @@ class CommunityPostController
     {
         $perPage = min($request->get('per_page', 15), 100);
 
-        $posts = CommunityPost::with(['user:id,name,profile_picture_path'])
+        $posts = CommunityPost::with([
+            'user:id,name,profile_picture_path',
+            'images' => fn($q) => $q->ordered()->limit(3)
+            ])
             ->where('user_id', Auth::id())
             ->latest()
             ->paginate($perPage);
@@ -492,13 +552,60 @@ class CommunityPostController
     }
 
         /**
-     * Format post resource for consistent API response.
+     * Upload images for a post.
      *
      * @param CommunityPost $post
-     * @param bool $includeAuthorLink
-     * @return array
+     * @param array $images
+     * @param string|null $altPrefix Optional prefix for alt text (defaults to slug of post title)
+     * @param int|null $startIndex Optional starting index to continue numbering (defaults to current images count)
+     * @return void
      */
-    private function formatPostResource(CommunityPost $post, bool $includeAuthorLink = false): array
+        private function uploadPostImages(CommunityPost $post, array $images, ?string $altPrefix = null, ?int $startIndex = null): void
+    {
+        // Determine starting count for image numbering
+        $currentCount = $startIndex !== null ? (int) $startIndex : $post->images()->count();
+        $postTitleSlug = $altPrefix ?? Str::slug($post->post_title);
+
+        foreach ($images as $index => $image) {
+            $filename = Str::random(20) . '.' . $image->getClientOriginalExtension();
+            $path = "community/posts/{$post->id}";
+            $fullPath = $image->storeAs($path, $filename, 'public');
+
+            // Auto-generate alt text: {altPrefix}-{n}
+            $imageNumber = $currentCount + $index + 1;
+            $altText = "{$postTitleSlug}-{$imageNumber}";
+
+            CommunityPostImage::create([
+                'post_id' => $post->id,
+                'post_image_path' => $fullPath,
+                'alt_text' => $altText,
+            ]);
+        }
+    }
+
+    /**
+     * Remove images from post
+     */
+    private function removePostImages(CommunityPost $post, array $imageIds): void
+    {
+        $images = CommunityPostImage::where('post_id', $post->id)
+            ->whereIn('id', $imageIds)
+            ->get();
+
+        foreach ($images as $image) {
+            // Delete file from storage
+            if (Storage::disk('public')->exists($image->post_image_path)) {
+                Storage::disk('public')->delete($image->post_image_path);
+            }
+            // Delete record
+            $image->delete();
+        }
+    }
+
+    /**
+     * Format post resource for consistent API response
+     */
+    private function formatPostResource(CommunityPost $post, bool $includeAllImages = false): array
     {
         $resource = [
             'id' => $post->id,
@@ -507,13 +614,15 @@ class CommunityPostController
             'post_slug' => $post->post_slug,
             'post_status' => $post->post_status,
             'views_count' => $post->views_count,
+            'images_count' => $post->images_count,
+            'thumbnail_url' => $post->thumbnail_url, // First image
             'created_at' => $post->created_at->toISOString(),
             'updated_at' => $post->updated_at->toISOString(),
             'author' => [
                 'id' => $post->user->id,
                 'name' => $post->user->name,
-                'profilePicture' => $post->user->profile_picture_path
-                    ? url('storage/' . $post->user->profile_picture_path)
+                'profile_picture' => $post->user->profile_picture_path
+                    ? asset('storage/' . $post->user->profile_picture_path)
                     : null,
             ],
             'links' => [
@@ -521,10 +630,24 @@ class CommunityPostController
             ],
         ];
 
-        if ($includeAuthorLink) {
+        // Include all images (for detail view)
+        if ($includeAllImages || $post->relationLoaded('images')) {
+            $resource['images'] = $post->images->map(function ($image, $index) {
+                return [
+                    'id' => $image->id,
+                    'image_url' => $image->image_url,
+                    'alt_text' => $image->alt_text,
+                    'is_primary' => $index === 0, // First image is primary/thumbnail
+                    'created_at' => $image->created_at->toISOString(),
+                ];
+            })->toArray();
+        }
+
+        if ($includeAllImages) {
             $resource['links']['author'] = url("/api/users/{$post->user->id}");
         }
 
         return $resource;
     }
+
 }

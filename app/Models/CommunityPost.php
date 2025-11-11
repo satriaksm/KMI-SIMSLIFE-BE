@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
+
 use Illuminate\Support\Str;
 
 class CommunityPost extends Model
@@ -27,6 +29,11 @@ class CommunityPost extends Model
         'updated_at' => 'datetime',
     ];
 
+    protected $appends = [
+        'images_count',
+        'thumbnail_url',
+    ];
+
     /**
      * Boot the model.
      */
@@ -34,7 +41,7 @@ class CommunityPost extends Model
     {
         parent::boot();
 
-        // Auto-generate slug on creating
+        // auto generate slug on creating
         static::creating(function ($post) {
             if (empty($post->post_slug)) {
                 $post->post_slug = Str::slug($post->post_title);
@@ -45,6 +52,15 @@ class CommunityPost extends Model
                     $count++;
                 }
             }
+        });
+
+        static::deleting(function ($post) {
+            foreach ($post->images as $image) {
+                if (Storage::disk('public')->exists($image->post_image_path)) {
+                    Storage::disk('public')->delete($image->post_image_path);
+                }
+            }
+            $post->images()->delete();
         });
     }
 
@@ -75,22 +91,30 @@ class CommunityPost extends Model
     //         ->latest();
     // }
 
-    // /**
-    //  * Get all images for the post.
-    //  */
-    // public function images(): HasMany
-    // {
-    //     return $this->hasMany(PostImage::class, 'post_id')->orderBy('sort_order');
-    // }
+    /**
+     * Get all images for the post.
+     */
+    public function images(): HasMany
+    {
+        return $this->hasMany(CommunityPostImage::class, 'post_id')->ordered();
+    }
 
+    /**
+     * Get images count.
+     */
+    public function getImagesCountAttribute(): int
+    {
+        return $this->images()->count();
+    }
 
-    // /**
-    //  * Get total comments count.
-    //  */
-    // public function getCommentsCountAttribute()
-    // {
-    //     return $this->comments()->count();
-    // }
+    /**
+     * Get thumbnail URL (first image).
+     */
+    public function getThumbnailUrlAttribute(): ?string
+    {
+        $firstImage = $this->images()->ordered()->first();
+        return $firstImage ? $firstImage->post_image_url : null;
+    }
 
     /**
      * Increment views count.
