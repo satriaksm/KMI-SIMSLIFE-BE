@@ -6,6 +6,7 @@ use App\Models\CommunityPost;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 class CommunityPostController
 {
@@ -63,13 +64,24 @@ class CommunityPostController
         }
 
         // Pagination
-        $perPage = $request->get('per_page', 15);
+        $perPage = min($request->get('per_page', 15), 100);
         $posts = $query->paginate($perPage);
 
         return response()->json([
-            'success' => true,
-            'data' => $posts,
-        ]);
+            'items' => $posts->map(fn($post) => $this->formatPostResource($post)),
+            'meta' => [
+                'current_page' => $posts->currentPage(),
+                'per_page' => $posts->perPage(),
+                'total' => $posts->total(),
+                'last_page' => $posts->lastPage(),
+            ],
+            'links' => [
+                'first' => $posts->url(1),
+                'last' => $posts->url($posts->lastPage()),
+                'prev' => $posts->previousPageUrl(),
+                'next' => $posts->nextPageUrl(),
+            ],
+        ], 200);
     }
 
     /**
@@ -118,6 +130,11 @@ class CommunityPostController
             'post_title' => 'required|string|max:255',
             'post_content' => 'required|string',
             'post_status' => 'sometimes|in:draft,published,archived',
+        ], [
+            'post_title.required' => 'The post title field is required.',
+            'post_title.max' => 'The post title must not exceed 255 characters.',
+            'post_content.required' => 'The post content field is required.',
+            'post_status.in' => 'Invalid post status. Must be draft, published, or archived.',
         ]);
 
         if ($validator->fails()) {
@@ -137,13 +154,12 @@ class CommunityPostController
             ]);
 
             // Load relationships
-            $post->load('user');
+            $post->load('user:id,name,profile_picture_path');
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Post created successfully',
-                'data' => $post,
-            ], 201);
+            $resource = $this->formatPostResource($post);
+
+            return response()->json($resource, 201)
+                ->header('Location', route('community.posts.show', ['slug' => $post->post_slug]));
 
         } catch (\Exception $e) {
             return response()->json([
@@ -191,10 +207,12 @@ class CommunityPostController
      */
     public function show($slug)
     {
-        $post = CommunityPost::with(['user'])
+
+        $post = CommunityPost::with(['user:id,name,profile_picture_path'])
             ->where('post_slug', $slug)
             ->published()
             ->first();
+
 
         if (!$post) {
             return response()->json([
@@ -205,11 +223,9 @@ class CommunityPostController
 
         // Increment views
         $post->incrementViews();
+        $post->refresh();
 
-        return response()->json([
-            'success' => true,
-            'data' => $post,
-        ]);
+        return response()->json($this->formatPostResource($post, true), 200);
     }
 
     /**
@@ -258,7 +274,13 @@ class CommunityPostController
      */
     public function update(Request $request, $id)
     {
-        $post = CommunityPost::findOrFail($id);
+        $post = CommunityPost::find($id);
+
+        if (!$post) {
+            return response()->json([
+                'message' => 'Post not found',
+            ], 404);
+        }
 
         // Check authorization
         if ($post->user_id !== Auth::id()) {
@@ -272,6 +294,9 @@ class CommunityPostController
             'post_title' => 'sometimes|string|max:255',
             'post_content' => 'sometimes|string',
             'post_status' => 'sometimes|in:draft,published,archived',
+        ], [
+            'post_title.max' => 'The post title must not exceed 255 characters.',
+            'post_status.in' => 'Invalid post status. Must be draft, published, or archived.',
         ]);
 
         if ($validator->fails()) {
@@ -282,19 +307,21 @@ class CommunityPostController
         }
 
         try {
-            $post->update($request->only([
-                'post_title',
-                'post_content',
-                'post_status',
-            ]));
+            $updateData = [];
+            if ($request->filled('postTitle')) {
+                $updateData['post_title'] = $request->postTitle;
+            }
+            if ($request->filled('postContent')) {
+                $updateData['post_content'] = $request->postContent;
+            }
+            if ($request->filled('postStatus')) {
+                $updateData['post_status'] = $request->postStatus;
+            }
 
-            $post->load('user');
+            $post->update($updateData);
+            $post->load('user:id,name,profile_picture_path');
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Post updated successfully',
-                'data' => $post,
-            ]);
+            return response()->json($this->formatPostResource($post), 200);
 
         } catch (\Exception $e) {
             return response()->json([
@@ -333,6 +360,12 @@ class CommunityPostController
     {
         $post = CommunityPost::findOrFail($id);
 
+        if (!$post) {
+            return response()->json([
+                'message' => 'Post not found',
+            ], 404);
+        }
+
         // Check authorization
         if ($post->user_id !== Auth::id()) {
             return response()->json([
@@ -343,14 +376,11 @@ class CommunityPostController
 
         $post->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Post deleted successfully',
-        ]);
+        return response()->json(null, 200);
     }
 
     /**
-     * Get Popular Posts
+     * Get Popular Post
      *
      * Returns a list of most viewed/popular community posts.
      *
@@ -390,9 +420,12 @@ class CommunityPostController
             ->get();
 
         return response()->json([
-            'success' => true,
-            'data' => $posts,
-        ]);
+            'items' => $posts->map(fn($post) => $this->formatPostResource($post)),
+            'meta' => [
+                'count' => $posts->count(),
+                'limit' => $limit,
+            ],
+        ], 200);
     }
 
     /**
@@ -434,15 +467,64 @@ class CommunityPostController
      */
     public function myPosts(Request $request)
     {
-        $query = CommunityPost::with(['user'])
-            ->where('user_id', Auth::id())
-            ->latest();
+        $perPage = min($request->get('per_page', 15), 100);
 
-        $posts = $query->paginate($request->get('per_page', 15));
+        $posts = CommunityPost::with(['user:id,name,profile_picture_path'])
+            ->where('user_id', Auth::id())
+            ->latest()
+            ->paginate($perPage);
 
         return response()->json([
-            'success' => true,
-            'data' => $posts,
-        ]);
+            'items' => $posts->map(fn($post) => $this->formatPostResource($post)),
+            'meta' => [
+                'current_page' => $posts->currentPage(),
+                'per_page' => $posts->perPage(),
+                'total' => $posts->total(),
+                'last_page' => $posts->lastPage(),
+            ],
+            'links' => [
+                'first' => $posts->url(1),
+                'last' => $posts->url($posts->lastPage()),
+                'prev' => $posts->previousPageUrl(),
+                'next' => $posts->nextPageUrl(),
+            ],
+        ], 200);
+    }
+
+        /**
+     * Format post resource for consistent API response.
+     *
+     * @param CommunityPost $post
+     * @param bool $includeAuthorLink
+     * @return array
+     */
+    private function formatPostResource(CommunityPost $post, bool $includeAuthorLink = false): array
+    {
+        $resource = [
+            'id' => $post->id,
+            'post_title' => $post->post_title,
+            'post_content' => $post->post_content,
+            'post_slug' => $post->post_slug,
+            'post_status' => $post->post_status,
+            'views_count' => $post->views_count,
+            'created_at' => $post->created_at->toISOString(),
+            'updated_at' => $post->updated_at->toISOString(),
+            'author' => [
+                'id' => $post->user->id,
+                'name' => $post->user->name,
+                'profilePicture' => $post->user->profile_picture_path
+                    ? url('storage/' . $post->user->profile_picture_path)
+                    : null,
+            ],
+            'links' => [
+                'self' => url("/api/community/posts/{$post->post_slug}"),
+            ],
+        ];
+
+        if ($includeAuthorLink) {
+            $resource['links']['author'] = url("/api/users/{$post->user->id}");
+        }
+
+        return $resource;
     }
 }

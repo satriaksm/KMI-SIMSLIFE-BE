@@ -61,13 +61,23 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     // Community Posts
     Route::prefix('community')->group(function () {
-        Route::get('/posts', [CommunityPostController::class, 'index']);
-        Route::get('/posts/popular', [CommunityPostController::class, 'popular']);
-        Route::post('/posts', [CommunityPostController::class, 'store']);
-        Route::get('/posts/{slug}', [CommunityPostController::class, 'show']);
-        Route::put('/posts/{id}', [CommunityPostController::class, 'update']);
-        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy']);
-        Route::get('/my-posts', [CommunityPostController::class, 'myPosts']);
+
+        Route::get('/posts/popular', [CommunityPostController::class, 'popular'])
+            ->name('community.posts.popular');
+        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
+            ->name('community.posts.my');
+
+        Route::get('/posts', [CommunityPostController::class, 'index'])
+            ->name('community.posts.index');
+        Route::post('/posts', [CommunityPostController::class, 'store'])
+            ->name('community.posts.store');
+
+        Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])
+            ->name('community.posts.show');
+        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
+            ->name('community.posts.update');
+        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
+            ->name('community.posts.destroy');
     });
 
 });
