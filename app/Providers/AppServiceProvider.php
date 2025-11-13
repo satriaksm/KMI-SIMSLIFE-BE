@@ -7,6 +7,7 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Database\Eloquent\Relations\Relation;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -49,17 +50,25 @@ class AppServiceProvider extends ServiceProvider
             $resetUrl = rtrim($frontend, '/') . '/reset-password/' . $token . '?email=' . urlencode($notifiable->email);
 
             return (new MailMessage)
-                ->subject('Reset Password Akun SUMILIR')
+                ->subject('Reset Kata Sandi Akun SUMILIR')
                 ->greeting('Halo, ' . ($notifiable->name ?? 'Pengguna'))
-                ->line('Kami menerima permintaan untuk mengatur ulang password akun Anda.')
+                ->line('Kami menerima permintaan untuk mengatur ulang kata sandi akun Anda.')
                 ->line('Klik tombol di bawah untuk melanjutkan.')
-                ->action('Atur Ulang Password', $resetUrl)
-                ->line('Abaikan email ini jika Anda tidak meminta reset password.')
+                ->action('Atur Ulang Kata Sandi', $resetUrl)
+                ->line('Abaikan email ini jika Anda tidak meminta reset kata sandi.')
                 ->salutation('Salam, Tim SUMILIR')
                 ->markdown('emails.auth.reset-password', [
                     'actionUrl' => $resetUrl,
                     'userName' => $notifiable->name ?? 'Pengguna',
                 ]);
         });
+
+        Relation::enforceMorphMap([
+            'user' => \App\Models\User::class,
+            'product' => \App\Models\Product::class,
+            'merchant' => \App\Models\Merchant::class,
+            'product_variant' => \App\Models\ProductVariant::class,
+            // 'service' => \App\Models\Service::class, // aktifkan jika model Service ada
+        ]);
     }
 }
