@@ -5,6 +5,49 @@ use Knuckles\Scribe\Config\Defaults;
 use Knuckles\Scribe\Config\AuthIn;
 use function Knuckles\Scribe\Config\{removeStrategies, configureStrategy};
 
+
+if (!class_exists(AuthIn::class)) {
+    // Fallback minimal config untuk production (tanpa Scribe)
+    return [
+        'title' => 'SUMILIR API Docs',
+        'description' => 'API documentation for the SUMILIR project',
+        'base_url' => config('app.url'),
+        'type' => 'laravel',
+        'theme' => 'default',
+        'static' => [
+            'output_path' => 'public/docs',
+        ],
+        'laravel' => [
+            'add_routes' => false, // Disable routes di production
+            'docs_url' => '/docs',
+            'assets_directory' => null,
+            'middleware' => [],
+        ],
+        'auth' => [
+            'enabled' => false,
+            'default' => false,
+            'in' => 'bearer',
+            'name' => 'key',
+            'use_value' => null,
+            'placeholder' => '{YOUR_AUTH_KEY}',
+            'extra_info' => '',
+        ],
+        'example_languages' => ['bash', 'javascript'],
+        'postman' => ['enabled' => false],
+        'openapi' => ['enabled' => false],
+        'groups' => ['default' => 'Endpoints', 'order' => []],
+        'logo' => false,
+        'last_updated' => 'Last updated: {date:F j, Y}',
+        'examples' => ['faker_seed' => 1234, 'models_source' => []],
+        'strategies' => [],
+        'database_connections_to_transact' => [config('database.default')],
+        'fractal' => ['serializer' => null],
+    ];
+}
+
+
+
+
 // Only the most common configs are shown. See the https://scribe.knuckles.wtf/laravel/reference/config for all.
 
 return [
