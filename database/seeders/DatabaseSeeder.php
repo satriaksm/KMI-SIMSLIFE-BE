@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
             RoleUserSeeder::class,
             SegmentationSeeder::class,
             CommunityPostSeeder::class,
+            PostCommentSeeder::class,
         ]);
     }
 }

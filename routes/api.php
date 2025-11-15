@@ -8,6 +8,7 @@ use App\Http\Controllers\SegmentationController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\CommunityPostController;
+use App\Http\Controllers\PostCommentController;
 
 Route::get('/', fn() => response()->json(['status' => 'API & CI/CD are running']));
 
@@ -59,25 +60,36 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('/merchants/{merchant}/reject', [MerchantController::class, 'reject'])->name('merchants.reject');
     });
 
-    // Community Posts
+    // Community Posts & Comments
     Route::prefix('community')->group(function () {
 
+        // Posts
         Route::get('/posts/popular', [CommunityPostController::class, 'popular'])
             ->name('community.posts.popular');
         Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
             ->name('community.posts.my');
-
         Route::get('/posts', [CommunityPostController::class, 'index'])
             ->name('community.posts.index');
         Route::post('/posts', [CommunityPostController::class, 'store'])
             ->name('community.posts.store');
-
         Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])
             ->name('community.posts.show');
         Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
             ->name('community.posts.update');
         Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
             ->name('community.posts.destroy');
-    });
 
+        Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])
+            ->name('community.comments.index');
+        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
+            ->name('community.comments.store');
+        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
+            ->name('community.comments.reply');
+        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
+            ->name('community.comments.destroy');
+        Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])
+            ->name('community.comments.replies');
+        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
+            ->name('community.comments.my-comments');
+    });
 });

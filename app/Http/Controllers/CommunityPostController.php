@@ -54,7 +54,7 @@ class CommunityPostController
     public function index(Request $request)
     {
         $query = CommunityPost::with([
-            'user:id,name,profile_picture_path', 
+            'user:id,name,profile_picture_path',
             'images' => function ($query) {
                 $query->ordered()->limit(3);
             }])
@@ -360,7 +360,7 @@ class CommunityPostController
             if ($request->hasFile('new_images')) {
                 $currentImagesCount = $post->images()->count();
                 $newImagesCount = count($request->file('new_images'));
-                
+
                 if ($currentImagesCount + $newImagesCount > 5) {
                     return response()->json([
                         'message' => 'Cannot upload new images. Maximum 5 images per post.',
@@ -430,7 +430,9 @@ class CommunityPostController
 
         $post->delete();
 
-        return response()->json(null, 200);
+        return response()->json([
+            'success' => true, 'message' => 'Post deleted successfully'
+        ], 200);
     }
 
     /**

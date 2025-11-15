@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Storage;
-
 use Illuminate\Support\Str;
 
 class CommunityPost extends Model
@@ -31,6 +30,7 @@ class CommunityPost extends Model
 
     protected $appends = [
         'images_count',
+        'comments_count',
         'thumbnail_url',
     ];
 
@@ -41,7 +41,6 @@ class CommunityPost extends Model
     {
         parent::boot();
 
-        // auto generate slug on creating
         static::creating(function ($post) {
             if (empty($post->post_slug)) {
                 $post->post_slug = Str::slug($post->post_title);
@@ -55,12 +54,16 @@ class CommunityPost extends Model
         });
 
         static::deleting(function ($post) {
+            // Delete images
             foreach ($post->images as $image) {
                 if (Storage::disk('public')->exists($image->post_image_path)) {
                     Storage::disk('public')->delete($image->post_image_path);
                 }
             }
             $post->images()->delete();
+
+            // Delete comments (cascade will handle replies)
+            $post->comments()->delete();
         });
     }
 
@@ -72,31 +75,37 @@ class CommunityPost extends Model
         return $this->belongsTo(User::class);
     }
 
-    // /**
-    //  * Get all comments for the post.
-    //  */
-    // public function comments(): HasMany
-    // {
-    //     return $this->hasMany(Comment::class, 'post_id');
-    // }
-
-    // /**
-    //  * Get only top-level comments (no parent).
-    //  */
-    // public function topLevelComments(): HasMany
-    // {
-    //     return $this->hasMany(Comment::class, 'post_id')
-    //         ->whereNull('parent_id')
-    //         ->with(['user', 'replies.user', 'reactions'])
-    //         ->latest();
-    // }
-
     /**
      * Get all images for the post.
      */
     public function images(): HasMany
     {
         return $this->hasMany(CommunityPostImage::class, 'post_id')->ordered();
+    }
+
+    /**
+     * Get all comments for the post.
+     */
+    public function comments(): HasMany
+    {
+        return $this->hasMany(PostComment::class, 'post_id');
+    }
+
+    /**
+     * Get only top-level comments (with nested replies).
+     */
+    public function topLevelComments(): HasMany
+    {
+        return $this->hasMany(PostComment::class, 'post_id')
+            ->whereNull('parent_id')
+            ->with([
+                'user:id,name,profile_picture_path',
+                'replies' => function ($query) {
+                    $query->with('user:id,name,profile_picture_path')
+                          ->oldest('created_at');
+                }
+            ])
+            ->oldest('created_at');
     }
 
     /**
@@ -108,12 +117,20 @@ class CommunityPost extends Model
     }
 
     /**
+     * Get total comments count (including replies).
+     */
+    public function getCommentsCountAttribute(): int
+    {
+        return $this->comments()->count();
+    }
+
+    /**
      * Get thumbnail URL (first image).
      */
     public function getThumbnailUrlAttribute(): ?string
     {
         $firstImage = $this->images()->ordered()->first();
-        return $firstImage ? $firstImage->post_image_url : null;
+        return $firstImage ? $firstImage->image_url : null;
     }
 
     /**
@@ -131,7 +148,6 @@ class CommunityPost extends Model
     {
         return $query->where('post_status', 'published');
     }
-
 
     /**
      * Scope: Popular posts (by views).
