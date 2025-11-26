@@ -56,7 +56,7 @@ class CommunityPostController
         $query = CommunityPost::with([
             'user:id,name,profile_picture_path',
             'images' => function ($query) {
-                $query->ordered()->limit(3);
+                $query->ordered()->limit(5);
             }])
             ->published()
             ->recent();
