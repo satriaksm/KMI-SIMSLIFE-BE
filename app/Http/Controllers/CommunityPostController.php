@@ -57,7 +57,8 @@ class CommunityPostController
             'user:id,name,profile_picture_path',
             'images' => function ($query) {
                 $query->ordered()->limit(5);
-            }])
+            }
+        ])
             ->published()
             ->recent();
 
@@ -66,7 +67,7 @@ class CommunityPostController
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('post_title', 'LIKE', "%{$search}%")
-                  ->orWhere('post_content', 'LIKE', "%{$search}%");
+                    ->orWhere('post_content', 'LIKE', "%{$search}%");
             });
         }
 
@@ -75,7 +76,11 @@ class CommunityPostController
         $posts = $query->paginate($perPage);
 
         return response()->json([
-            'items' => $posts->map(fn($post) => $this->formatPostResource($post)),
+            'items' => $posts->map(function ($post) {
+                $resource = $this->formatPostResource($post);
+                $resource['comments_count'] = $post->comments_count ?? $post->comments()->count();
+                return $resource;
+            }),
             'meta' => [
                 'current_page' => $posts->currentPage(),
                 'per_page' => $posts->perPage(),
@@ -180,7 +185,6 @@ class CommunityPostController
 
             return response()->json($resource, 201)
                 ->header('Location', route('community.posts.show', ['slug' => $post->post_slug]));
-
         } catch (\Exception $e) {
             if (isset($post)) {
                 $post->delete();
@@ -234,7 +238,7 @@ class CommunityPostController
         $post = CommunityPost::with([
             'user:id,name,profile_picture_path',
             'images' => fn($q) => $q->ordered()
-            ])
+        ])
             ->where('post_slug', $slug)
             ->published()
             ->first();
@@ -376,7 +380,6 @@ class CommunityPostController
             ]);
 
             return response()->json($this->formatPostResource($post, true), 200);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -431,7 +434,8 @@ class CommunityPostController
         $post->delete();
 
         return response()->json([
-            'success' => true, 'message' => 'Post deleted successfully'
+            'success' => true,
+            'message' => 'Post deleted successfully'
         ], 200);
     }
 
@@ -473,7 +477,7 @@ class CommunityPostController
         $posts = CommunityPost::with([
             'user:id,name,profile_picture_path',
             'images' => fn($q) => $q->ordered()->limit(1)
-            ])
+        ])
             ->published()
             ->popular($limit)
             ->get();
@@ -531,7 +535,7 @@ class CommunityPostController
         $posts = CommunityPost::with([
             'user:id,name,profile_picture_path',
             'images' => fn($q) => $q->ordered()->limit(3)
-            ])
+        ])
             ->where('user_id', Auth::id())
             ->latest()
             ->paginate($perPage);
@@ -553,7 +557,7 @@ class CommunityPostController
         ], 200);
     }
 
-        /**
+    /**
      * Upload images for a post.
      *
      * @param CommunityPost $post
@@ -562,7 +566,7 @@ class CommunityPostController
      * @param int|null $startIndex Optional starting index to continue numbering (defaults to current images count)
      * @return void
      */
-        private function uploadPostImages(CommunityPost $post, array $images, ?string $altPrefix = null, ?int $startIndex = null): void
+    private function uploadPostImages(CommunityPost $post, array $images, ?string $altPrefix = null, ?int $startIndex = null): void
     {
         // Determine starting count for image numbering
         $currentCount = $startIndex !== null ? (int) $startIndex : $post->images()->count();
@@ -623,9 +627,7 @@ class CommunityPostController
             'author' => [
                 'id' => $post->user->id,
                 'name' => $post->user->name,
-                'profile_picture' => $post->user->profile_picture_path
-                    ? asset('storage/' . $post->user->profile_picture_path)
-                    : null,
+                'profile_picture' => $post->user->profile_picture,
             ],
             'links' => [
                 'self' => url("/api/community/posts/{$post->post_slug}"),
@@ -651,5 +653,4 @@ class CommunityPostController
 
         return $resource;
     }
-
 }

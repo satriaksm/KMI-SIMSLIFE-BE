@@ -340,9 +340,7 @@ class PostCommentController
             'author' => [
                 'id' => $comment->user->id,
                 'name' => $comment->user->name,
-                'profile_picture' => $comment->user->profile_picture_path
-                    ? asset('storage/' . $comment->user->profile_picture_path)
-                    : null,
+                'profile_picture' => $comment->user->profile_picture,
             ],
         ];
 
