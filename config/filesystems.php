@@ -1,7 +1,7 @@
 <?php
 
 return [
-
+    'product_disk' => env('PRODUCT_DISK', 'public'),
     /*
     |--------------------------------------------------------------------------
     | Default Filesystem Disk

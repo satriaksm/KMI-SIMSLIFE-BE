@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
+use App\Models\Addon;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class Merchant extends Model
 {
@@ -27,6 +29,11 @@ class Merchant extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function addons(): HasMany
+    {
+        return $this->hasMany(Addon::class, 'merchant_id');
     }
 
     // Relasi ke paguyuban
@@ -52,4 +59,5 @@ class Merchant extends Model
     {
         return $this->morphOne(\App\Models\Adrress::class, 'addressable')->latestOfMany();
     }
+
 }

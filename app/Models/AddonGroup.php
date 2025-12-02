@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class AddonGroup extends Model
 {
+    protected $table = 'addon_groups';
     protected $fillable = [
         'product_id',
         'addon_group_name',

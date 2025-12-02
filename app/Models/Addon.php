@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Models\AddonGroupOption;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
@@ -18,6 +20,10 @@ class Addon extends Model
         return $this->belongsTo(Merchant::class);
     }
 
+    public function groupOptions(): HasMany
+    {
+        return $this->hasMany(AddonGroupOption::class, 'addon_id');
+    }
     // Relation ke addon_groups via pivot
     public function addonGroups(): BelongsToMany
     {

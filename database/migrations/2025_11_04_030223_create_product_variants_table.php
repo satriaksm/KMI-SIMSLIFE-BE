@@ -14,7 +14,6 @@ return new class extends Migration {
             $table->string('sku')->nullable()->unique();
             $table->decimal('price', 12, 2)->default(0);
             $table->timestamps();
-
             $table->index('product_id');
         });
     }

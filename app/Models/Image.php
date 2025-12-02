@@ -10,9 +10,11 @@ class Image extends Model
     protected $table = 'images';
 
     protected $fillable = [
+        'imageable_type',
+        'imageable_id',
         'image_path',
         'display_order',
-        'is_cover'
+        'is_cover',
     ];
 
     protected $casts = [
@@ -23,5 +25,10 @@ class Image extends Model
     public function imageable(): MorphTo
     {
         return $this->morphTo();
+    }
+
+    public function getUrlAttribute()
+    {
+        return route('images.show', ['image' => $this->id]);
     }
 }
