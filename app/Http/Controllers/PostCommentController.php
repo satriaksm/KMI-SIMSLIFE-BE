@@ -13,12 +13,10 @@ use Illuminate\Support\Str;
 class PostCommentController
 {
     /**
-     * Get comments for a specific post
-     * GET /api/community/posts/{postId}/comments
+     * Get comments for a specific post 
      */
     public function index($postId, Request $request)
     {
-        // Validate post exists and is published
         $post = CommunityPost::published()->find($postId);
 
         if (!$post) {
@@ -27,10 +25,14 @@ class PostCommentController
             ], 404);
         }
 
-        // Get sorting preference
-        $sort = $request->get('sort', 'oldest'); // oldest, newest
+        $sort = $request->get('sort', 'oldest');
 
-        $query = $post->topLevelComments();
+        // Only load top-level comments with their direct replies
+        $query = $post->topLevelComments()->with([
+            'user:id,name,profile_picture_path',
+            'replies.user:id,name,profile_picture_path',
+            'replies.replyToUser:id,name', 
+        ]);
 
         if ($sort === 'newest') {
             $query->latest('created_at');
@@ -38,7 +40,6 @@ class PostCommentController
             $query->oldest('created_at');
         }
 
-        // Pagination
         $perPage = min($request->get('per_page', 10), 50);
         $comments = $query->paginate($perPage);
 
@@ -67,8 +68,6 @@ class PostCommentController
 
     /**
      * Create new comment for a post
-     * POST /api/community/posts/{postId}/comments
-     * Body: { "comment_content": "Your comment here" }
      */
     public function store($postId, Request $request)
     {
@@ -96,17 +95,16 @@ class PostCommentController
 
         try {
             $comment = PostComment::create([
-                'post_id' => $postId, // From URL parameter
+                'post_id' => $postId,
                 'user_id' => Auth::id(),
-                'parent_id' => null, // Top-level comment
+                'parent_id' => null,
+                'reply_to_user_id' => null,
                 'comment_content' => trim($request->comment_content),
             ]);
 
-            // Load relationships
             $comment->load(['user:id,name,profile_picture_path']);
 
             return response()->json($this->formatCommentResource($comment), 201);
-
         } catch (\Exception $e) {
             Log::error('Failed to create comment: ' . $e->getMessage());
 
@@ -118,13 +116,10 @@ class PostCommentController
     }
 
     /**
-     * Reply to a specific comment
-     * POST /api/community/posts/{postId}/comments/{commentId}
-     * Body: { "comment_content": "Your reply here" }
+     * All replies go to root parent, with @mention tracking
      */
     public function reply($postId, $commentId, Request $request)
     {
-        // Validate post exists and is published
         $post = CommunityPost::published()->find($postId);
         if (!$post) {
             return response()->json([
@@ -132,18 +127,17 @@ class PostCommentController
             ], 404);
         }
 
-        // Validate parent comment exists and belongs to this post
-        $parentComment = PostComment::where('id', $commentId)
+        $parentComment = PostComment::with('user:id,name')
+            ->where('id', $commentId)
             ->where('post_id', $postId)
             ->first();
 
         if (!$parentComment) {
             return response()->json([
-                'message' => 'Parent comment not found or does not belong to this post',
+                'message' => 'Comment not found or does not belong to this post',
             ], 404);
         }
 
-        // Validate input
         $validator = Validator::make($request->all(), [
             'comment_content' => 'required|string|max:1000|min:1',
         ], [
@@ -159,27 +153,20 @@ class PostCommentController
             ], 422);
         }
 
-        // Prevent deeply nested replies (max 3 levels: 0 → 1 → 2)
-        if ($parentComment->getNestingLevel() >= 2) {
-            return response()->json([
-                'message' => 'Maximum reply nesting level reached (max 3 levels)',
-            ], 422);
-        }
-
         try {
-            // Create reply comment
+            $rootParent = $parentComment->getRootParent();
+
             $comment = PostComment::create([
                 'post_id' => $postId,
                 'user_id' => Auth::id(),
-                'parent_id' => $commentId,
+                'parent_id' => $rootParent->id,
+                'reply_to_user_id' => $parentComment->user_id, 
                 'comment_content' => trim($request->comment_content),
             ]);
 
-            // Load relationships
-            $comment->load(['user:id,name,profile_picture_path', 'parent.user:id,name']);
+            $comment->load(['user:id,name,profile_picture_path', 'replyToUser:id,name']);
 
             return response()->json($this->formatCommentResource($comment), 201);
-
         } catch (\Exception $e) {
             Log::error('Failed to create reply: ' . $e->getMessage());
 
@@ -192,11 +179,9 @@ class PostCommentController
 
     /**
      * Delete a specific comment
-     * DELETE /api/community/posts/{postId}/comments/{commentId}
      */
     public function destroy($postId, $commentId)
     {
-        // Validate post exists
         $post = CommunityPost::find($postId);
         if (!$post) {
             return response()->json([
@@ -204,7 +189,6 @@ class PostCommentController
             ], 404);
         }
 
-        // Find comment and validate it belongs to post
         $comment = PostComment::where('id', $commentId)
             ->where('post_id', $postId)
             ->first();
@@ -215,7 +199,6 @@ class PostCommentController
             ], 404);
         }
 
-        // Check authorization - only comment owner can delete
         $user = Auth::user();
         if ($comment->user_id !== $user->id) {
             return response()->json([
@@ -224,13 +207,11 @@ class PostCommentController
         }
 
         try {
-            // Delete will cascade to replies due to foreign key constraint
             $comment->delete();
 
             return response()->json([
                 'success' => 'Comment deleted successfully'
             ], 200);
-
         } catch (\Exception $e) {
             Log::error('Failed to delete comment: ' . $e->getMessage());
 
@@ -242,12 +223,10 @@ class PostCommentController
     }
 
     /**
-     * Get replies for a specific comment
-     * GET /api/community/posts/{postId}/comments/{commentId}/replies
+     * Get replies for a specific comment (with pagination)
      */
     public function getReplies($postId, $commentId, Request $request)
     {
-        // Validate post exists
         $post = CommunityPost::published()->find($postId);
         if (!$post) {
             return response()->json([
@@ -255,7 +234,6 @@ class PostCommentController
             ], 404);
         }
 
-        // Find parent comment and validate it belongs to post
         $comment = PostComment::with(['user:id,name,profile_picture_path'])
             ->where('id', $commentId)
             ->where('post_id', $postId)
@@ -268,7 +246,10 @@ class PostCommentController
         }
 
         $perPage = min($request->get('per_page', 10), 50);
-        $replies = $comment->directReplies()->oldest('created_at')->paginate($perPage);
+        $replies = $comment->replies()
+            ->with(['user:id,name,profile_picture_path', 'replyToUser:id,name'])
+            ->oldest('created_at')
+            ->paginate($perPage);
 
         return response()->json([
             'parent_comment' => $this->formatCommentResource($comment, false),
@@ -290,17 +271,16 @@ class PostCommentController
 
     /**
      * Get my comments across all posts
-     * GET /api/community/my-comments
      */
     public function myComments(Request $request)
     {
         $perPage = min($request->get('per_page', 15), 100);
 
         $comments = PostComment::with([
-                'user:id,name,profile_picture_path',
-                'post:id,post_title,post_slug',
-                'parent.user:id,name'
-            ])
+            'user:id,name,profile_picture_path',
+            'post:id,post_title,post_slug',
+            'replyToUser:id,name'
+        ])
             ->where('user_id', Auth::id())
             ->latest()
             ->paginate($perPage);
@@ -325,7 +305,7 @@ class PostCommentController
     // ================== PRIVATE HELPER METHODS ==================
 
     /**
-     * Format comment resource for consistent API response
+     * Format comment resource (Instagram style)
      */
     private function formatCommentResource(PostComment $comment, bool $includeReplies = false, bool $includePost = false): array
     {
@@ -333,34 +313,32 @@ class PostCommentController
             'id' => $comment->id,
             'comment_content' => $comment->comment_content,
             'is_reply' => $comment->is_reply,
-            'nesting_level' => $comment->getNestingLevel(),
             'replies_count' => $comment->replies_count,
             'created_at' => $comment->created_at->toISOString(),
             'updated_at' => $comment->updated_at->toISOString(),
             'author' => [
                 'id' => $comment->user->id,
                 'name' => $comment->user->name,
-                'profile_picture' => $comment->user->profile_picture_path
-                    ? asset('storage/' . $comment->user->profile_picture_path)
-                    : null,
+                'profile_picture' => $comment->user->profile_picture,
             ],
         ];
 
-        // Include parent comment info if this is a reply
-        if ($comment->is_reply && $comment->relationLoaded('parent')) {
-            $resource['parent_comment'] = [
-                'id' => $comment->parent->id,
-                'author_name' => $comment->parent->user->name ?? 'Unknown',
-                'comment_preview' => Str::limit($comment->parent->comment_content, 50),
+        // Include @mention info if replying to someone
+        if ($comment->reply_to_user_id && $comment->relationLoaded('replyToUser')) {
+            $resource['replying_to'] = [
+                'user_id' => $comment->replyToUser->id,
+                'username' => $comment->replyToUser->name,
             ];
         }
 
-        // Include replies if requested
+        // Include flat replies 
         if ($includeReplies && $comment->relationLoaded('replies')) {
-            $resource['replies'] = $comment->replies->map(fn($reply) => $this->formatCommentResource($reply, false));
+            $resource['replies'] = $comment->replies->map(
+                fn($reply) => $this->formatCommentResource($reply, false)
+            )->values();
         }
 
-        // Include post info if requested (for my comments page)
+        // Include post info if requested
         if ($includePost && $comment->relationLoaded('post')) {
             $resource['post'] = [
                 'id' => $comment->post->id,

@@ -15,6 +15,7 @@ class PostComment extends Model
         'post_id',
         'user_id',
         'parent_id',
+        'reply_to_user_id', 
         'comment_content',
     ];
 
@@ -57,7 +58,9 @@ class PostComment extends Model
      */
     public function replies(): HasMany
     {
-        return $this->hasMany(PostComment::class, 'parent_id')->with(['user:id,name,profile_picture_path', 'replies']);
+        return $this->hasMany(PostComment::class, 'parent_id')
+            ->with(['user:id,name,profile_picture_path', 'replyToUser:id,name'])
+            ->oldest('created_at');
     }
 
     /**
@@ -69,6 +72,14 @@ class PostComment extends Model
     }
 
     /**
+     * Get the user being replied to (for nested replies)
+     */
+    public function replyToUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reply_to_user_id');
+    }
+
+    /**
      * Check if this comment is a reply to another comment.
      */
     public function getIsReplyAttribute(): bool
@@ -77,7 +88,7 @@ class PostComment extends Model
     }
 
     /**
-     * Get count of direct replies.
+     * Get count of all replies (including nested).
      */
     public function getRepliesCountAttribute(): int
     {
@@ -134,6 +145,17 @@ class PostComment extends Model
         }
 
         return $this->parent->getRootComment();
+    }
+
+    /**
+     * Get the root parent comment (for deeply nested replies).
+     */
+    public function getRootParent()
+    {
+        if ($this->parent_id === null) {
+            return $this;
+        }
+        return $this->parent->getRootParent();
     }
 
     /**

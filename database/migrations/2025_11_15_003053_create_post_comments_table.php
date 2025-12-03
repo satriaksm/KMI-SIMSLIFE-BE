@@ -16,13 +16,13 @@ return new class extends Migration
             $table->foreignId('post_id')->constrained('community_posts')->onDelete('cascade');
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
             $table->foreignId('parent_id')->nullable()->constrained('post_comments')->onDelete('cascade');
+            $table->foreignId('reply_to_user_id')->nullable()->constrained('users')->onDelete('set null'); // NEW
             $table->text('comment_content');
             $table->timestamps();
 
             $table->index('post_id');
             $table->index('user_id');
             $table->index('parent_id');
-            $table->index(['post_id', 'parent_id']);
             $table->index('created_at');
         });
     }
