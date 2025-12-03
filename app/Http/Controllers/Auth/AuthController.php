@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
@@ -13,8 +14,6 @@ use Illuminate\Support\Facades\Validator;
 
 class AuthController extends Controller
 {
-
-
     public function register(Request $request)
     {
         $validator = Validator::make(
@@ -78,7 +77,6 @@ class AuthController extends Controller
         $credentials = $request->validate([
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
-            'device_name' => ['nullable', 'string', 'max:100'],
         ]);
 
         $user = User::with('roles')->where('email', $credentials['email'])->first();
@@ -94,29 +92,53 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $abilities = $user->roles->map(fn($r) => 'role:' . strtolower($r->name))->all();
-        if (empty($abilities)) {
-            $abilities = ['*'];
-        }
-
-        $token = $user->createToken($credentials['device_name'] ?? 'api', $abilities)->plainTextToken;
+        // Login user menggunakan session (Sanctum SPA)
+        Auth::login($user);
+        $request->session()->regenerate();
 
         return response()->json([
-            'token' => $token,
-            'token_type' => 'Bearer',
+            'message' => 'Login berhasil.',
             'user' => $user,
         ]);
     }
 
     public function me(Request $request)
     {
-        return response()->json($request->user()->load('roles'));
+        $user = $request->user()->load([
+            'roles:id,name', // ✅ Only select needed columns
+            'merchants' => function ($query) {
+                $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
+                    ->where('status', 'approved')
+                    ->with('segmentation:id,name');
+            }
+        ]);
+
+        return response()->json([
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'roles' => $user->roles->pluck('name'),
+            'merchants' => $user->merchants->map(function ($merchant) {
+                return [
+                    'id' => $merchant->id,
+                    'name' => $merchant->name,
+                    'status' => $merchant->status,
+                    'segmentation' => $merchant->segmentation ? [
+                        'id' => $merchant->segmentation->id,
+                        'name' => $merchant->segmentation->name,
+                    ] : null,
+                ];
+            }),
+        ]);
     }
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()?->delete();
+        Auth::guard('web')->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
 
-        return response()->json(['message' => 'Logged out.']);
+        return response()->json(['message' => 'Logout berhasil.']);
     }
 }

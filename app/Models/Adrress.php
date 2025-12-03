@@ -4,8 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class Adrress extends Model
 {
@@ -14,44 +14,64 @@ class Adrress extends Model
     protected $table = 'addresses';
 
     protected $fillable = [
+        'addressable_id',
+        'addressable_type',
         'province_id',
         'city_id',
         'district_id',
         'village_id',
-        'latitude',
-        'longitude',
         'detail',
         'label',
-        // 'addressable_id', 'addressable_type', // aktifkan jika perlu mass-assign
+        'latitude',
+        'longitude',
     ];
 
     protected $casts = [
-        'latitude' => 'float',
-        'longitude' => 'float',
+        'latitude' => 'decimal:8',
+        'longitude' => 'decimal:8',
     ];
 
+    // ✅ Relasi Polimorfik ke User/Merchant
     public function addressable(): MorphTo
     {
         return $this->morphTo();
     }
 
+    // ✅ Relasi ke Province
     public function province(): BelongsTo
     {
-        return $this->belongsTo('App\Models\Province', 'province_id');
+        return $this->belongsTo(Province::class, 'province_id');
     }
 
-    public function regency(): BelongsTo
+    // ✅ Relasi ke City (Regency)
+    public function city(): BelongsTo
     {
-        return $this->belongsTo('App\Models\Regency', 'regency_id');
+        return $this->belongsTo(City::class, 'city_id');
     }
 
+    // ✅ Relasi ke District
     public function district(): BelongsTo
     {
-        return $this->belongsTo('App\Models\District', 'district_id');
+        return $this->belongsTo(District::class, 'district_id');
     }
 
+    // ✅ Relasi ke Village
     public function village(): BelongsTo
     {
-        return $this->belongsTo('App\Models\Village', 'village_id');
+        return $this->belongsTo(Village::class, 'village_id');
+    }
+
+    // ✅ Accessor untuk alamat lengkap
+    public function getFullAddressAttribute(): string
+    {
+        $parts = array_filter([
+            $this->detail,
+            $this->village?->name,
+            $this->district?->name,
+            $this->city?->name,
+            $this->province?->name,
+        ]);
+
+        return implode(', ', $parts);
     }
 }

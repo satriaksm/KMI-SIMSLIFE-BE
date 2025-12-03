@@ -80,7 +80,7 @@ class PasswordResetController extends Controller
 
         $user = $request->user();
         if (!Hash::check($data['current_password'], $user->password)) {
-            return response()->json(['message' => 'Current password is incorrect.'], 422);
+            return response()->json(['message' => 'Kata sandi saat ini tidak cocok.'], 422);
         }
 
         $user->password = $data['password'];
@@ -89,6 +89,6 @@ class PasswordResetController extends Controller
         // Revoke current token (optional security)
         $user->currentAccessToken()?->delete();
 
-        return response()->json(['message' => 'Password changed. Please log in again.']);
+        return response()->json(['message' => 'Kata sandi berhasil diubah.']);
     }
 }

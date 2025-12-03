@@ -2,17 +2,22 @@
 
 namespace App\Providers;
 
-use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
-use Illuminate\Auth\Notifications\ResetPassword;
-use Illuminate\Auth\Notifications\VerifyEmail;
-use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\URL;
+use App\Models\Product;
+use App\Models\Merchant;
 use Illuminate\Support\Carbon;
+use App\Policies\ProductPolicy;
+use App\Policies\MerchantPolicy;
+use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Auth\Notifications\VerifyEmail;
+use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 
 class AuthServiceProvider extends ServiceProvider
 {
     protected $policies = [
-        // ...existing code...
+        Product::class => ProductPolicy::class,
+        Merchant::class => MerchantPolicy::class,
     ];
 
     public function boot(): void
