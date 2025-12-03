@@ -39,6 +39,22 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])->name('variant');
     });
 
+    // ✅ NEW: Public Merchants
+    Route::prefix('merchants')->name('merchants.')->group(function () {
+        // List merchants (with pagination & filters)
+        Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
+
+        // Random merchants for homepage
+        Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
+
+        // Show single merchant
+        Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');
+
+        // Merchant's products (already exists)
+        Route::get('/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
+            ->name('products');
+    });
+
     // Category Routes
     Route::prefix('categories')->group(function () {
         Route::get('/level-1', [CategoryController::class, 'getLevel1Categories']);
@@ -47,11 +63,16 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/search', [CategoryController::class, 'searchCategories']);
     });
 
-    // Merchant catalog
-    Route::get('merchants/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
-        ->name('merchants.products');
-
+    // ✅ Public Community Posts (tanpa auth)
+    Route::prefix('community')->name('community.')->group(function () {
+        Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
+        Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
+        Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
+        Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
+        Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
+    });
 });
+
 Route::middleware('web')->group(function () {
     Route::get('images/{image}', [ImageController::class, 'show'])
         ->name('images.show');
@@ -111,7 +132,6 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
 // ============================================================
@@ -165,35 +185,28 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
     });
 
-    // Community Posts & Comments
+    // ✅ PROTECTED Community Actions (require auth)
     Route::prefix('community')->group(function () {
 
-        // Posts
-        Route::get('/posts/popular', [CommunityPostController::class, 'popular'])
-            ->name('community.posts.popular');
+        // My Posts (auth required)
         Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
             ->name('community.posts.my');
-        Route::get('/posts', [CommunityPostController::class, 'index'])
-            ->name('community.posts.index');
+
+        // Create, Update, Delete Posts (auth required)
         Route::post('/posts', [CommunityPostController::class, 'store'])
             ->name('community.posts.store');
-        Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])
-            ->name('community.posts.show');
         Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
             ->name('community.posts.update');
         Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
             ->name('community.posts.destroy');
 
-        Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])
-            ->name('community.comments.index');
+        // Comments CRUD (auth required)
         Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
             ->name('community.comments.store');
         Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
             ->name('community.comments.reply');
         Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
             ->name('community.comments.destroy');
-        Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])
-            ->name('community.comments.replies');
         Route::get('/my-comments', [PostCommentController::class, 'myComments'])
             ->name('community.comments.my-comments');
     });
