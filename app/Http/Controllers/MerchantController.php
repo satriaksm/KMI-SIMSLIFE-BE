@@ -39,9 +39,9 @@ class MerchantController
             $request->all(),
             [
                 'name' => ['required', 'string', 'max:255'],
+                'phone' => ['required', 'string', 'min:8', 'max:20', 'regex:/^[0-9+\-()\s]+$/'], // NEW
                 'description' => ['nullable', 'string'],
                 'segmentation_id' => ['required', 'integer', Rule::exists('segmentations', 'id')],
-
                 'address.province_id' => ['required', 'integer', Rule::exists('provinces', 'id')],
                 'address.city_id' => ['required', 'integer', Rule::exists('cities', 'id')],
                 'address.district_id' => ['required', 'integer', Rule::exists('districts', 'id')],
@@ -52,6 +52,8 @@ class MerchantController
             ],
             [
                 'name.required' => 'Nama usaha wajib diisi.',
+                'phone.required' => 'Nomor telepon wajib diisi.', // NEW
+                'phone.regex' => 'Format nomor telepon tidak valid.', // NEW
                 'segmentation_id.required' => 'Segmentasi wajib dipilih.',
                 'segmentation_id.exists' => 'Segmentasi tidak ditemukan.',
                 'address.province_id.required' => 'Provinsi wajib dipilih.',
@@ -81,6 +83,7 @@ class MerchantController
                 'segmentation_id' => $validated['segmentation_id'],
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
+                'phone' => $validated['phone'] ?? null, // NEW: pastikan kolom phone ada di tabel merchants
                 'logo_path' => null,
                 // 'status' default 'pending' dari migration
             ]);

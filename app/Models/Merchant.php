@@ -19,6 +19,7 @@ class Merchant extends Model
         'paguyuban_id',
         'segmentation_id',
         'name',
+        'phone',
         'description',
         'logo_path',
         'status',
