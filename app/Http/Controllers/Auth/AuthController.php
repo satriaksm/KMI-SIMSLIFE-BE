@@ -104,7 +104,32 @@ class AuthController extends Controller
 
     public function me(Request $request)
     {
-        return response()->json($request->user()->load('roles'));
+        $user = $request->user()->load([
+            'roles:id,name', // ✅ Only select needed columns
+            'merchants' => function ($query) {
+                $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
+                    ->with('segmentation:id,name');
+            }
+        ]);
+
+        return response()->json([
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'roles' => $user->roles->pluck('name'),
+            'merchants' => $user->merchants->map(function ($merchant) {
+                return [
+                    'id' => $merchant->id,
+                    'name' => $merchant->name,
+                    'status' => $merchant->status,
+                    'segmentation' => $merchant->segmentation ? [
+                        'id' => $merchant->segmentation->id,
+                        'name' => $merchant->segmentation->name,
+                    ] : null,
+                ];
+            }),
+        ]);
     }
 
     public function logout(Request $request)

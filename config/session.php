@@ -127,10 +127,7 @@ return [
     |
     */
 
-    'cookie' => env(
-        'SESSION_COOKIE',
-        Str::slug((string) env('APP_NAME', 'laravel')) . '-session'
-    ),
+    'cookie' => env('SESSION_COOKIE', 'kmi_simslife_session'),
 
     /*
     |--------------------------------------------------------------------------
