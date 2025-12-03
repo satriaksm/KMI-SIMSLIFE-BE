@@ -108,6 +108,7 @@ class AuthController extends Controller
             'roles:id,name', // ✅ Only select needed columns
             'merchants' => function ($query) {
                 $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
+                    ->where('status', 'approved')
                     ->with('segmentation:id,name');
             }
         ]);

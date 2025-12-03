@@ -335,12 +335,13 @@ class ProductController
         // Auto-detect merchant
         if (empty($data['merchant_id'])) {
             $merchant = Merchant::where('user_id', $request->user()->id)
+                ->where('status', 'approved')
                 ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
                 ->first();
 
             if (!$merchant) {
                 return response()->json([
-                    'message' => 'Anda tidak memiliki UMKM atau segment UMKM tidak diizinkan.',
+                    'message' => 'Anda belum memiliki UMKM.',
                 ], 403);
             }
 
@@ -1366,6 +1367,11 @@ class ProductController
             return ['error' => response()->json(['message' => 'UMKM tidak sah. Anda bukan pemilik UMKM ini.'], 403)];
         }
 
+        // ✅ WAJIB approved
+        if ($merchant->status !== 'approved') {
+            return ['error' => response()->json(['message' => 'UMKM belum disetujui oleh admin.'], 403)];
+        }
+
         $segmentId = $merchant->segmentation_id
             ?? $merchant->segment_id
             ?? optional($merchant->segmentation)->id
@@ -1714,10 +1720,11 @@ class ProductController
         // merchant detection same as index...
         if (empty($data['merchant_id'])) {
             $merchant = Merchant::where('user_id', $request->user()->id)
+                ->where('status', 'approved')
                 ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
                 ->first();
             if (!$merchant) {
-                return response()->json(['message' => 'Anda tidak memiliki UMKM atau segment UMKM tidak diizinkan.'], 403);
+                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
             }
             $merchantId = $merchant->id;
         } else {
@@ -1757,10 +1764,11 @@ class ProductController
         // merchant detection same as index...
         if (empty($data['merchant_id'])) {
             $merchant = Merchant::where('user_id', $request->user()->id)
+                ->where('status', 'approved')
                 ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
                 ->first();
             if (!$merchant) {
-                return response()->json(['message' => 'Anda tidak memiliki UMKM atau segment UMKM tidak diizinkan.'], 403);
+                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
             }
             $merchantId = $merchant->id;
         } else {
