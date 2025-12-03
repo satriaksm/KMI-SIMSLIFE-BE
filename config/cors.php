@@ -7,6 +7,8 @@ return [
         'login',
         'logout',
         'me',
+        'broadcasting/auth',
+        'auth/*'
     ],
 
     'allowed_methods' => ['*'],

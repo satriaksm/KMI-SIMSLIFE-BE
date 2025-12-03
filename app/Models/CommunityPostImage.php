@@ -1,0 +1,61 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Storage;
+
+class CommunityPostImage extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'post_id',
+        'post_image_path',
+        'alt_text',
+    ];
+
+    protected $casts = [
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
+
+    protected $appends = [
+        'image_url',
+    ];
+
+    /**
+     * Get the post that owns the image.
+     */
+    public function post(): BelongsTo
+    {
+        return $this->belongsTo(CommunityPost::class, 'post_id');
+    }
+
+    /**
+     * Get the full image URL.
+     */
+    public function getImageUrlAttribute(): string
+    {
+        return Storage::disk('public')->exists($this->post_image_path)
+            ? asset('storage/' . $this->post_image_path)
+            : asset('images/placeholder.jpg');
+    }
+
+    /**
+     * Ordered by created_at.
+     */
+    public function scopeOrdered($query)
+    {
+        return $query->orderBy('created_at', 'asc');
+    }
+    
+    public function getIsPrimaryAttribute(): bool
+    {
+        $firstImage = $this->post->images()->ordered()->first();
+        return $firstImage && $firstImage->id === $this->id;
+    }
+
+}

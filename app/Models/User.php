@@ -58,4 +58,12 @@ class User extends Authenticatable implements MustVerifyEmail
         $roles = array_map('strtolower', $roles);
         return $this->roles->contains(fn($r) => in_array(strtolower($r->name), $roles, true));
     }
+
+    public function getProfilePictureAttribute()
+    {
+        if (empty($this->profile_picture_path)) {
+            return url('storage/profilepics/profilepicdefault.png');
+        }
+        return url('storage/' . ltrim($this->profile_picture_path, '/'));
+    }
 }
