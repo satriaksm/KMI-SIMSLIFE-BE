@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\ProfileController;
 
 Route::get('/', fn() => response()->json(['status' => 'API & CI/CD are running']));
 
@@ -52,6 +53,13 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
         // alias path jika FE memanggil /auth/merchant-register
         Route::post('/auth/merchant-register', [MerchantController::class, 'register']);
+
+        // Profile
+        Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+            Route::get('/', 'show')->name('profile.show');
+            Route::post('/update', 'update')->name('profile.update');
+            Route::post('/change-password', 'changePassword')->name('profile.change-password');
+        });
     });
 
     // Admin: approve/reject
