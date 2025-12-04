@@ -18,11 +18,7 @@ jobs:
       - name: Add SSH known hosts
         run: |
           mkdir -p ~/.ssh
-          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
-            echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
-          else
-            ssh-keyscan -p "${{ secrets.FTP_PORT }}" "${{ secrets.FTP_SERVER }}" >> ~/.ssh/known_hosts
-          fi
+          ssh-keyscan -p "${{ secrets.FTP_PORT }}" "${{ secrets.FTP_SERVER }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Setup SSH key
