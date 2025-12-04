@@ -60,8 +60,9 @@ jobs:
           cd ..
           ls -lh release.zip
 
-            - name: Upload release.zip to server (SCP, no host check)
+      - name: Upload release.zip to server (SCP, no host check)
         run: |
+          # ensure key is present
           echo "${{ secrets.FTP_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.FTP_PORT }}" release.zip "${{ secrets.FTP_USERNAME }}@${{ secrets.FTP_SERVER }}:/tmp"
@@ -79,7 +80,6 @@ jobs:
             rm -f /tmp/release.zip
             chmod -R 775 "$TARGET_DIR/storage" "$TARGET_DIR/bootstrap/cache" || true
             cd "$TARGET_DIR"
-            # optional composer/migrate
             composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader || true
             php artisan migrate --force || true
             php artisan config:cache || true
@@ -87,22 +87,3 @@ jobs:
             php artisan view:cache || true
             echo "Post-deploy done."
           SSH_EOF
-
-
-      - name: Run post-deploy commands (composer migrate + optimize)
-        uses: appleboy/ssh-action@v0.1.6
-        with:
-          host: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          key: ${{ secrets.FTP_SSH_KEY }}
-          port: ${{ secrets.FTP_PORT }}
-          script: |
-            set -e
-            cd "${{ secrets.FTP_PATH_LARAVEL }}"
-            # jika vendor belum terinstall di server, lakukan composer install (opsional)
-            composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader || true
-            php artisan migrate --force || true
-            php artisan config:cache || true
-            php artisan route:cache || true
-            php artisan view:cache || true
-            echo "Post-deploy tasks done."
