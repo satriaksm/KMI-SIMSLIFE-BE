@@ -56,5 +56,5 @@ jobs:
           port: ${{ secrets.FTP_PORT || 21 }}
           protocol: ftps
           local-dir: release/
-          server-dir: ${{ secrets.FTP_PATH_LARAVEL }}
+          server-dir: ${{ secrets.FTP_PATH_LARAVEL }}/
           # optional: passive mode and other args can be added if needed
