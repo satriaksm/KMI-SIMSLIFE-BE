@@ -1,79 +1,121 @@
-name: Deploy Backend to Server
+name: Laravel CI/CD -> SFTP (zip upload)
 
 on:
   push:
     branches: [staging]
 
 jobs:
-  deploy:
+  deploy-backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare target dir
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Add SSH known hosts
+        run: |
+          mkdir -p ~/.ssh
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${{ secrets.FTP_PORT }}" "${{ secrets.FTP_SERVER }}" >> ~/.ssh/known_hosts
+          fi
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Setup SSH key
+        run: |
+          echo "${{ secrets.FTP_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v4
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script_stop: true
+          php-version: "8.1"
+          extensions: mbstring, bcmath, openssl, pdo_mysql, tokenizer, xml, fileinfo
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ hashFiles('**/composer.lock') }}
+
+      - name: Install composer dependencies
+        run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+
+      - name: Prepare release folder
+        run: |
+          rm -rf release || true
+          mkdir -p release
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='public' \
+            --exclude='.env' \
+            ./ release/
+          rsync -av vendor/ release/vendor/
+          mkdir -p release/storage release/bootstrap/cache
+          ls -la release
+
+      - name: Zip release
+        run: |
+          cd release
+          zip -r ../release.zip . >/dev/null
+          cd ..
+          ls -lh release.zip
+
+      - name: Upload release.zip to server (SCP)
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          key: ${{ secrets.FTP_SSH_KEY }}
+          port: ${{ secrets.FTP_PORT }}
+          source: "release.zip"
+          target: "/tmp"
+
+      - name: Unzip on server and move to target
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          key: ${{ secrets.FTP_SSH_KEY }}
+          port: ${{ secrets.FTP_PORT }}
           script: |
-            set -Eeuo pipefail
-            sudo mkdir -p /var/www/KMI-SIMSLIFE-BE
-            # berikan ke user SSH agar langkah berikut bisa tulis
-            sudo chown -R "$USER:$USER" /var/www/KMI-SIMSLIFE-BE
+            set -e
+            TARGET_DIR="${{ secrets.FTP_PATH_LARAVEL }}"
+            # create target dir if not exists
+            mkdir -p "$TARGET_DIR"
+            # backup existing folder (optional)
+            if [ -d "$TARGET_DIR" ]; then
+              mv "$TARGET_DIR" "${TARGET_DIR}_backup_$(date +%s)" || true
+            fi
+            # unzip into target
+            unzip -o /tmp/release.zip -d "$TARGET_DIR"
+            # cleanup
+            rm -f /tmp/release.zip
+            # set permissive permissions for storage & cache
+            chmod -R 775 "$TARGET_DIR/storage" "$TARGET_DIR/bootstrap/cache" || true
+            echo "Deployed to $TARGET_DIR"
 
-      - name: Upload app to server
-        uses: appleboy/scp-action@v0.1.7
+      - name: Run post-deploy commands (composer migrate + optimize)
+        uses: appleboy/ssh-action@v0.1.6
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          overwrite: true
-          target: /var/www/KMI-SIMSLIFE-BE
-          source: app,bootstrap,config,database,public,resources,routes,artisan,composer.json,composer.lock
-
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script_stop: true
-          debug: true
-          command_timeout: 30m
+          host: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          key: ${{ secrets.FTP_SSH_KEY }}
+          port: ${{ secrets.FTP_PORT }}
           script: |
-            set -Eeuo pipefail
-            REPO_DIR=/var/www/KMI-SIMSLIFE-BE
-            cd "$REPO_DIR"
-
-            # 1) Siapkan folder yang diperlukan + izin sebelum composer/artisan
-            mkdir -p storage/{app,framework/{cache,sessions,views},logs} bootstrap/cache
-            # pastikan user SSH bisa tulis saat menjalankan artisan/composer
-            chown -R "$USER:$USER" storage bootstrap/cache
-            chmod -R ug+rwX storage bootstrap/cache
-            touch storage/logs/laravel.log || true
-            chmod 664 storage/logs/laravel.log || true
-
-            # 2) Install vendor (package:discover akan menulis ke bootstrap/cache)
-            composer install --prefer-dist --no-interaction --optimize-autoloader --no-dev
-
-            # 3) Jalankan artisan (cache clear lalu migrate)
-            php artisan optimize:clear
-            php artisan migrate --force
-
-            # 4) Build cache untuk performa
-            php artisan config:cache
-            php artisan route:cache
-
-            # 5) Serahkan izin runtime ke www-data (PHP-FPM)
-            sudo chown -R www-data:www-data storage bootstrap/cache
-            sudo find storage -type d -exec chmod 775 {} \;
-            sudo find storage -type f -exec chmod 664 {} \;
-            sudo chmod -R ug+rwX bootstrap/cache
-
-            # 6) Reload services
-            sudo systemctl reload php8.3-fpm || sudo systemctl restart php8.3-fpm
-            sudo systemctl reload nginx || sudo systemctl restart nginx
+            set -e
+            cd "${{ secrets.FTP_PATH_LARAVEL }}"
+            # jika vendor belum terinstall di server, lakukan composer install (opsional)
+            composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader || true
+            php artisan migrate --force || true
+            php artisan config:cache || true
+            php artisan route:cache || true
+            php artisan view:cache || true
+            echo "Post-deploy tasks done."
