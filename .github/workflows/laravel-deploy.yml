@@ -1,4 +1,4 @@
-name: Laravel CI/CD -> FTPS (Optimized Deploy)
+name: Laravel CI/CD -> FTPS (upload release)
 
 on:
   push:
@@ -7,20 +7,20 @@ on:
 jobs:
   deploy-backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ============================================
-      # 1. Setup PHP and Composer
-      # ============================================
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.4" # Laravel 12 requires >=8.2
+          php-version: "8.4"
           extensions: mbstring, bcmath, openssl, pdo_mysql, tokenizer, xml, fileinfo
-          ini-values: memory_limit=1024M
+          ini-values: post_max_size=256M, upload_max_filesize=256M, memory_limit=1024M
 
       - name: Cache Composer
         uses: actions/cache@v4
@@ -31,76 +31,30 @@ jobs:
       - name: Install composer dependencies
         run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
 
-      # ============================================
-      # 2. Prepare Deploy Folder
-      # ============================================
-      - name: Build production bundle
+      - name: Prepare release folder
         run: |
-          rm -rf deploy || true
-          mkdir deploy
-          rsync -av \
-            --exclude=node_modules \
-            --exclude=.git \
-            --exclude=.github \
-            --exclude=tests \
-            --exclude=storage/logs \
-            --exclude=storage/framework/views \
-            --exclude=public \
-            --exclude=.env \
-            ./ deploy/
+          rm -rf release || true
+          mkdir -p release
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='public' \
+            --exclude='.env' \
+            ./ release/
+          rsync -av vendor/ release/vendor/
+          mkdir -p release/storage release/bootstrap/cache
+          ls -la release
 
-          # Create required folders
-          mkdir -p deploy/storage deploy/bootstrap/cache
-          cp -r vendor deploy/vendor
-
-      - name: Zip bundle
-        run: |
-          cd deploy
-          zip -rq ../deploy.zip .
-          cd ..
-          ls -lh deploy.zip
-
-      # ============================================
-      # 3. Upload ONLY ONE FILE via FTPS
-      # ============================================
-      - name: Upload deploy.zip (FTPS)
+      - name: Deploy release (FTPS)
         uses: SamKirkland/FTP-Deploy-Action@4.3.0
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASS }}
-          protocol: ftps
           port: ${{ secrets.FTP_PORT || 21 }}
-          local-dir: ./ # upload just deploy.zip
+          protocol: ftps
+          local-dir: release/
           server-dir: ${{ secrets.FTP_PATH_LARAVEL }}/
-          include: "deploy.zip"
-          exclude: "**"
-
-      # ============================================
-      # 4. Extract and Activate (Atomic Deploy)
-      # ============================================
-      - name: Extract deploy on server + atomic switch
-        run: |
-          sudo apt-get update && sudo apt-get install -y lftp
-
-          lftp -u "${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASS }}" -e "
-            set ftps:initial-prot '';
-            set ftp:ssl-force true;
-            set ftp:ssl-protect-data true;
-
-            # Go to target path
-            cd ${{ secrets.FTP_PATH_LARAVEL }}
-
-            # Create new release folder
-            mkdir release_$(date +%s)
-            cd release_$(date +%s)
-
-            # Unzip deploy.zip
-            unzip ../deploy.zip
-
-            # Switch symlink
-            rm -f current
-            ln -s release_$(date +%s) current
-
-            bye
-          " ${{ secrets.FTP_SERVER }}
+          # optional: passive mode and other args can be added if needed
