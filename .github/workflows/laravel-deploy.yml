@@ -1,4 +1,4 @@
-name: Laravel CI/CD -> SFTP (zip upload)
+name: Laravel CI/CD -> FTPS (upload release)
 
 on:
   push:
@@ -15,18 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.FTP_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          echo "SSH key configured ✓"
-
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: "8.4"
           extensions: mbstring, bcmath, openssl, pdo_mysql, tokenizer, xml, fileinfo
+          ini-values: post_max_size=256M, upload_max_filesize=256M, memory_limit=1024M
 
       - name: Cache Composer
         uses: actions/cache@v4
@@ -53,37 +47,14 @@ jobs:
           mkdir -p release/storage release/bootstrap/cache
           ls -la release
 
-      - name: Zip release
-        run: |
-          cd release
-          zip -r ../release.zip . >/dev/null
-          cd ..
-          ls -lh release.zip
-
-      - name: Upload release.zip to server (SCP, no host check)
-        run: |
-          # ensure key is present
-          echo "${{ secrets.FTP_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.FTP_PORT }}" release.zip "${{ secrets.FTP_USERNAME }}@${{ secrets.FTP_SERVER }}:/tmp"
-
-      - name: Unzip on server and move to target (ssh, no host check)
-        run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -p "${{ secrets.FTP_PORT }}" "${{ secrets.FTP_USERNAME }}@${{ secrets.FTP_SERVER }}" <<'SSH_EOF'
-            set -e
-            TARGET_DIR="${{ secrets.FTP_PATH_LARAVEL }}"
-            mkdir -p "$TARGET_DIR"
-            if [ -d "$TARGET_DIR" ]; then
-              mv "$TARGET_DIR" "${TARGET_DIR}_backup_$(date +%s)" || true
-            fi
-            unzip -o /tmp/release.zip -d "$TARGET_DIR"
-            rm -f /tmp/release.zip
-            chmod -R 775 "$TARGET_DIR/storage" "$TARGET_DIR/bootstrap/cache" || true
-            cd "$TARGET_DIR"
-            composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader || true
-            php artisan migrate --force || true
-            php artisan config:cache || true
-            php artisan route:cache || true
-            php artisan view:cache || true
-            echo "Post-deploy done."
-          SSH_EOF
+      - name: Deploy release (FTPS)
+        uses: SamKirkland/FTP-Deploy-Action@4.3.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASS }}
+          port: ${{ secrets.FTP_PORT || 21 }}
+          protocol: ftps
+          local-dir: release
+          server-dir: ${{ secrets.FTP_PATH_LARAVEL }}
+          # optional: passive mode and other args can be added if needed
