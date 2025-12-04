@@ -15,12 +15,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Add SSH known hosts
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -p "${{ secrets.FTP_PORT }}" "${{ secrets.FTP_SERVER }}" >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
-
       - name: Setup SSH key
         run: |
           echo "${{ secrets.FTP_SSH_KEY }}" > ~/.ssh/id_rsa
@@ -64,39 +58,34 @@ jobs:
           cd ..
           ls -lh release.zip
 
-      - name: Upload release.zip to server (SCP)
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          key: ${{ secrets.FTP_SSH_KEY }}
-          port: ${{ secrets.FTP_PORT }}
-          source: "release.zip"
-          target: "/tmp"
+            - name: Upload release.zip to server (SCP, no host check)
+        run: |
+          echo "${{ secrets.FTP_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.FTP_PORT }}" release.zip "${{ secrets.FTP_USERNAME }}@${{ secrets.FTP_SERVER }}:/tmp"
 
-      - name: Unzip on server and move to target
-        uses: appleboy/ssh-action@v0.1.6
-        with:
-          host: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          key: ${{ secrets.FTP_SSH_KEY }}
-          port: ${{ secrets.FTP_PORT }}
-          script: |
+      - name: Unzip on server and move to target (ssh, no host check)
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -p "${{ secrets.FTP_PORT }}" "${{ secrets.FTP_USERNAME }}@${{ secrets.FTP_SERVER }}" <<'SSH_EOF'
             set -e
             TARGET_DIR="${{ secrets.FTP_PATH_LARAVEL }}"
-            # create target dir if not exists
             mkdir -p "$TARGET_DIR"
-            # backup existing folder (optional)
             if [ -d "$TARGET_DIR" ]; then
               mv "$TARGET_DIR" "${TARGET_DIR}_backup_$(date +%s)" || true
             fi
-            # unzip into target
             unzip -o /tmp/release.zip -d "$TARGET_DIR"
-            # cleanup
             rm -f /tmp/release.zip
-            # set permissive permissions for storage & cache
             chmod -R 775 "$TARGET_DIR/storage" "$TARGET_DIR/bootstrap/cache" || true
-            echo "Deployed to $TARGET_DIR"
+            cd "$TARGET_DIR"
+            # optional composer/migrate
+            composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader || true
+            php artisan migrate --force || true
+            php artisan config:cache || true
+            php artisan route:cache || true
+            php artisan view:cache || true
+            echo "Post-deploy done."
+          SSH_EOF
+
 
       - name: Run post-deploy commands (composer migrate + optimize)
         uses: appleboy/ssh-action@v0.1.6
