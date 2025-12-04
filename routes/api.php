@@ -63,16 +63,16 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/search', [CategoryController::class, 'searchCategories']);
     });
 
-    // ✅ Public Community Posts (tanpa auth)
-    Route::prefix('community')->name('community.')->group(function () {
-        Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
-        Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
-        Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
-        Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
-        Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
-    });
 });
 
+// ✅ Public Community Posts (tanpa auth)
+Route::prefix('community')->name('community.')->group(function () {
+    Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
+    Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
+    Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
+    Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
+    Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
+});
 Route::middleware('web')->group(function () {
     Route::get('images/{image}', [ImageController::class, 'show'])
         ->name('images.show');
