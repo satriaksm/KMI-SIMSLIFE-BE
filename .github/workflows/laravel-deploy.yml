@@ -72,7 +72,7 @@ jobs:
           protocol: ftps
           port: ${{ secrets.FTP_PORT || 21 }}
           local-dir: ./ # upload just deploy.zip
-          server-dir: ${{ secrets.FTP_PATH_LARAVEL }}
+          server-dir: ${{ secrets.FTP_PATH_LARAVEL }}/
           include: "deploy.zip"
           exclude: "**"
 
