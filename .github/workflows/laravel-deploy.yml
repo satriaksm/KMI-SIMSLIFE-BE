@@ -17,8 +17,10 @@ jobs:
 
       - name: Setup SSH key
         run: |
+          mkdir -p ~/.ssh
           echo "${{ secrets.FTP_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          echo "SSH key configured ✓"
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
