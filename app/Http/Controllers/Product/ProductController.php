@@ -111,6 +111,106 @@ class ProductController
         return response()->json($query->paginate($perPage));
     }
 
+    public function publicIndexToko(Request $request)
+    {
+        $data = $request->validate([
+            'limit' => ['nullable', 'integer', 'min:1', 'max:50'],
+        ]);
+
+        $limit = $data['limit'] ?? 12;
+
+        // Ambil produk dari merchant dengan segmentation_id = 2 (Toko)
+        $products = Product::where('status', 'published')
+            ->whereHas('merchant', function ($q) {
+                $q->where('status', 'approved')
+                    ->where('segmentation_id', 1); // Toko
+            })
+            ->with([
+                'coverImage',
+                'merchant:id,name,slug',
+                'categories:id,name',
+            ])
+            ->withCount('variants')
+            ->addSelect([
+                'products.*',
+                'min_price' => function ($q) {
+                    $q->selectRaw('MIN(price)')
+                        ->from('product_variants')
+                        ->whereColumn('product_id', 'products.id');
+                },
+                'max_price' => function ($q) {
+                    $q->selectRaw('MAX(price)')
+                        ->from('product_variants')
+                        ->whereColumn('product_id', 'products.id');
+                },
+                'total_stock' => function ($q) {
+                    $q->selectRaw('COALESCE(SUM(stock), 0)')
+                        ->from('product_variants')
+                        ->whereColumn('product_id', 'products.id');
+                },
+            ])
+            ->inRandomOrder()
+            ->limit($limit)
+            ->get();
+
+        return response()->json([
+            'data' => $products,
+            'count' => $products->count(),
+        ]);
+    }
+
+    /**
+     * Public: Get random products for Kuliner homepage
+     * No authentication required
+     */
+    public function publicIndexKuliner(Request $request)
+    {
+        $data = $request->validate([
+            'limit' => ['nullable', 'integer', 'min:1', 'max:50'],
+        ]);
+
+        $limit = $data['limit'] ?? 12;
+
+        // Ambil produk dari merchant dengan segmentation_id = 1 (Kuliner)
+        $products = Product::where('status', 'published')
+            ->whereHas('merchant', function ($q) {
+                $q->where('status', 'approved')
+                    ->where('segmentation_id', 2); // Kuliner
+            })
+            ->with([
+                'coverImage',
+                'merchant:id,name,slug',
+                'categories:id,name',
+            ])
+            ->withCount('variants')
+            ->addSelect([
+                'products.*',
+                'min_price' => function ($q) {
+                    $q->selectRaw('MIN(price)')
+                        ->from('product_variants')
+                        ->whereColumn('product_id', 'products.id');
+                },
+                'max_price' => function ($q) {
+                    $q->selectRaw('MAX(price)')
+                        ->from('product_variants')
+                        ->whereColumn('product_id', 'products.id');
+                },
+                'total_stock' => function ($q) {
+                    $q->selectRaw('COALESCE(SUM(stock), 0)')
+                        ->from('product_variants')
+                        ->whereColumn('product_id', 'products.id');
+                },
+            ])
+            ->inRandomOrder()
+            ->limit($limit)
+            ->get();
+
+        return response()->json([
+            'data' => $products,
+            'count' => $products->count(),
+        ]);
+    }
+
     /**
      * Public: Get product detail by slug (PDP - Product Detail Page)
      * No authentication required
@@ -1892,4 +1992,122 @@ class ProductController
             ->download('products-' . now()->format('Ymd-His') . '.pdf');
     }
 
+    /**
+     * Bulk delete products
+     * DELETE /api/products/bulk-delete
+     */
+    public function bulkDelete(Request $request)
+    {
+        $data = $request->validate([
+            'product_slugs' => ['required', 'array', 'min:1'],
+            'product_slugs.*' => ['required', 'string', 'exists:products,slug'],
+        ]);
+
+        $user = $request->user();
+        $slugs = $data['product_slugs'];
+
+        // Get products and validate ownership
+        $products = Product::whereIn('slug', $slugs)->get();
+
+        $unauthorizedCount = 0;
+        $deletedCount = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($products as $product) {
+                // Check ownership
+                $error = $this->abortIfNotOwnerOrNotAllowed($user->id, $product->merchant_id);
+                if ($error) {
+                    $unauthorizedCount++;
+                    continue;
+                }
+
+                // Delete product files
+                $this->cleanupProductFiles($product);
+
+                // Delete product record
+                $product->delete();
+                $deletedCount++;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => "Berhasil menghapus {$deletedCount} produk",
+                'deleted_count' => $deletedCount,
+                'unauthorized_count' => $unauthorizedCount,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Bulk delete products failed', [
+                'error' => $e->getMessage(),
+                'slugs' => $slugs,
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal menghapus produk',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Bulk update product status
+     * POST /api/products/bulk-update-status
+     */
+    public function bulkUpdateStatus(Request $request)
+    {
+        $data = $request->validate([
+            'product_slugs' => ['required', 'array', 'min:1'],
+            'product_slugs.*' => ['required', 'string', 'exists:products,slug'],
+            'status' => ['required', 'in:draft,published,archived'],
+        ]);
+
+        $user = $request->user();
+        $slugs = $data['product_slugs'];
+        $newStatus = $data['status'];
+
+        // Get products and validate ownership
+        $products = Product::whereIn('slug', $slugs)->get();
+
+        $unauthorizedCount = 0;
+        $updatedCount = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($products as $product) {
+                // Check ownership
+                $error = $this->abortIfNotOwnerOrNotAllowed($user->id, $product->merchant_id);
+                if ($error) {
+                    $unauthorizedCount++;
+                    continue;
+                }
+
+                // Update status
+                $product->update(['status' => $newStatus]);
+                $updatedCount++;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => "Berhasil mengubah status {$updatedCount} produk menjadi {$newStatus}",
+                'updated_count' => $updatedCount,
+                'unauthorized_count' => $unauthorizedCount,
+                'new_status' => $newStatus,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Bulk update status failed', [
+                'error' => $e->getMessage(),
+                'slugs' => $slugs,
+                'status' => $newStatus,
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal mengubah status produk',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
 }

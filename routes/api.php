@@ -36,10 +36,15 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
         Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
 
+        Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
+        Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
+
         // ✅ Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
             ->where('slug', '^[a-z0-9-]+$')
             ->name('show');
+
+
 
         // Get variant availability by selected option values
         Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
@@ -170,6 +175,10 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             // Product CRUD list & create
             Route::get('/', [ProductController::class, 'index'])->name('index');
             Route::post('/', [ProductController::class, 'store'])->name('store');
+
+            Route::post('/bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
+            Route::post('/bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
+
 
             // ✅ Move export routes ABOVE dynamic {slug}
             Route::get('/export/excel', [ProductController::class, 'exportExcel']);
