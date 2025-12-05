@@ -40,31 +40,58 @@ class Merchant extends Model
         parent::boot();
 
         static::creating(function ($merchant) {
+            // ✅ Generate slug on create
             if (empty($merchant->slug)) {
-                $merchant->slug = Str::slug($merchant->name);
-
-                // Ensure uniqueness
-                $count = static::where('slug', 'like', $merchant->slug . '%')->count();
-                if ($count > 0) {
-                    $merchant->slug = $merchant->slug . '-' . ($count + 1);
-                }
+                $merchant->slug = static::generateUniqueSlug($merchant->name);
             }
         });
 
         static::updating(function ($merchant) {
-            // Update slug jika nama berubah
-            if ($merchant->isDirty('name') && empty($merchant->slug)) {
-                $merchant->slug = Str::slug($merchant->name);
-
-                // Ensure uniqueness
-                $count = static::where('slug', 'like', $merchant->slug . '%')
-                    ->where('id', '!=', $merchant->id)
-                    ->count();
-                if ($count > 0) {
-                    $merchant->slug = $merchant->slug . '-' . ($count + 1);
-                }
+            // ✅ Update slug only if name changed and slug is empty or being manually set
+            if ($merchant->isDirty('name') && !$merchant->isDirty('slug')) {
+                $merchant->slug = static::generateUniqueSlug($merchant->name, $merchant->id);
             }
         });
+    }
+
+    /**
+     * ✅ Generate unique slug
+     *
+     * @param string $name
+     * @param int|null $ignoreId - ID to ignore (for updates)
+     * @return string
+     */
+    public static function generateUniqueSlug(string $name, ?int $ignoreId = null): string
+    {
+        $slug = Str::slug($name);
+        $originalSlug = $slug;
+        $count = 1;
+
+        // ✅ Loop until we find unique slug
+        while (static::slugExists($slug, $ignoreId)) {
+            $slug = $originalSlug . '-' . $count;
+            $count++;
+        }
+
+        return $slug;
+    }
+
+    /**
+     * ✅ Check if slug exists
+     *
+     * @param string $slug
+     * @param int|null $ignoreId
+     * @return bool
+     */
+    protected static function slugExists(string $slug, ?int $ignoreId = null): bool
+    {
+        $query = static::where('slug', $slug);
+
+        if ($ignoreId) {
+            $query->where('id', '!=', $ignoreId);
+        }
+
+        return $query->exists();
     }
 
     // ✅ Relasi ke Products
@@ -122,5 +149,29 @@ class Merchant extends Model
             return url('storage/' . $this->logo_path);
         }
         return null;
+    }
+
+    /**
+     * ✅ Scope: Only approved merchants
+     */
+    public function scopeApproved($query)
+    {
+        return $query->where('status', 'approved');
+    }
+
+    /**
+     * ✅ Scope: Only pending merchants
+     */
+    public function scopePending($query)
+    {
+        return $query->where('status', 'pending');
+    }
+
+    /**
+     * ✅ Scope: Only rejected merchants
+     */
+    public function scopeRejected($query)
+    {
+        return $query->where('status', 'rejected');
     }
 }
