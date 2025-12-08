@@ -11,7 +11,7 @@ class JasaSeeder extends Seeder
     {
         Jasa::insert([
             [
-                'title' => 'Service AC',
+                'title' => 'Service Kran Bocor',
                 'vendor' => 'ArcticFix',
                 'price' => 100000,
                 'image' => 'https://picsum.photos/seed/ac/400/300',
@@ -21,7 +21,7 @@ class JasaSeeder extends Seeder
                 'description' => 'Layanan servis dan perawatan AC profesional.',
             ],
             [
-                'title' => 'Les Privat',
+                'title' => 'Tambal Ban',
                 'vendor' => 'TutorKu',
                 'price' => 150000,
                 'image' => 'https://picsum.photos/seed/les/400/300',
@@ -31,7 +31,7 @@ class JasaSeeder extends Seeder
                 'description' => 'Les privat berbagai mata pelajaran dengan tutor berpengalaman.',
             ],
             [
-                'title' => 'Laundry',
+                'title' => 'Laundry Sepatu',
                 'vendor' => 'CuciBersih',
                 'price' => 50000,
                 'image' => 'https://picsum.photos/seed/laundry/400/300',
