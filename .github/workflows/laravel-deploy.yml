@@ -1,79 +1,96 @@
-name: Deploy Backend to Server
+name: Laravel CI/CD -> FTPS
 
 on:
   push:
     branches: [staging]
+  workflow_dispatch:
 
 jobs:
-  deploy:
+  deploy-backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare target dir
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script_stop: true
-          script: |
-            set -Eeuo pipefail
-            sudo mkdir -p /var/www/KMI-SIMSLIFE-BE
-            # berikan ke user SSH agar langkah berikut bisa tulis
-            sudo chown -R "$USER:$USER" /var/www/KMI-SIMSLIFE-BE
+          php-version: "8.4"
+          extensions: mbstring, bcmath, openssl, pdo_mysql, tokenizer, xml, fileinfo
+          ini-values: post_max_size=256M, upload_max_filesize=256M, memory_limit=1024M
 
-      - name: Upload app to server
-        uses: appleboy/scp-action@v0.1.7
+      - name: Install Composer dependencies
+        run: |
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          composer dump-autoload --optimize
+
+      - name: Prepare release folder
+        run: |
+          rm -rf release || true
+          mkdir -p release
+
+          # ✅ Copy source code (exclude vendor, node_modules, tests, etc)
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='vendor' \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='public' \
+            --exclude='.env' \
+            --exclude='storage/logs/*' \
+            --exclude='storage/framework/cache/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='storage/framework/views/*' \
+            ./ release/
+
+          # ✅ Create necessary directories
+          mkdir -p release/storage/{app,framework,logs}
+          mkdir -p release/storage/framework/{cache,sessions,views}
+          mkdir -p release/bootstrap/cache
+
+          echo "📦 Release contents:"
+          ls -lah release/
+          echo ""
+          echo "📊 Release size:"
+          du -sh release/
+
+      - name: Deploy to FTPS (Source Code)
+        uses: SamKirkland/FTP-Deploy-Action@4.3.0
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          overwrite: true
-          target: /var/www/KMI-SIMSLIFE-BE
-          source: app,bootstrap,config,database,public,resources,routes,artisan,composer.json,composer.lock
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASS }}
+          port: ${{ secrets.FTP_PORT || 21 }}
+          protocol: ftps
+          passive: true
+          local-dir: release/
+          server-dir: ${{ secrets.FTP_PATH_LARAVEL }}/
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/vendor/**
+            **/tests/**
+            **/.env
 
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script_stop: true
-          debug: true
-          command_timeout: 30m
-          script: |
-            set -Eeuo pipefail
-            REPO_DIR=/var/www/KMI-SIMSLIFE-BE
-            cd "$REPO_DIR"
+      - name: Deployment Summary
+        if: success()
+        run: |
+          echo "### ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
 
-            # 1) Siapkan folder yang diperlukan + izin sebelum composer/artisan
-            mkdir -p storage/{app,framework/{cache,sessions,views},logs} bootstrap/cache
-            # pastikan user SSH bisa tulis saat menjalankan artisan/composer
-            chown -R "$USER:$USER" storage bootstrap/cache
-            chmod -R ug+rwX storage bootstrap/cache
-            touch storage/logs/laravel.log || true
-            chmod 664 storage/logs/laravel.log || true
-
-            # 2) Install vendor (package:discover akan menulis ke bootstrap/cache)
-            composer install --prefer-dist --no-interaction --optimize-autoloader --no-dev
-
-            # 3) Jalankan artisan (cache clear lalu migrate)
-            php artisan optimize:clear
-            php artisan migrate --force
-
-            # 4) Build cache untuk performa
-            php artisan config:cache
-            php artisan route:cache
-
-            # 5) Serahkan izin runtime ke www-data (PHP-FPM)
-            sudo chown -R www-data:www-data storage bootstrap/cache
-            sudo find storage -type d -exec chmod 775 {} \;
-            sudo find storage -type f -exec chmod 664 {} \;
-            sudo chmod -R ug+rwX bootstrap/cache
-
-            # 6) Reload services
-            sudo systemctl reload php8.3-fpm || sudo systemctl restart php8.3-fpm
-            sudo systemctl reload nginx || sudo systemctl restart nginx
+      - name: Deployment Failed
+        if: failure()
+        run: |
+          echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Please check the logs above for details." >> $GITHUB_STEP_SUMMARY

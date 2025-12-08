@@ -1,15 +1,15 @@
 @component('mail::message')
-# Reset Password
+# Reset Kata Sandi
 
 Halo {{ $userName ?? 'Pengguna' }},
 
-Kami menerima permintaan untuk mengatur ulang password akun Anda.
+Kami menerima permintaan untuk mengatur ulang kata sandi akun Anda.
 
 @component('mail::button', ['url' => $actionUrl, 'color' => 'primary'])
-Atur Ulang Password
+Atur Ulang Kata Sandi
 @endcomponent
 
-Jika Anda tidak meminta reset password, abaikan email ini.
+Jika Anda tidak meminta reset kata sandi, abaikan email ini.
 Jika tombol di atas tidak berfungsi, klik atau salin link berikut:
 [{{ $actionUrl }}]({{ $actionUrl }})
 
