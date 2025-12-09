@@ -66,4 +66,19 @@ class User extends Authenticatable implements MustVerifyEmail
         }
         return url('storage/' . ltrim($this->profile_picture_path, '/'));
     }
+
+    public function createdEvents()
+    {
+        return $this->hasMany(Event::class, 'created_by');
+    }
+
+    public function voucherUsages()
+    {
+        return $this->hasMany(VoucherUsage::class);
+    }
+
+    public function reviewedMerchants()
+    {
+        return $this->hasMany(Merchant::class, 'reviewed_by');
+    }
 }

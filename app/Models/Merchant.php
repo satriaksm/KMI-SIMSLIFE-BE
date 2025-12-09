@@ -54,6 +54,7 @@ class Merchant extends Model
         });
     }
 
+<<<<<<< Updated upstream
     /**
      * ✅ Generate unique slug
      *
@@ -95,18 +96,18 @@ class Merchant extends Model
     }
 
     // ✅ Relasi ke Products
+=======
+>>>>>>> Stashed changes
     public function products(): HasMany
     {
         return $this->hasMany(Product::class, 'merchant_id');
     }
 
-    // Relasi ke user
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    // ✅ Relasi ke Addons
     public function addons(): HasMany
     {
         return $this->hasMany(Addon::class, 'merchant_id');
@@ -124,13 +125,13 @@ class Merchant extends Model
         return $this->belongsTo(Segmentation::class);
     }
 
-    // Banyak alamat (polimorfik)
+    // Banyak alamat 
     public function addresses(): MorphMany
     {
         return $this->morphMany(\App\Models\Adrress::class, 'addressable');
     }
 
-    // Alamat utama (opsional)
+    // Alamat utama
     public function primaryAddress(): MorphOne
     {
         return $this->morphOne(\App\Models\Adrress::class, 'addressable')
@@ -138,11 +139,10 @@ class Merchant extends Model
             ->latest();
     }
 
-    // ✅ Accessor untuk Logo URL
+    // Accessor untuk Logo URL
     public function getLogoUrlAttribute()
     {
         if ($this->logo_path) {
-            // Jika menggunakan storage public
             if (str_starts_with($this->logo_path, 'http')) {
                 return $this->logo_path;
             }
@@ -150,6 +150,7 @@ class Merchant extends Model
         }
         return null;
     }
+<<<<<<< Updated upstream
 
     /**
      * ✅ Scope: Only approved merchants
@@ -173,5 +174,24 @@ class Merchant extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+=======
+    
+    public function vouchers()
+    {
+        return $this->hasMany(Voucher::class);
+    }
+
+    public function events()
+    {
+        return $this->belongsToMany(Event::class, 'event_merchants')
+            ->using(EventMerchant::class)
+            ->withPivot('status', 'responded_at')
+            ->withTimestamps();
+    }
+
+    public function reviewer()
+    {
+        return $this->belongsTo(User::class, 'reviewed_by');
+>>>>>>> Stashed changes
     }
 }

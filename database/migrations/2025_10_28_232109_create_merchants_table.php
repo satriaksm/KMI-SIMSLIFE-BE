@@ -21,6 +21,8 @@ return new class extends Migration {
             $table->string('logo_path')->nullable();
             $table->string('phone')->nullable();
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');
+            $table->text('rejection_reason')->nullable();
+            $table->foreignId('reviewed_by')->nullable()->constrained('users')->onDelete('set null');
             $table->timestamp('response_at')->nullable();
             $table->timestamps();
         });

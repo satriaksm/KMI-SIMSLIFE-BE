@@ -19,6 +19,9 @@ use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\EventController;
+use App\Http\Controllers\VoucherController;
+use Illuminate\Http\Request;
 
 // ============================================================
 // HEALTH CHECK
@@ -75,7 +78,6 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
         Route::get('/search', [CategoryController::class, 'searchCategories']);
     });
-
 });
 
 // ✅ Public Community Posts (tanpa auth)
@@ -247,6 +249,7 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::get('/my-comments', [PostCommentController::class, 'myComments'])
             ->name('community.comments.my-comments');
     });
+<<<<<<< Updated upstream
 });
 
 // ============================================================
@@ -1102,5 +1105,33 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             ->name('community.comments.destroy');
         Route::get('/my-comments', [PostCommentController::class, 'myComments'])
             ->name('community.comments.my-comments');
+=======
+
+    // Public Events
+    Route::prefix('events')->group(function () {
+        Route::get('/', [EventController::class, 'index']);
+        Route::get('/{event}', [EventController::class, 'show']);
+    });
+
+    // Public Vouchers
+    Route::prefix('vouchers')->group(function () {
+        Route::get('/', [VoucherController::class, 'index']);
+        Route::post('/validate', [VoucherController::class, 'validateVoucher'])->middleware('auth:sanctum');
+    });
+
+    // Merchant Vouchers
+    Route::middleware('role:umkm-owner')->prefix('merchant/vouchers')->group(function () {
+        Route::post('/', [VoucherController::class, 'store']);
+    });
+
+    // Admin Events
+    Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(function () {
+        Route::get('/events', [EventController::class, 'index']);
+        Route::post('/events', [EventController::class, 'store']);
+        Route::get('/events/{id}', [EventController::class, 'show']);
+        Route::put('/events/{id}', [EventController::class, 'update']);
+        Route::delete('/events/{id}', [EventController::class, 'destroy']);
+        Route::post('/events/{id}/invite-merchants', [EventController::class, 'inviteMerchants']);
+>>>>>>> Stashed changes
     });
 });

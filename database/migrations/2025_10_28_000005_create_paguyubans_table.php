@@ -16,6 +16,7 @@ return new class extends Migration {
             $table->string('description')->nullable();
             $table->string('image_path')->nullable();
             $table->string('contact_info')->nullable();
+            $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
     }
