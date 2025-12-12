@@ -1,24 +1,25 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\JasaController;
 use App\Http\Controllers\ImageController;
-use App\Http\Controllers\CategoryController;
 
 // Controllers lama (Jasa / Promo / Orders)
-use App\Http\Controllers\JasaController;
-use App\Http\Controllers\PromoController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PromoController;
+use App\Http\Controllers\CategoryController;
 
 // Controllers baru
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\SegmentationController;
+use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\Product\ProductController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
-use App\Http\Controllers\CommunityPostController;
-use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\ProductOptionValueImageController;
 
 // ============================================================
 // HEALTH CHECK
@@ -86,9 +87,15 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
+
 Route::middleware('web')->group(function () {
     Route::get('images/{image}', [ImageController::class, 'show'])
         ->name('images.show');
+});
+
+Route::middleware('web')->group(function () {
+    Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
+        ->name('images.product-option-value.show');
 });
 
 
