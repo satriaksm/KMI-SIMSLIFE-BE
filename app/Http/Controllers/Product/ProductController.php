@@ -313,6 +313,31 @@ class ProductController
                 $addr?->province?->name,
             ]));
 
+        // ✅ Ambil 5 produk lain dari merchant yang sama, acak, exclude produk ini
+        $relatedProducts = Product::where('merchant_id', $product->merchant_id)
+            ->where('id', '!=', $product->id)
+            ->where('status', 'published')
+            ->with(['coverImage'])
+            ->inRandomOrder()
+            ->limit(5)
+            ->get()
+            ->map(function ($p) {
+                return [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'slug' => $p->slug,
+                    'min_price' => $p->variants->min('price'),
+                    'max_price' => $p->variants->max('price'),
+                    'merchant' => [
+                        'id' => $p->merchant->id,
+                        'name' => $p->merchant->name,
+                        'slug' => $p->merchant->slug,
+                    ],
+                    'cover_image' => $p->coverImage,
+                ];
+            })
+            ->values();
+
         return response()->json([
             'product' => $product,              // berisi images, options(+values), variants(+optionValues dgn option_name), addonGroups(+options+addon)
             'price_range' => $priceRange,       // min & max price dari variants
@@ -326,6 +351,7 @@ class ProductController
             ],
             'min_purchase' => $minPurchase,     // minimal beli
             'merchant_address' => $merchantAddress,
+            'related_products' => $relatedProducts, // ✅ produk lain di toko ini
         ]);
     }
 
