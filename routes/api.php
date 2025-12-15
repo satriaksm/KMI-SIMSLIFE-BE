@@ -237,9 +237,6 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
                 ->where('slug', '^[a-z0-9-]+$');
 
-            // Upload images by slug
-            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
-                ->where('slug', '^[a-z0-9-]+$');
         });
     });
 

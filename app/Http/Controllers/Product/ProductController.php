@@ -21,9 +21,10 @@ use Intervention\Image\ImageManager as ImageIntervention;
 class ProductController
 {
     private const ALLOWED_SEGMENT_IDS = [1, 2];
-    private const MAX_VARIANTS = 50;
-    private const MAX_OPTIONS = 2;
+    private const MAX_VARIANT_COMBINATIONS = 50;
+    private const MAX_VARIANTS = 2;
     private const MAX_ADDON_GROUPS = 10;
+    private const MAX_ADDON_GROUP_OPTIONS = 10;
 
     // ============================================================
     // PUBLIC ENDPOINTS (No Auth Required)
@@ -542,7 +543,8 @@ class ProductController
         // Build query using centralized helper
         $query = $this->buildFilteredProductQuery($merchantId, $data);
 
-        $perPage = $data['per_page'] ?? 15;
+        $perPage = $data['per_page'] ?? 10;
+        // $perPage = 1;
         $result = $query->paginate($perPage);
 
         return response()->json([
@@ -603,10 +605,10 @@ class ProductController
 
             // Non-variant: harga & stok langsung
             'price' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
+            'stock' => ['nullable', 'integer', 'min:0', 'max:9999'],
 
             // Variants (optional)
-            'variants' => ['nullable', 'array', 'max:2'],
+            'variants' => ['nullable', 'array', 'max:' . self::MAX_VARIANTS],
             'variants.*.name' => ['required', 'string', 'max:100'],
             'variants.*.uses_images' => ['required', 'in:0,1'],
             'variants.*.options' => ['required', 'array', 'min:1'],
@@ -615,11 +617,11 @@ class ProductController
             'variants.*.options.*.images.*.file' => ['file', 'image', 'max:5120'],
 
             // Combinations (jika pakai variants)
-            'combinations' => ['nullable', 'array', 'max:' . self::MAX_VARIANTS],
+            'combinations' => ['nullable', 'array', 'max:' . self::MAX_VARIANT_COMBINATIONS],
             'combinations.*.combination' => ['required', 'string', 'max:255'],
             'combinations.*.sku' => ['nullable', 'string', 'max:100', 'unique:product_variants,sku'], // ✅ UPDATED: Add unique validation
             'combinations.*.price' => ['required', 'numeric', 'min:0'],
-            'combinations.*.stock' => ['required', 'integer', 'min:0'],
+            'combinations.*.stock' => ['required', 'integer', 'min:0', 'max:9999'],
             'combinations.*.attributes' => ['required', 'array'],
             'combinations.*.attributes.*.name' => ['required', 'string'],
             'combinations.*.attributes.*.value' => ['required', 'string'],
@@ -629,16 +631,34 @@ class ProductController
             'add_on_groups.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.min_selection' => ['required', 'integer', 'min:0'],
             'add_on_groups.*.max_selection' => ['required', 'integer', 'min:1'],
-            'add_on_groups.*.options' => ['required', 'array', 'min:1'],
+            'add_on_groups.*.options' => ['required', 'array', 'min:1', 'max:' . (self::MAX_ADDON_GROUP_OPTIONS)],
             'add_on_groups.*.options.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
         ]);
+
+        if (count($data['images']) > 6) {
+            return response()->json([
+                'message' => 'Maksimal upload 6 foto produk.',
+            ], 422);
+        }
         // Validasi merchant ownership & segment
         $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
         if (is_array($merchantOrError) && isset($merchantOrError['error'])) {
             return $merchantOrError['error'];
         }
         $merchant = $merchantOrError;
+
+        if (!empty($data['variants'])) {
+            $variantNames = collect($data['variants'])
+                ->pluck('name')
+                ->map(fn($name) => strtolower(trim($name)));
+
+            if ($variantNames->count() !== $variantNames->unique()->count()) {
+                return response()->json([
+                    'message' => 'Nama varian tidak boleh sama.',
+                ], 422);
+            }
+        }
 
         // Validasi: jika tidak pakai variants, harus ada price & stock
         $useVariants = !empty($data['variants']);
@@ -694,6 +714,39 @@ class ProductController
             }
         }
 
+        // ==============================
+        // VALIDASI: Nama addon group tidak boleh sama
+        // ==============================
+        if (!empty($data['add_on_groups'])) {
+            $groupNames = collect($data['add_on_groups'])
+                ->pluck('name')
+                ->map(fn($name) => strtolower(trim($name)));
+
+            if ($groupNames->count() !== $groupNames->unique()->count()) {
+                return response()->json([
+                    'message' => 'Nama grup add-on tidak boleh sama.',
+                ], 422);
+            }
+        }
+        // ==============================
+        // VALIDASI: Nama addon option tidak boleh duplikat dalam 1 grup
+        // ==============================
+        if (!empty($data['add_on_groups'])) {
+            foreach ($data['add_on_groups'] as $groupIndex => $group) {
+                if (!empty($group['options'])) {
+                    $optionNames = collect($group['options'])
+                        ->pluck('name')
+                        ->map(fn($name) => strtolower(trim($name)));
+
+                    if ($optionNames->count() !== $optionNames->unique()->count()) {
+                        return response()->json([
+                            'message' => "Nama opsi add-on pada grup '{$group['name']}' tidak boleh sama.",
+                        ], 422);
+                    }
+                }
+            }
+        }
+
         DB::beginTransaction();
         try {
             // 1. CREATE PRODUCT
@@ -712,6 +765,8 @@ class ProductController
                 $categoryIds = array_merge($categoryIds, $data['sub_categories']);
             }
             $product->categories()->attach(array_unique($categoryIds));
+
+
 
             // 3. UPLOAD PRODUCT IMAGES
             $this->storeProductImages($product, $data['images'], $data['cover_image_index']);
@@ -875,36 +930,57 @@ class ProductController
     private function createAddonGroups(Product $product, Merchant $merchant, array $groups): void
     {
         foreach ($groups as $groupData) {
-            // Tentukan selection_type berdasarkan max_selection
+            $groupName = trim($groupData['name']);
+
+            // ✅ EXTRA SAFETY: cek group duplikat di product
+            $groupExists = $product->addonGroups()
+                ->whereRaw('LOWER(addon_group_name) = ?', [strtolower($groupName)])
+                ->exists();
+
+            if ($groupExists) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'add_on_groups' => "Nama grup add-on '{$groupName}' tidak boleh sama.",
+                ]);
+            }
+
             $selectionType = ($groupData['max_selection'] === 1) ? 'single' : 'multiple';
 
-            // ✅ FIXED: Langsung gunakan min_selection dari input
-            // min_selection >= 1 = wajib pilih minimal X
-            // min_selection = 0 = opsional (boleh tidak pilih)
             $addonGroup = $product->addonGroups()->create([
-                'addon_group_name' => $groupData['name'],
+                'addon_group_name' => $groupName,
                 'selection_type' => $selectionType,
-                'min_selection' => $groupData['min_selection'], // ✅ Gunakan langsung dari input
+                'min_selection' => $groupData['min_selection'],
                 'max_selection' => $groupData['max_selection'],
             ]);
 
-            // Create addons + attach to group
+            $usedOptionNames = [];
+
             foreach ($groupData['options'] as $optionData) {
-                // Create or find addon
+                $optionName = strtolower(trim($optionData['name']));
+
+                // ✅ EXTRA SAFETY: cek option duplikat dalam group
+                if (in_array($optionName, $usedOptionNames)) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'add_on_groups' =>
+                            "Nama opsi '{$optionData['name']}' pada grup '{$groupName}' tidak boleh sama.",
+                    ]);
+                }
+
+                $usedOptionNames[] = $optionName;
+
                 $addon = $merchant->addons()->firstOrCreate(
                     ['addon_name' => $optionData['name']],
                     ['addon_name' => $optionData['name']]
                 );
 
-                // Attach addon to group
                 $addonGroup->options()->create([
                     'addon_id' => $addon->id,
                     'addon_price' => $optionData['price'],
-                    'addon_stock' => null, // unlimited by default
+                    'addon_stock' => null,
                 ]);
             }
         }
     }
+
 
     /**
      * HELPER: Generate unique slug
@@ -1049,10 +1125,10 @@ class ProductController
             // Single Product Info
             'sku' => ['nullable', 'string', 'max:100'],
             'price' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
+            'stock' => ['nullable', 'integer', 'min:0', 'max:9999'],
 
             // Variants (Options)
-            'variants' => ['nullable', 'array', 'max:2'],
+            'variants' => ['nullable', 'array', 'max:' . self::MAX_VARIANTS],
             'variants.*.id' => ['nullable', 'integer'],
             'variants.*.name' => ['required', 'string', 'max:100'],
             'variants.*.uses_images' => ['required', 'in:0,1'],
@@ -1063,24 +1139,108 @@ class ProductController
             'variants.*.options.*.images.*.file' => ['file', 'image', 'max:5120'],
 
             // Combinations (SKUs)
-            'combinations' => ['nullable', 'array'],
+            'combinations' => ['nullable', 'array', 'max:' . self::MAX_VARIANT_COMBINATIONS],
             'combinations.*.sku' => ['nullable', 'string', 'max:100'],
             'combinations.*.price' => ['required', 'numeric', 'min:0'],
-            'combinations.*.stock' => ['required', 'integer', 'min:0'],
+            'combinations.*.stock' => ['required', 'integer', 'min:0', 'max:9999'],
             'combinations.*.attributes' => ['required', 'array'],
 
             // Addons
-            'add_on_groups' => ['nullable', 'array'],
+            'add_on_groups' => ['nullable', 'array', 'max:' . self::MAX_ADDON_GROUPS],
             'add_on_groups.*.id' => ['nullable', 'integer'],
             'add_on_groups.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.min_selection' => ['required', 'integer', 'min:0'],
             'add_on_groups.*.max_selection' => ['required', 'integer', 'min:1'],
-            'add_on_groups.*.options' => ['required', 'array', 'min:1'],
+            'add_on_groups.*.options' => ['required', 'array', 'min:1', 'max:' . (self::MAX_ADDON_GROUP_OPTIONS)],
             'add_on_groups.*.options.*.id' => ['nullable', 'integer'],
             'add_on_groups.*.options.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
         ]);
+        $existingCount = isset($data['existing_images'])
+            ? count($data['existing_images'])
+            : 0;
 
+        $newCount = isset($data['images'])
+            ? count($data['images'])
+            : 0;
+
+        $totalImages = $existingCount + $newCount;
+
+        if ($totalImages > 6) {
+            return response()->json([
+                'message' => "Maksimal upload 6 foto produk. Saat ini {$totalImages} foto dipilih.",
+            ], 422);
+        }
+
+        if (!empty($data['variants'])) {
+            $variantNames = collect($data['variants'])
+                ->pluck('name')
+                ->map(fn($name) => strtolower(trim($name)));
+
+            if ($variantNames->count() !== $variantNames->unique()->count()) {
+                return response()->json([
+                    'message' => 'Nama varian tidak boleh sama.',
+                ], 422);
+            }
+        }
+        // Validasi: jika tidak pakai variants, harus ada price & stock
+        $useVariants = !empty($data['variants']);
+        if (!$useVariants && (!isset($data['price']) || !isset($data['stock']))) {
+            return response()->json([
+                'message' => 'Harga dan stok wajib diisi jika tidak menggunakan variasi.',
+            ], 422);
+        }
+
+        // Validasi: jika pakai variants, harus ada combinations
+        if ($useVariants && empty($data['combinations'])) {
+            return response()->json([
+                'message' => 'Kombinasi variasi wajib diisi jika menggunakan variasi.',
+            ], 422);
+        }
+        // Validasi: combinations tidak boleh duplikat
+        if ($useVariants) {
+            $combinations = collect($data['combinations']);
+            $uniqueCombinations = $combinations->pluck('combination')->unique();
+
+            if ($combinations->count() !== $uniqueCombinations->count()) {
+                return response()->json([
+                    'message' => 'Kombinasi variasi tidak boleh duplikat.',
+                ], 422);
+            }
+        }
+        if (!empty($data['add_on_groups'])) {
+            $groupNames = collect($data['add_on_groups'])
+                ->mapWithKeys(function ($group) {
+                    return [
+                        strtolower(trim($group['name'])) => $group['id'] ?? null
+                    ];
+                });
+
+            if ($groupNames->keys()->count() !== $groupNames->keys()->unique()->count()) {
+                return response()->json([
+                    'message' => 'Nama grup add-on tidak boleh sama.',
+                ], 422);
+            }
+        }
+
+        if (!empty($data['add_on_groups'])) {
+            foreach ($data['add_on_groups'] as $group) {
+                if (!empty($group['options'])) {
+                    $optionNames = collect($group['options'])
+                        ->mapWithKeys(function ($opt) {
+                            return [
+                                strtolower(trim($opt['name'])) => $opt['id'] ?? null
+                            ];
+                        });
+
+                    if ($optionNames->keys()->count() !== $optionNames->keys()->unique()->count()) {
+                        return response()->json([
+                            'message' => "Nama opsi add-on pada grup '{$group['name']}' tidak boleh sama.",
+                        ], 422);
+                    }
+                }
+            }
+        }
         DB::beginTransaction();
         try {
             // 1. UPDATE BASIC INFO
@@ -1111,6 +1271,7 @@ class ProductController
                 }
                 $product->categories()->sync(array_unique($categoryIds));
             }
+
 
             // 3. UPDATE IMAGES
             $this->updateProductImages($product, $data);
@@ -1162,7 +1323,6 @@ class ProductController
             return response()->json([
                 'message' => 'Gagal memperbarui produk.',
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString() // Debugging
             ], 500);
         }
     }
@@ -1294,17 +1454,34 @@ class ProductController
     {
         $submittedGroupIds = [];
 
+        // ==============================
+        // VALIDASI DUPLIKAT GROUP NAME (DB LEVEL)
+        // ==============================
+        $groupNameMap = [];
+
+        foreach ($groups as $groupData) {
+            $key = strtolower(trim($groupData['name']));
+
+            if (isset($groupNameMap[$key])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'add_on_groups' => 'Nama grup add-on tidak boleh sama.',
+                ]);
+            }
+
+            $groupNameMap[$key] = true;
+        }
+
         foreach ($groups as $groupData) {
             $addonGroup = null;
 
-            // Cek apakah ID valid (bukan null, bukan ID sementara dari JS)
             if (!empty($groupData['id'])) {
                 $addonGroup = $product->addonGroups()->find($groupData['id']);
             }
 
             $selectionType = ($groupData['max_selection'] === 1) ? 'single' : 'multiple';
+
             $payload = [
-                'addon_group_name' => $groupData['name'],
+                'addon_group_name' => trim($groupData['name']),
                 'selection_type' => $selectionType,
                 'min_selection' => $groupData['min_selection'],
                 'max_selection' => $groupData['max_selection'],
@@ -1318,16 +1495,27 @@ class ProductController
 
             $submittedGroupIds[] = $addonGroup->id;
 
-            // UPDATE OPTIONS DALAM GROUP
+            // ==============================
+            // VALIDASI DUPLIKAT OPTION NAME (PER GROUP)
+            // ==============================
+            $optionNameMap = [];
             $submittedOptionIds = [];
 
             foreach ($groupData['options'] as $optionData) {
-                // Master Addon (Reusable data) - Cari atau Buat Master Addon dulu
-                // Di sini kita asumsikan setiap toko punya master addon sendiri atau shared.
-                // Menggunakan firstOrCreate agar tidak duplikat master addon.
+                $optKey = strtolower(trim($optionData['name']));
+
+                if (isset($optionNameMap[$optKey])) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'add_on_groups' =>
+                            "Nama opsi '{$optionData['name']}' pada grup '{$groupData['name']}' tidak boleh sama.",
+                    ]);
+                }
+
+                $optionNameMap[$optKey] = true;
+
                 $addonMaster = $product->merchant->addons()->firstOrCreate(
-                    ['addon_name' => $optionData['name']],
-                    ['addon_name' => $optionData['name']]
+                    ['addon_name' => trim($optionData['name'])],
+                    ['addon_name' => trim($optionData['name'])]
                 );
 
                 $groupOption = null;
@@ -1338,7 +1526,7 @@ class ProductController
                 $optPayload = [
                     'addon_id' => $addonMaster->id,
                     'addon_price' => $optionData['price'],
-                    'addon_stock' => null, // Optional
+                    'addon_stock' => null,
                 ];
 
                 if ($groupOption) {
@@ -1350,13 +1538,18 @@ class ProductController
                 $submittedOptionIds[] = $groupOption->id;
             }
 
-            // Hapus Opsi Addon yang dibuang
-            $addonGroup->options()->whereNotIn('id', $submittedOptionIds)->delete();
+            // Hapus opsi yang dihapus user
+            $addonGroup->options()
+                ->whereNotIn('id', $submittedOptionIds)
+                ->delete();
         }
 
-        // Hapus Grup Addon yang dibuang
-        $product->addonGroups()->whereNotIn('id', $submittedGroupIds)->delete();
+        // Hapus grup yang dihapus user
+        $product->addonGroups()
+            ->whereNotIn('id', $submittedGroupIds)
+            ->delete();
     }
+
 
     private function generateUniqueSlugForUpdate(string $name, int $currentProductId): string
     {
@@ -1381,70 +1574,78 @@ class ProductController
      */
     private function updateProductImages(Product $product, array $data): void
     {
-        $hasExisting = !empty($data['existing_images']) && is_array($data['existing_images']);
-        $hasNew = !empty($data['images']) && is_array($data['images']);
-        if (!$hasExisting && !$hasNew) {
-            // Tidak ada perubahan gambar — jangan ubah apapun
-            return;
+        $existingCount = isset($data['existing_images']) ? count($data['existing_images']) : 0;
+        $newCount = isset($data['images']) ? count($data['images']) : 0;
+
+        if (($existingCount + $newCount) > 6) {
+            throw new \RuntimeException('Maksimal upload 6 foto produk.');
         }
 
-        $coverIndex = isset($data['cover_image_index']) ? (int) $data['cover_image_index'] : null;
+        $hasExisting = !empty($data['existing_images']);
+        $hasNew = !empty($data['images']);
 
-        // Kumpulkan sebagai list agar order duplikat tidak saling menimpa
+        if (!$hasExisting && !$hasNew)
+            return;
+
         $entries = [];
 
+        // Existing images
         if ($hasExisting) {
-            foreach ($data['existing_images'] as $existingImg) {
+            foreach ($data['existing_images'] as $img) {
                 $entries[] = [
-                    'order' => isset($existingImg['order']) ? (int) $existingImg['order'] : 0,
                     'type' => 'existing',
-                    'id' => (int) $existingImg['id'],
-                    'is_cover' => !empty($existingImg['is_cover']),
+                    'id' => (int) $img['id'],
+                    'order' => (int) $img['order'],
                 ];
             }
         }
 
+        // New images
         if ($hasNew) {
-            foreach ($data['images'] as $newImg) {
+            foreach ($data['images'] as $img) {
                 $entries[] = [
-                    'order' => isset($newImg['order']) ? (int) $newImg['order'] : 0,
                     'type' => 'new',
-                    'file' => $newImg['file'],
-                    'is_cover' => false, // cover ditentukan oleh cover_index
+                    'file' => $img['file'],
+                    'order' => (int) $img['order'],
                 ];
             }
         }
 
-        if (empty($entries)) {
-            return;
-        }
-
-        // Sort berdasarkan order, lalu reindex display_order sequential
+        // Sort berdasarkan order
         usort($entries, fn($a, $b) => $a['order'] <=> $b['order']);
 
-        // Hapus gambar yang tidak di-keep — hanya jika existing_images dikirim
+        // ================= DELETE =================
         if ($hasExisting) {
-            $keepIds = array_values(array_filter(array_map(
-                fn($e) => $e['type'] === 'existing' ? $e['id'] : null,
-                $entries
-            ), fn($v) => !is_null($v)));
+            $keepIds = collect($entries)
+                ->where('type', 'existing')
+                ->pluck('id')
+                ->all();
 
-            $imagesToDelete = $product->images()->whereNotIn('id', $keepIds)->get();
-            foreach ($imagesToDelete as $image) {
-                $this->deleteImageFileIfExists($image->image_path);
-                $image->delete();
-            }
+            Image::where('imageable_type', 'product')
+                ->where('imageable_id', $product->id)
+                ->whereNotIn('id', $keepIds)
+                ->each(function ($img) {
+                    $this->deleteImageFileIfExists($img->image_path);
+                    $img->delete();
+                });
+        } elseif ($hasNew) {
+            // Semua gambar lama dihapus jika user upload baru tanpa existing_images
+            Image::where('imageable_type', 'product')
+                ->where('imageable_id', $product->id)
+                ->each(function ($img) {
+                    $this->deleteImageFileIfExists($img->image_path);
+                    $img->delete();
+                });
         }
 
-        // Reset cover lama
+        // Reset semua cover
         $product->images()->update(['is_cover' => false]);
 
-        // Update/insert sesuai urutan baru
+        // ================= INSERT / UPDATE =================
         $displayOrder = 0;
-        foreach ($entries as $idx => $entry) {
-            // Cover: gunakan cover_image_index bila ada, fallback ke existing is_cover, jika tidak, index 0
-            $isCoverByIndex = ($coverIndex !== null) ? ($idx === $coverIndex) : false;
-            $isCover = $isCoverByIndex || (!is_null($coverIndex) ? false : (!empty($entry['is_cover']))) || ($idx === 0);
+
+        foreach ($entries as $entry) {
+            $isCover = $displayOrder === 0; // 🔥 RULE FINAL
 
             if ($entry['type'] === 'existing') {
                 Image::where('id', $entry['id'])->update([
@@ -1452,9 +1653,7 @@ class ProductController
                     'is_cover' => $isCover,
                 ]);
             } else {
-                /** @var \Illuminate\Http\UploadedFile $file */
-                $file = $entry['file'];
-                $path = $file->store("products/{$product->id}", 'public');
+                $path = $entry['file']->store("products/{$product->id}", 'public');
 
                 $product->images()->create([
                     'image_path' => $path,
@@ -1466,6 +1665,8 @@ class ProductController
             $displayOrder++;
         }
     }
+
+
 
     /**
      * ✅ HELPER: Update product variants
