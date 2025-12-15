@@ -1,15 +1,16 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
-use App\Http\Controllers\ImageController;
 
 // Controllers lama (Jasa / Promo / Orders)
+use App\Http\Controllers\ImageController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PromoController;
-use App\Http\Controllers\CategoryController;
 
 // Controllers baru
+use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\Auth\AuthController;
@@ -165,6 +166,25 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::get('cities/{provinceId}', 'cities');
         Route::get('districts/{cityId}', 'districts');
         Route::get('villages/{districtId}', 'villages');
+    });
+
+    Route::prefix('cart')->group(function () {
+
+        // 🛒 Ambil semua cart user (grouped by merchant)
+        Route::get('/', [CartController::class, 'index']);
+        Route::get('/count', [CartController::class, 'count']);
+        // ➕ Add item ke cart
+        Route::post('/items', [CartController::class, 'addToCart']);
+
+        // 🔄 Update quantity item
+        Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
+        Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
+
+        // ❌ Hapus item dari cart
+        Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
+
+        // 🧹 Clear cart per merchant
+        Route::delete('/{cart}', [CartController::class, 'clearCart']);
     });
 
     Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');

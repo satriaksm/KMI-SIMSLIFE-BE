@@ -7,11 +7,12 @@ use App\Models\Product;
 use App\Models\Merchant;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
+use App\Models\ProductVariant;
 use App\Exports\ProductsExport;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\Drivers\Imagick\Driver;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -1023,8 +1024,9 @@ class ProductController
         if ($error)
             return $error;
 
+        // Validasi (Sama seperti sebelumnya)
         $data = $request->validate([
-            // Basic info
+            // Basic Info
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'slug' => ['nullable', 'string', 'max:255', 'unique:products,slug,' . $product->id],
             'description' => ['sometimes', 'required', 'string'],
@@ -1034,46 +1036,42 @@ class ProductController
             'min_purchase' => ['sometimes', 'required', 'integer', 'min:1'],
             'status' => ['sometimes', 'in:draft,published,archived'],
 
-            // Images (new uploads)
+            // Images
             'images' => ['nullable', 'array', 'max:6'],
             'images.*.file' => ['required', 'file', 'image', 'max:5120'],
             'images.*.order' => ['required', 'integer', 'min:0'],
-
-            // Existing images (to keep)
             'existing_images' => ['nullable', 'array'],
-            'existing_images.*.id' => ['required', 'integer', 'exists:images,id'],
+            'existing_images.*.id' => ['required', 'integer'],
             'existing_images.*.order' => ['required', 'integer', 'min:0'],
             'existing_images.*.is_cover' => ['required', 'boolean'],
+            'cover_image_index' => ['nullable', 'integer'],
 
-            // ✅ NEW: SKU untuk produk tanpa variasi
-            'sku' => ['nullable', 'string', 'max:100', 'unique:product_variants,sku'],
-            // Non-variant pricing
+            // Single Product Info
+            'sku' => ['nullable', 'string', 'max:100'],
             'price' => ['nullable', 'numeric', 'min:0'],
             'stock' => ['nullable', 'integer', 'min:0'],
 
-            // Variants
+            // Variants (Options)
             'variants' => ['nullable', 'array', 'max:2'],
-            'variants.*.id' => ['nullable', 'integer'], // null for new variants
+            'variants.*.id' => ['nullable', 'integer'],
             'variants.*.name' => ['required', 'string', 'max:100'],
             'variants.*.uses_images' => ['required', 'in:0,1'],
             'variants.*.options' => ['required', 'array', 'min:1'],
             'variants.*.options.*.id' => ['nullable', 'integer'],
             'variants.*.options.*.name' => ['required', 'string', 'max:100'],
-            'variants.*.options.*.images' => ['nullable', 'array', 'max:1'],
+            'variants.*.options.*.images' => ['nullable', 'array'],
             'variants.*.options.*.images.*.file' => ['file', 'image', 'max:5120'],
-            'variants.*.options.*.existing_images' => ['nullable', 'array'],
 
-            // Combinations
-            'combinations' => ['nullable', 'array', 'max:' . self::MAX_VARIANTS],
-            'combinations.*.combination' => ['required', 'string'],
+            // Combinations (SKUs)
+            'combinations' => ['nullable', 'array'],
             'combinations.*.sku' => ['nullable', 'string', 'max:100'],
             'combinations.*.price' => ['required', 'numeric', 'min:0'],
             'combinations.*.stock' => ['required', 'integer', 'min:0'],
             'combinations.*.attributes' => ['required', 'array'],
 
-            // Add-ons
-            'add_on_groups' => ['nullable', 'array', 'max:' . self::MAX_ADDON_GROUPS],
-            'add_on_groups.*.id' => ['nullable', 'integer'], // null for new groups
+            // Addons
+            'add_on_groups' => ['nullable', 'array'],
+            'add_on_groups.*.id' => ['nullable', 'integer'],
             'add_on_groups.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.min_selection' => ['required', 'integer', 'min:0'],
             'add_on_groups.*.max_selection' => ['required', 'integer', 'min:1'],
@@ -1093,14 +1091,10 @@ class ProductController
                 'min_purchase' => $data['min_purchase'] ?? $product->min_purchase,
             ];
 
-            // Jika slug dikirim, gunakan slug dari request (tetap sesuai validasi unik).
             if (!empty($data['slug'])) {
                 $updateData['slug'] = $data['slug'];
-            } else {
-                // Jika slug tidak dikirim tapi name berubah, regenerate slug unik.
-                if ($newName !== $product->name) {
-                    $updateData['slug'] = $this->generateUniqueSlugForUpdate($newName, $product->id);
-                }
+            } elseif ($newName !== $product->name) {
+                $updateData['slug'] = $this->generateUniqueSlugForUpdate($newName, $product->id);
             }
 
             if (isset($data['status'])) {
@@ -1125,49 +1119,243 @@ class ProductController
             $useVariants = isset($data['variants']) && is_array($data['variants']) && count($data['variants']) > 0;
 
             if ($useVariants) {
+                // Hapus data single variant jika ada (agar tidak bentrok)
+                $product->variants()->whereNull('product_id')->delete(); // Sesuaikan query jika perlu
+
+                // Update Logic Variant Kompleks
                 $this->updateProductVariants($product, $data);
             } else {
-                // ✅ Perbaikan: guard agar tidak akses index yang tidak ada
-                $variant = $product->variants()->first();
+                // Mode Produk Tanpa Varian (Single SKU)
+                // Hapus semua opsi/varian lama jika sebelumnya produk ini punya varian
+                $product->options()->delete();
+                $product->variants()->delete();
 
-                $updateVariantPayload = [
-                    'sku' => $data['sku'] ?? ($variant?->sku ?? null),
-                    'price' => $data['price'] ?? ($variant?->price ?? 0),
-                    'stock' => $data['stock'] ?? ($variant?->stock ?? 0),
-                ];
-
-                if ($variant) {
-                    $variant->update($updateVariantPayload);
-                } else {
-                    $product->variants()->create($updateVariantPayload);
-                }
+                // Create/Update Single Variant
+                $product->variants()->create([
+                    'sku' => $data['sku'] ?? null,
+                    'price' => $data['price'] ?? 0,
+                    'stock' => $data['stock'] ?? 0,
+                    'is_active' => 1
+                ]);
             }
 
             // 5. UPDATE ADDON GROUPS
             if (isset($data['add_on_groups'])) {
                 $this->updateAddonGroups($product, $data['add_on_groups']);
+            } else {
+                // Jika user menghapus semua addon
+                $product->addonGroups()->delete();
             }
 
             DB::commit();
 
-            return response()->json(
-                $product->fresh()->load([
-                    'coverImage',
-                    'images',
-                    'categories',
-                    'options.values',
-                    'variants.optionValues',
-                    'addonGroups.options.addon',
-                ])
-            );
+            return response()->json($product->fresh()->load([
+                'images',
+                'categories',
+                'options.values',
+                'variants',
+                'addonGroups.options.addon'
+            ]));
 
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'message' => 'Gagal memperbarui produk.',
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString() // Debugging
             ], 500);
         }
+    }
+
+    /**
+     * LOGIKA UPDATE VARIANTS YANG AMAN
+     * Menangani: Hapus lama, Update existing, Create baru
+     */
+    private function updateProductVariants(Product $product, array $data): void
+    {
+        $submittedOptionIds = [];
+
+        // 1. UPDATE / CREATE OPTIONS (Warna, Ukuran)
+        foreach ($data['variants'] as $vIndex => $variantData) {
+            $option = null;
+
+            // Cek apakah ID valid dan ada di database
+            if (!empty($variantData['id'])) {
+                $option = $product->options()->find($variantData['id']);
+            }
+
+            $usesImages = ($vIndex === 0) && ((int) $variantData['uses_images'] === 1);
+            $payload = [
+                'option_name' => $variantData['name'],
+                'uses_image' => $usesImages,
+                'order' => $vIndex
+            ];
+
+            if ($option) {
+                $option->update($payload);
+            } else {
+                $option = $product->options()->create($payload);
+            }
+
+            $submittedOptionIds[] = $option->id;
+
+            // 1b. UPDATE / CREATE OPTION VALUES (Merah, Biru / S, M)
+            $submittedValueIds = [];
+            $valuesMap = []; // Untuk mapping nama value ke ID (dipakai kombinasi nanti)
+
+            foreach ($variantData['options'] as $valIndex => $valData) {
+                $value = null;
+
+                if (!empty($valData['id'])) {
+                    $value = $option->values()->find($valData['id']);
+                }
+
+                if ($value) {
+                    $value->update(['option_value' => $valData['name']]);
+                } else {
+                    $value = $option->values()->create(['option_value' => $valData['name']]);
+                }
+
+                $submittedValueIds[] = $value->id;
+
+                // Simpan mapping untuk kombinasi: "Warna:Merah" => ID 5
+                // Kita simpan mapping global berdasarkan nama opsi dan nama value
+                $valuesMap[$valData['name']] = $value->id;
+
+                // Handle Image Upload untuk Option Value (misal foto warna Merah)
+                if ($usesImages && !empty($valData['images'])) {
+                    // Cek file upload baru
+                    if (isset($valData['images'][0]['file'])) {
+                        // Hapus gambar lama jika ada
+                        if ($value->image_path) {
+                            Storage::disk('public')->delete($value->image_path);
+                        }
+                        $path = $valData['images'][0]['file']->store('option-values', 'public');
+                        $value->update(['image_path' => $path]);
+                    }
+                }
+            }
+
+            // Hapus value yang tidak ada di request
+            $option->values()->whereNotIn('id', $submittedValueIds)->delete();
+
+            // Simpan referensi map ke variant data agar mudah diakses loop kombinasi
+            $data['variants'][$vIndex]['_value_map'] = $valuesMap;
+        }
+
+        // Hapus Option yang tidak ada di request
+        $product->options()->whereNotIn('id', $submittedOptionIds)->delete();
+
+
+        // 2. REGENERATE COMBINATIONS (SKU Real)
+        // Cara paling aman saat update struktur varian adalah menghapus semua SKU kombinasi lama
+        // dan membuat ulang berdasarkan data kombinasi baru dari frontend.
+
+        $product->variants()->delete(); // Hapus SKU lama
+
+        if (!empty($data['combinations'])) {
+            foreach ($data['combinations'] as $combo) {
+                $variant = $product->variants()->create([
+                    'sku' => $combo['sku'] ?? null,
+                    'price' => $combo['price'],
+                    'stock' => $combo['stock'],
+                    'is_active' => 1
+                ]);
+
+                // Attach ke tabel pivot product_option_value_product_variant
+                // Kita perlu mencari ID dari option_values berdasarkan nama atribut
+                $optionValueIdsToAttach = [];
+
+                foreach ($combo['attributes'] as $attr) {
+                    $attrName = $attr['name']; // Misal "Warna"
+                    $attrValue = $attr['value']; // Misal "Merah"
+
+                    // Cari ID option value yang cocok dari proses update opsi di atas
+                    // Kita loop data variants yang sudah kita proses map-nya
+                    foreach ($data['variants'] as $vProcessed) {
+                        if ($vProcessed['name'] === $attrName && isset($vProcessed['_value_map'][$attrValue])) {
+                            $optionValueIdsToAttach[] = $vProcessed['_value_map'][$attrValue];
+                            break;
+                        }
+                    }
+                }
+
+                if (!empty($optionValueIdsToAttach)) {
+                    $variant->optionValues()->attach($optionValueIdsToAttach);
+                }
+            }
+        }
+    }
+
+    /**
+     * LOGIKA UPDATE ADDONS YANG AMAN
+     */
+    private function updateAddonGroups(Product $product, array $groups): void
+    {
+        $submittedGroupIds = [];
+
+        foreach ($groups as $groupData) {
+            $addonGroup = null;
+
+            // Cek apakah ID valid (bukan null, bukan ID sementara dari JS)
+            if (!empty($groupData['id'])) {
+                $addonGroup = $product->addonGroups()->find($groupData['id']);
+            }
+
+            $selectionType = ($groupData['max_selection'] === 1) ? 'single' : 'multiple';
+            $payload = [
+                'addon_group_name' => $groupData['name'],
+                'selection_type' => $selectionType,
+                'min_selection' => $groupData['min_selection'],
+                'max_selection' => $groupData['max_selection'],
+            ];
+
+            if ($addonGroup) {
+                $addonGroup->update($payload);
+            } else {
+                $addonGroup = $product->addonGroups()->create($payload);
+            }
+
+            $submittedGroupIds[] = $addonGroup->id;
+
+            // UPDATE OPTIONS DALAM GROUP
+            $submittedOptionIds = [];
+
+            foreach ($groupData['options'] as $optionData) {
+                // Master Addon (Reusable data) - Cari atau Buat Master Addon dulu
+                // Di sini kita asumsikan setiap toko punya master addon sendiri atau shared.
+                // Menggunakan firstOrCreate agar tidak duplikat master addon.
+                $addonMaster = $product->merchant->addons()->firstOrCreate(
+                    ['addon_name' => $optionData['name']],
+                    ['addon_name' => $optionData['name']]
+                );
+
+                $groupOption = null;
+                if (!empty($optionData['id'])) {
+                    $groupOption = $addonGroup->options()->find($optionData['id']);
+                }
+
+                $optPayload = [
+                    'addon_id' => $addonMaster->id,
+                    'addon_price' => $optionData['price'],
+                    'addon_stock' => null, // Optional
+                ];
+
+                if ($groupOption) {
+                    $groupOption->update($optPayload);
+                } else {
+                    $groupOption = $addonGroup->options()->create($optPayload);
+                }
+
+                $submittedOptionIds[] = $groupOption->id;
+            }
+
+            // Hapus Opsi Addon yang dibuang
+            $addonGroup->options()->whereNotIn('id', $submittedOptionIds)->delete();
+        }
+
+        // Hapus Grup Addon yang dibuang
+        $product->addonGroups()->whereNotIn('id', $submittedGroupIds)->delete();
     }
 
     private function generateUniqueSlugForUpdate(string $name, int $currentProductId): string
@@ -1282,209 +1470,7 @@ class ProductController
     /**
      * ✅ HELPER: Update product variants
      */
-    private function updateProductVariants(Product $product, array $data): void
-    {
-        $merchant = $product->merchant;
 
-        // Get existing option IDs and variant IDs
-        $keepOptionIds = [];
-        $keepVariantIds = [];
-
-        // Track which options to keep
-        foreach ($data['variants'] as $variantData) {
-            if (!empty($variantData['id'])) {
-                $keepOptionIds[] = $variantData['id'];
-            }
-        }
-
-        // Delete options not in keep list
-        $product->options()
-            ->whereNotIn('id', $keepOptionIds)
-            ->each(function ($option) {
-                // Delete option value images
-                foreach ($option->values as $value) {
-                    if ($value->image_path) {
-                        $this->deleteImageFileIfExists($value->image_path);
-                    }
-                }
-                $option->delete();
-            });
-
-        // Update or create options
-        $optionMap = [];
-        foreach ($data['variants'] as $variantIndex => $variantData) {
-            $usesImages = ($variantIndex === 0) && ((int) $variantData['uses_images'] === 1);
-
-            // Update or create option
-            if (!empty($variantData['id'])) {
-                $option = $product->options()->find($variantData['id']);
-                $option->update([
-                    'option_name' => $variantData['name'],
-                    'uses_image' => $usesImages,
-                ]);
-            } else {
-                $option = $product->options()->create([
-                    'option_name' => $variantData['name'],
-                    'uses_image' => $usesImages,
-                ]);
-            }
-
-            // Get existing value IDs
-            $keepValueIds = [];
-            foreach ($variantData['options'] as $optData) {
-                if (!empty($optData['id'])) {
-                    $keepValueIds[] = $optData['id'];
-                }
-            }
-
-            // Delete values not in keep list
-            $option->values()
-                ->whereNotIn('id', $keepValueIds)
-                ->each(function ($value) {
-                    if ($value->image_path) {
-                        $this->deleteImageFileIfExists($value->image_path);
-                    }
-                    $value->delete();
-                });
-
-            // Update or create values
-            $valueMap = [];
-            foreach ($variantData['options'] as $optData) {
-                if (!empty($optData['id'])) {
-                    // Update existing
-                    $value = $option->values()->find($optData['id']);
-                    $value->update(['option_value' => $optData['name']]);
-                } else {
-                    // Create new
-                    $value = $option->values()->create([
-                        'option_value' => $optData['name'],
-                    ]);
-                }
-
-                // Handle image upload
-                if ($usesImages && !empty($optData['images'])) {
-                    $imageFile = $optData['images'][0]['file'] ?? null;
-                    if ($imageFile) {
-                        // Delete old image
-                        if ($value->image_path) {
-                            $this->deleteImageFileIfExists($value->image_path);
-                        }
-                        // Upload new
-                        $path = $imageFile->store("option-values/{$value->id}", 'public');
-                        $value->update(['image_path' => $path]);
-                    }
-                }
-
-                $valueMap[$optData['name']] = $value->id;
-            }
-
-            $optionMap[$variantData['name']] = [
-                'option_id' => $option->id,
-                'values' => $valueMap,
-            ];
-        }
-
-        // Delete all existing variants (we'll recreate them)
-        $product->variants()->delete();
-
-        // Create new variants from combinations
-        if (!empty($data['combinations'])) {
-            foreach ($data['combinations'] as $combo) {
-                $variant = $product->variants()->create([
-                    'sku' => $combo['sku'] ?? null,
-                    'price' => $combo['price'],
-                    'stock' => $combo['stock'],
-                ]);
-
-                // Attach option values
-                $optionValueIds = [];
-                foreach ($combo['attributes'] as $attr) {
-                    $optionName = $attr['name'];
-                    $valueName = $attr['value'];
-
-                    if (isset($optionMap[$optionName]['values'][$valueName])) {
-                        $optionValueIds[] = $optionMap[$optionName]['values'][$valueName];
-                    }
-                }
-
-                if (!empty($optionValueIds)) {
-                    $variant->optionValues()->attach($optionValueIds);
-                }
-            }
-        }
-    }
-
-    /**
-     * ✅ HELPER: Update addon groups
-     */
-    private function updateAddonGroups(Product $product, array $groups): void
-    {
-        $merchant = $product->merchant;
-
-        // Get existing group IDs to keep
-        $keepGroupIds = array_filter(array_column($groups, 'id'));
-
-        // Delete groups not in keep list
-        $product->addonGroups()
-            ->whereNotIn('id', $keepGroupIds)
-            ->delete();
-
-        // Update or create groups
-        foreach ($groups as $groupData) {
-            $selectionType = ($groupData['max_selection'] === 1) ? 'single' : 'multiple';
-
-            if (!empty($groupData['id'])) {
-                // Update existing
-                $addonGroup = $product->addonGroups()->find($groupData['id']);
-                $addonGroup->update([
-                    'addon_group_name' => $groupData['name'],
-                    'selection_type' => $selectionType,
-                    'min_selection' => $groupData['min_selection'],
-                    'max_selection' => $groupData['max_selection'],
-                ]);
-            } else {
-                // Create new
-                $addonGroup = $product->addonGroups()->create([
-                    'addon_group_name' => $groupData['name'],
-                    'selection_type' => $selectionType,
-                    'min_selection' => $groupData['min_selection'],
-                    'max_selection' => $groupData['max_selection'],
-                ]);
-            }
-
-            // Get existing option IDs
-            $keepOptionIds = array_filter(array_column($groupData['options'], 'id'));
-
-            // Delete options not in keep list
-            $addonGroup->options()
-                ->whereNotIn('id', $keepOptionIds)
-                ->delete();
-
-            // Update or create options
-            foreach ($groupData['options'] as $optionData) {
-                // Find or create addon
-                $addon = $merchant->addons()->firstOrCreate(
-                    ['addon_name' => $optionData['name']],
-                    ['addon_name' => $optionData['name']]
-                );
-
-                if (!empty($optionData['id'])) {
-                    // Update existing
-                    $addonGroup->options()->where('id', $optionData['id'])->update([
-                        'addon_id' => $addon->id,
-                        'addon_price' => $optionData['price'],
-                    ]);
-                } else {
-                    // Create new
-                    $addonGroup->options()->create([
-                        'addon_id' => $addon->id,
-                        'addon_price' => $optionData['price'],
-                        'addon_stock' => null,
-                    ]);
-                }
-            }
-        }
-    }
 
     public function updateStatus(Request $request, string $slug)
     {
@@ -1845,9 +1831,9 @@ class ProductController
 
     private function buildFilteredVariantQuery(int $merchantId, array $data)
     {
-        $productsTable = (new \App\Models\Product)->getTable();
+        $productsTable = (new Product)->getTable();
 
-        $variants = \App\Models\ProductVariant::query()
+        $variants = ProductVariant::query()
             ->select([
                 'product_variants.id',
                 'product_variants.product_id',
