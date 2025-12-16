@@ -1072,67 +1072,128 @@ class ProductController
      */
     public function show(Request $request, string $slug)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
+        // 1. QUERY UTAMA: Pilih kolom tabel 'products' saja
+        // WAJIB: 'id' (untuk relasi), 'merchant_id' (untuk cek permission), 'status' (untuk logic signed url)
+        $product = Product::select([
+            'id',
+            'merchant_id',
+            'slug',
+            'name',
+            'description',
+            'status',
+            'min_purchase',
+        ])
+            ->where('slug', $slug)
+            ->firstOrFail();
 
+        // 2. CEK PERMISSION
         $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
         if ($error)
             return $error;
+
+        // 3. EAGER LOAD DENGAN SELECT
         $product->load([
-            'coverImage',
-            'images' => fn($q) => $q->orderBy('display_order'),
-            'categories',
+            // Select kolom tabel images
+            'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type'),
+            'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type')
+                ->orderBy('display_order'),
+
+            // Select kolom tabel categories + pivot
+            'categories' => fn($q) => $q->select('categories.id', 'categories.name'),
+
             'options' => function ($q) {
-                $q->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')])
-                    ->select('id', 'product_id', 'option_name', 'uses_image')
-                    ->orderBy('id');
+                $q->select('id', 'product_id', 'option_name', 'uses_image') // product_id WAJIB agar nyambung ke products
+                    ->orderBy('id')
+                    ->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')]); // product_option_id WAJIB
             },
+
             'variants' => function ($q) {
-                $q->with([
-                    'optionValues' => function ($ovq) {
-                        $ovq->select('product_option_values.id', 'product_option_id', 'option_value')
-                            ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                            ->addSelect('product_options.option_name');
-                    }
-                ])
-                    ->select('id', 'product_id', 'sku', 'price', 'stock')
-                    ->orderBy('price', 'asc');
+                $q->select('id', 'product_id', 'sku', 'price', 'stock') // product_id WAJIB
+                    ->orderBy('price', 'asc')
+                    ->with([
+                        'optionValues' => function ($ovq) {
+                            // Join diperlukan jika ingin mengambil nama option parent-nya juga
+                            $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
+                                ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                                ->addSelect('product_options.option_name');
+                        }
+                    ]);
             },
+
             'addonGroups' => function ($q) {
-                $q->with([
-                    'options' => function ($oq) {
-                        $oq->with('addon:id,addon_name')
-                            ->select('id', 'addon_group_id', 'addon_id', 'addon_price');
-                    }
-                ])
-                    ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
-                    ->orderBy('id');
+                $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection') // product_id WAJIB
+                    ->orderBy('id')
+                    ->with([
+                        'options' => function ($oq) {
+                            $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price') // addon_group_id WAJIB
+                                ->with('addon:id,addon_name'); // addon_id WAJIB
+                        }
+                    ]);
             },
         ]);
 
-        // 1. Tentukan apakah produk ini Public atau Draft
-        $isPublic = in_array($product->status, ['published', 'archived']);
+        // ============================================================
+        // LOGIC SIGNED URL (SAMA SEPERTI SEBELUMNYA)
+        // ============================================================
 
-        // 2. Manipulasi collection 'images' untuk menambahkan field 'url_siap_pakai'
+        $isPublic = in_array($product->status, ['published', 'archived']);
+        // A. BERSIHKAN CATEGORIES (Hapus pivot)
+        if ($product->categories) {
+            $product->categories->transform(function ($category) {
+                $category->makeHidden(['pivot', 'created_at', 'updated_at']);
+                return $category;
+            });
+        }
+
+        // B. BERSIHKAN VARIANTS (Hapus display_image & pivot)
+        if ($product->variants) {
+            $product->variants->transform(function ($variant) {
+                // Hapus display_image dari variant
+                $variant->makeHidden(['display_image', 'created_at', 'updated_at']);
+
+                // Bersihkan option_values di dalam variant
+                if ($variant->optionValues) {
+                    $variant->optionValues->transform(function ($ov) {
+                        // Hapus pivot object dan image_url bawaan (jika ada accessor)
+                        $ov->makeHidden(['pivot', 'image_url', 'created_at', 'updated_at']);
+                        return $ov;
+                    });
+                }
+                return $variant;
+            });
+        }
         if ($product->images) {
             $product->images->transform(function ($image) use ($isPublic) {
-                // Jika Public -> URL biasa
-                // Jika Draft -> Signed URL (Berlaku 60 menit)
                 $image->src_url = $isPublic
                     ? route('images.show', ['image' => $image->id])
                     : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
-
                 return $image;
             });
         }
 
-        // 3. Lakukan hal yang sama untuk coverImage (jika ada)
         if ($product->coverImage) {
             $product->coverImage->src_url = $isPublic
                 ? route('images.show', ['image' => $product->coverImage->id])
                 : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
         }
 
-        // ============================================================
+        if ($product->options) {
+            $product->options->transform(function ($option) use ($isPublic) {
+                if ($option->values) {
+                    $option->values->transform(function ($value) use ($isPublic) {
+                        if (!empty($value->image_path)) {
+                            $value->src_url = $isPublic
+                                ? route('images.product-option-value.show', ['optionValue' => $value->id])
+                                : URL::signedRoute('images.product-option-value.show', ['optionValue' => $value->id], now()->addMinutes(60));
+                        } else {
+                            $value->src_url = null;
+                        }
+                        return $value;
+                    });
+                }
+                return $option;
+            });
+        }
 
         return response()->json($product);
     }
