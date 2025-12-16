@@ -33,10 +33,10 @@ class UserSeeder extends Seeder
             ]
         );
 
-        // Create segmentation 3 if not exists
+        // Create segmentation 3 if not exists (with correct UMKM Jasa name)
         $segmentation = Segmentation::firstOrCreate(
             ['id' => 3],
-            ['name' => 'Segmentation 3']
+            ['name' => 'UMKM Jasa']
         );
 
         // Create merchant untuk user with segmentation 3
