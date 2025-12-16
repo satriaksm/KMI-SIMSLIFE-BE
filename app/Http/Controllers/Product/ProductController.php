@@ -12,6 +12,7 @@ use App\Exports\ProductsExport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\Drivers\Imagick\Driver;
@@ -547,6 +548,31 @@ class ProductController
         // $perPage = 1;
         $result = $query->paginate($perPage);
 
+        $result->getCollection()->transform(function ($product) {
+
+            // Cek status produk
+            $isPublic = in_array($product->status, ['published', 'archived']);
+
+            // 1. Handle Cover Image (Jika diload/ada)
+            if ($product->coverImage) {
+                $product->coverImage->src_url = $isPublic
+                    ? route('images.show', ['image' => $product->coverImage->id])
+                    : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+            }
+
+            // 2. Handle Array Images (Jika diload/ada)
+            if ($product->images) {
+                $product->images->transform(function ($image) use ($isPublic) {
+                    $image->src_url = $isPublic
+                        ? route('images.show', ['image' => $image->id])
+                        : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+                    return $image;
+                });
+            }
+
+            return $product;
+        });
+
         return response()->json([
             'data' => $result->items(),
             'meta' => [
@@ -1051,40 +1077,64 @@ class ProductController
         $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
         if ($error)
             return $error;
+        $product->load([
+            'coverImage',
+            'images' => fn($q) => $q->orderBy('display_order'),
+            'categories',
+            'options' => function ($q) {
+                $q->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')])
+                    ->select('id', 'product_id', 'option_name', 'uses_image')
+                    ->orderBy('id');
+            },
+            'variants' => function ($q) {
+                $q->with([
+                    'optionValues' => function ($ovq) {
+                        $ovq->select('product_option_values.id', 'product_option_id', 'option_value')
+                            ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                            ->addSelect('product_options.option_name');
+                    }
+                ])
+                    ->select('id', 'product_id', 'sku', 'price', 'stock')
+                    ->orderBy('price', 'asc');
+            },
+            'addonGroups' => function ($q) {
+                $q->with([
+                    'options' => function ($oq) {
+                        $oq->with('addon:id,addon_name')
+                            ->select('id', 'addon_group_id', 'addon_id', 'addon_price');
+                    }
+                ])
+                    ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
+                    ->orderBy('id');
+            },
+        ]);
 
-        return response()->json(
-            $product->load([
-                'coverImage',
-                'images' => fn($q) => $q->orderBy('display_order'),
-                'categories',
-                'options' => function ($q) {
-                    $q->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')])
-                        ->select('id', 'product_id', 'option_name', 'uses_image')
-                        ->orderBy('id');
-                },
-                'variants' => function ($q) {
-                    $q->with([
-                        'optionValues' => function ($ovq) {
-                            $ovq->select('product_option_values.id', 'product_option_id', 'option_value')
-                                ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                                ->addSelect('product_options.option_name');
-                        }
-                    ])
-                        ->select('id', 'product_id', 'sku', 'price', 'stock')
-                        ->orderBy('price', 'asc');
-                },
-                'addonGroups' => function ($q) {
-                    $q->with([
-                        'options' => function ($oq) {
-                            $oq->with('addon:id,addon_name')
-                                ->select('id', 'addon_group_id', 'addon_id', 'addon_price');
-                        }
-                    ])
-                        ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
-                        ->orderBy('id');
-                },
-            ])
-        );
+        // 1. Tentukan apakah produk ini Public atau Draft
+        $isPublic = in_array($product->status, ['published', 'archived']);
+
+        // 2. Manipulasi collection 'images' untuk menambahkan field 'url_siap_pakai'
+        if ($product->images) {
+            $product->images->transform(function ($image) use ($isPublic) {
+                // Jika Public -> URL biasa
+                // Jika Draft -> Signed URL (Berlaku 60 menit)
+                $image->src_url = $isPublic
+                    ? route('images.show', ['image' => $image->id])
+                    : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+
+                return $image;
+            });
+        }
+
+        // 3. Lakukan hal yang sama untuk coverImage (jika ada)
+        if ($product->coverImage) {
+            $product->coverImage->src_url = $isPublic
+                ? route('images.show', ['image' => $product->coverImage->id])
+                : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+        }
+
+        // ============================================================
+
+        return response()->json($product);
     }
 
     /**
