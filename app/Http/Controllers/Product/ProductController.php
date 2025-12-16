@@ -8,7 +8,6 @@ use App\Models\ProductVariant;
 use App\Models\Merchant;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
-use App\Models\ProductVariant;
 use App\Exports\ProductsExport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
@@ -317,7 +316,7 @@ class ProductController
                 $addr?->province?->name,
             ]));
 
-        // ✅ Ambil 5 produk lain dari merchant yang sama, acak, exclude produk ini
+        // Ambil 5 produk lain dari merchant yang sama, acak, exclude produk ini
         $relatedProducts = Product::where('merchant_id', $product->merchant_id)
             ->where('id', '!=', $product->id)
             ->where('status', 'published')
@@ -1349,26 +1348,9 @@ class ProductController
         }
     }
 
-    private function generateUniqueSlugForUpdate(string $name, int $currentProductId): string
-    {
-        $base = Str::slug($name);
-        $slug = $base;
-        $count = 1;
-
-        while (
-            Product::where('slug', $slug)
-            ->where('id', '!=', $currentProductId)
-            ->exists()
-        ) {
-            $slug = "{$base}-{$count}";
-            $count++;
-        }
-
-        return $slug;
-    }
 
     /**
-     * ✅ HELPER: Update product images
+     * HELPER: Update product images
      */
     private function updateProductVariants(Product $product, array $data): void
     {

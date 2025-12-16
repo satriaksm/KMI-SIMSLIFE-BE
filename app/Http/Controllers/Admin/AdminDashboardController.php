@@ -18,14 +18,12 @@ use Carbon\Carbon;
 class AdminDashboardController extends Controller
 {
     /**
-     * ✅ FIXED: Get dashboard statistics with complete structure
+     * Get dashboard statistics 
      */
     public function statistics(Request $request)
     {
         try {
             $period = $request->input('period', 'all_time');
-
-            Log::info('[AdminDashboard] 📊 Loading statistics', ['period' => $period]);
 
             $stats = [
                 'overview' => $this->getOverviewStats($period),
@@ -41,16 +39,9 @@ class AdminDashboardController extends Controller
                 'recent_reports' => $this->getRecentReports(),
             ];
 
-            Log::info('[AdminDashboard] ✅ Statistics loaded successfully', [
-                'products_total' => $stats['products']['total'],
-                'categories_count' => count($stats['products']['by_category']),
-                'merchants_total' => $stats['merchants']['total'],
-                'segmentations_count' => count($stats['merchants']['by_segmentation']),
-            ]);
-
             return response()->json($stats);
         } catch (\Exception $e) {
-            Log::error('[AdminDashboard] ❌ Statistics failed', [
+            Log::error('[AdminDashboard] Statistics failed', [
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
@@ -65,7 +56,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get overview statistics with growth comparison
+     * Get overview statistics 
      */
     private function getOverviewStats(string $period): array
     {
@@ -129,7 +120,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Safe count helper
+     * Count helper
      */
     private function safeCount($query)
     {
@@ -142,7 +133,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get merchants by segmentation (ALL 3 types)
+     * Get merchants by segmentation 
      */
     private function getMerchantsBySegmentation(): array
     {
@@ -165,14 +156,9 @@ class AdminDashboardController extends Controller
                 ])
                 ->toArray();
 
-            Log::info('[AdminDashboard] ✅ Merchants by segmentation retrieved', [
-                'count' => count($result),
-                'data' => $result,
-            ]);
-
             return $result;
         } catch (\Exception $e) {
-            Log::error('[AdminDashboard] ❌ getMerchantsBySegmentation failed', [
+            Log::error('[AdminDashboard] getMerchantsBySegmentation failed', [
                 'error' => $e->getMessage(),
             ]);
             return [];
@@ -180,18 +166,15 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get products by category (Use PARENT categories)
+     * Get products by category 
      */
     private function getProductsByCategory(): array
     {
         try {
-            Log::info('[AdminDashboard] 🔍 Querying products by parent category...');
 
             // Get product morph class
             $productMorphClass = (new \App\Models\Product())->getMorphClass();
-            Log::info('[AdminDashboard] Product morph class: ' . $productMorphClass);
 
-            // ✅ STEP 1: Get products attached to PARENT categories directly
             $directParentProducts = DB::table('categories as parent')
                 ->select(
                     'parent.id',
@@ -210,7 +193,6 @@ class AdminDashboardController extends Controller
                 ->groupBy('parent.id', 'parent.name')
                 ->get();
 
-            // ✅ STEP 2: Get products attached to CHILD categories (group by parent)
             $childProducts = DB::table('categories as parent')
                 ->select(
                     'parent.id',
@@ -230,7 +212,6 @@ class AdminDashboardController extends Controller
                 ->groupBy('parent.id', 'parent.name')
                 ->get();
 
-            // ✅ STEP 3: Merge counts
             $categoryCounts = [];
 
             foreach ($directParentProducts as $item) {
@@ -260,13 +241,11 @@ class AdminDashboardController extends Controller
                 return [];
             }
 
-            // ✅ STEP 4: Sort by count descending
             usort($categoryCounts, fn($a, $b) => $b['count'] - $a['count']);
 
             $result = [];
             $lainnyaCount = 0;
 
-            // ✅ STEP 5: Take top 5, rest goes to "Lainnya"
             foreach ($categoryCounts as $index => $item) {
                 if ($index < 5) {
                     $result[] = $item;
@@ -283,16 +262,9 @@ class AdminDashboardController extends Controller
                 ];
             }
 
-            Log::info('[AdminDashboard] ✅ Products by category retrieved', [
-                'total_categories' => count($categoryCounts),
-                'top_5' => count($result) - ($lainnyaCount > 0 ? 1 : 0),
-                'lainnya_count' => $lainnyaCount,
-                'data' => $result,
-            ]);
-
             return $result;
         } catch (\Exception $e) {
-            Log::error('[AdminDashboard] ❌ getProductsByCategory failed', [
+            Log::error('[AdminDashboard] getProductsByCategory failed', [
                 'error' => $e->getMessage(),
                 'line' => $e->getLine(),
                 'file' => $e->getFile(),
@@ -303,7 +275,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get recent orders
+     * Get recent orders
      */
     private function getRecentOrders(): array
     {
@@ -343,7 +315,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get recent reports
+     * Get recent reports
      */
     private function getRecentReports(): array
     {
@@ -395,7 +367,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get orders & revenue statistics
+     * Get orders & revenue statistics
      */
     public function ordersRevenue(Request $request)
     {
@@ -412,9 +384,6 @@ class AdminDashboardController extends Controller
                 'quarterly' => $this->getQuarterlyData($request->year, $request->quarter),
                 'yearly' => $this->getYearlyData($request->year),
             };
-
-            Log::info('[AdminDashboard] Orders/Revenue loaded', ['period' => $request->period, 'count' => count($data)]);
-
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -433,7 +402,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get monthly data (Week 1-4)
+     * Get monthly data (Week 1-4)
      */
     private function getMonthlyData(int $year, int $month): array
     {
@@ -465,7 +434,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get quarterly data (Month 1-3)
+     * Get quarterly data (Month 1-3)
      */
     private function getQuarterlyData(int $year, int $quarter): array
     {
@@ -497,7 +466,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Get yearly data (Month 1-12)
+     * Get yearly data (Month 1-12)
      */
     private function getYearlyData(int $year): array
     {
@@ -527,7 +496,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * ✅ Calculate growth percentage
+     * Calculate growth percentage
      */
     private function calculateGrowth(array $data): array
     {

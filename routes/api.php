@@ -28,6 +28,7 @@ use App\Http\Controllers\PaguyubanController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\ProductOptionValueImageController;
 
 // ============================================================
 // HEALTH CHECK
@@ -48,10 +49,10 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
         Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
 
-        // ✅ Filter by category
+        // Filter by category
         Route::get('/category/{categorySlug}', [ProductController::class, 'publicByCategory'])->name('by-category');
 
-        // ✅ Public show by slug (only published)
+        // Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
             ->where('slug', '^[a-z0-9-]+$')
             ->name('show');
@@ -62,7 +63,7 @@ Route::prefix('public')->name('public.')->group(function () {
             ->name('variant');
     });
 
-    // ✅ NEW: Public Merchants
+    // Public Merchants
     Route::prefix('merchants')->name('merchants.')->group(function () {
         // List merchants (with pagination & filters)
         Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
@@ -146,8 +147,6 @@ Route::prefix('auth')->group(function () {
         ->middleware(['signed', 'throttle:6,1'])
         ->name('api.verification.verify');
 
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
     Route::middleware(['web', 'auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
@@ -173,20 +172,12 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
 
     Route::prefix('cart')->group(function () {
 
-        // 🛒 Ambil semua cart user (grouped by merchant)
         Route::get('/', [CartController::class, 'index']);
         Route::get('/count', [CartController::class, 'count']);
-        // ➕ Add item ke cart
         Route::post('/items', [CartController::class, 'addToCart']);
-
-        // 🔄 Update quantity item
         Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
         Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
-
-        // ❌ Hapus item dari cart
         Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
-
-        // 🧹 Clear cart per merchant
         Route::delete('/{cart}', [CartController::class, 'clearCart']);
     });
 
@@ -209,12 +200,8 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             Route::post('/bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
             Route::post('/bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
 
-
-            // ✅ Move export routes ABOVE dynamic {slug}
             Route::get('/export/excel', [ProductController::class, 'exportExcel']);
             Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
-
-            // ✅ Slug routes with constraints to avoid matching "export"
             Route::get('{slug}', [ProductController::class, 'show'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('show');
@@ -231,7 +218,6 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('destroy');
 
-            // ✅ Endpoint khusus status pakai slug
             Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('update-status');
@@ -276,7 +262,7 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
     });
 });
 
-// ✅ Public Community Posts (tanpa auth)
+// Public Community Posts (tanpa auth)
 Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
     Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
@@ -290,7 +276,7 @@ Route::middleware('web')->group(function () {
 
 
 // ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
+// PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
 // ============================================================
 
 // ---------- JASA ----------
@@ -331,9 +317,6 @@ Route::prefix('auth')->group(function () {
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
         ->middleware(['signed', 'throttle:6,1'])
         ->name('api.verification.verify');
-
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
     Route::middleware(['web', 'auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
@@ -373,11 +356,9 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             Route::get('/', [ProductController::class, 'index'])->name('index');
             Route::post('/', [ProductController::class, 'store'])->name('store');
 
-            // ✅ Move export routes ABOVE dynamic {slug}
             Route::get('/export/excel', [ProductController::class, 'exportExcel']);
             Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
 
-            // ✅ Slug routes with constraints to avoid matching "export"
             Route::get('{slug}', [ProductController::class, 'show'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('show');
@@ -394,7 +375,6 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('destroy');
 
-            // ✅ Endpoint khusus status pakai slug
             Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('update-status');
@@ -415,7 +395,6 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
     });
 
-    // ✅ PROTECTED Community Actions (require auth)
     Route::prefix('community')->group(function () {
 
         // My Posts (auth required)
@@ -440,6 +419,7 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::get('/my-comments', [PostCommentController::class, 'myComments'])
             ->name('community.comments.my-comments');
     });
+});
 
 // ============================================================
 // ADMIN ROUTES (Protected)

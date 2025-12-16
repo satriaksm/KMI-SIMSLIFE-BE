@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ProductOptionValue;
 use App\Models\Product;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class ProductOptionValueImageController extends Controller
@@ -17,7 +18,7 @@ class ProductOptionValueImageController extends Controller
             ?? $optionValue->productOption?->product; // fallback
 
         if (!$product instanceof Product) {
-            \Log::warning('Product not found for option value', ['optionValue_id' => $optionValue->id]);
+            Log::warning('Product not found for option value', ['optionValue_id' => $optionValue->id]);
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
@@ -33,7 +34,7 @@ class ProductOptionValueImageController extends Controller
             return $this->stream($optionValue);
         }
 
-        \Log::info('Access denied to option image', [
+        Log::info('Access denied to option image', [
             'optionValue_id' => $optionValue->id,
             'product_id' => $product->id,
             'product_status' => $product->status,

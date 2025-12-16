@@ -115,7 +115,7 @@ class ContentReportController extends Controller
     }
 
     /**
-     * ✅ Get report reasons
+     * Get report reasons
      */
     public function reasons(Request $request)
     {
@@ -144,11 +144,11 @@ class ContentReportController extends Controller
     }
 
     /**
-     * ✅ Transform report data
+     * Transform report data
      */
     private function transformReport($report, $detailed = false)
     {
-        // ✅ Extract reportable_type
+        // Extract reportable_type
         $reportableType = null;
         if ($report->reportable_type) {
             $reportableType = strtolower(class_basename($report->reportable_type));
@@ -189,7 +189,7 @@ class ContentReportController extends Controller
             'updated_at' => $report->updated_at->toIso8601String(),
         ];
 
-        // ✅ Add reportable content details if detailed view
+        // Add reportable content details if detailed view
         if ($detailed && $report->reportable) {
             $data['reportable_content'] = $this->getReportableContent($report);
         }
@@ -198,7 +198,7 @@ class ContentReportController extends Controller
     }
 
     /**
-     * ✅ Get reportable content details
+     * Get reportable content details
      */
     private function getReportableContent($report)
     {

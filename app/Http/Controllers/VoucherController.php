@@ -264,5 +264,4 @@ class VoucherController extends Controller
         ]);
     }
 
-    // ... existing methods (store, update, etc) ...
 }

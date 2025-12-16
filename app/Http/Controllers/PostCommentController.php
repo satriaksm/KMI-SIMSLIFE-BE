@@ -106,12 +106,16 @@ class PostCommentController
 
             return response()->json($this->formatCommentResource($comment), 201);
         } catch (\Exception $e) {
-            Log::error('Failed to create comment: ' . $e->getMessage());
-
             return response()->json([
                 'message' => 'Failed to create comment',
-                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
+
+            // Log error internally only
+            Log::error('Failed to create comment', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::id(),
+            ]);
         }
     }
 
@@ -168,12 +172,16 @@ class PostCommentController
 
             return response()->json($this->formatCommentResource($comment), 201);
         } catch (\Exception $e) {
-            Log::error('Failed to create reply: ' . $e->getMessage());
-
             return response()->json([
                 'message' => 'Failed to create reply',
-                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
+
+            // Log error internally only
+            Log::error('Failed to create reply', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::id(),
+            ]);
         }
     }
 

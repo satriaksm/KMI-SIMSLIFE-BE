@@ -71,10 +71,6 @@ class AdminUserController extends Controller
      */
     public function store(Request $request)
     {
-        Log::info('[AdminUserController] Store called', [
-            'data' => $request->except(['password', 'merchant.logo'])
-        ]);
-
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
@@ -119,8 +115,6 @@ class AdminUserController extends Controller
                 'email_verified_at' => now(), 
             ]);
 
-            Log::info('[AdminUserController] User created', ['user_id' => $user->id]);
-
             $role = Role::where('name', $request->role)->first();
             if ($role) {
                 $user->roles()->attach($role->id);
@@ -150,10 +144,6 @@ class AdminUserController extends Controller
                     'response_by' => Auth::id(),
                 ]);
 
-                Log::info('[AdminUserController] Merchant created', [
-                    'merchant_id' => $merchant->id
-                ]);
-
                 $addr = $merchantData['address'];
                 $merchant->addresses()->create([
                     'province_id' => $addr['province_id'],
@@ -175,9 +165,6 @@ class AdminUserController extends Controller
             }
 
             DB::commit();
-
-            Log::info('[AdminUserController] Transaction committed successfully');
-
             return response()->json([
                 'message' => 'User created successfully',
                 'data' => [

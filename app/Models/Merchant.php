@@ -40,14 +40,14 @@ class Merchant extends Model
         parent::boot();
 
         static::creating(function ($merchant) {
-            // ✅ Generate slug on create
+            // Generate slug on create
             if (empty($merchant->slug)) {
                 $merchant->slug = static::generateUniqueSlug($merchant->name);
             }
         });
 
         static::updating(function ($merchant) {
-            // ✅ Update slug only if name changed and slug is empty or being manually set
+            // Update slug only if name changed and slug is empty or being manually set
             if ($merchant->isDirty('name') && !$merchant->isDirty('slug')) {
                 $merchant->slug = static::generateUniqueSlug($merchant->name, $merchant->id);
             }
@@ -55,7 +55,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Generate unique slug
+     * Generate unique slug
      *
      * @param string $name
      * @param int|null $ignoreId - ID to ignore (for updates)
@@ -67,7 +67,7 @@ class Merchant extends Model
         $originalSlug = $slug;
         $count = 1;
 
-        // ✅ Loop until we find unique slug
+        // Loop until we find unique slug
         while (static::slugExists($slug, $ignoreId)) {
             $slug = $originalSlug . '-' . $count;
             $count++;
@@ -77,7 +77,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Check if slug exists
+     * Check if slug exists
      *
      * @param string $slug
      * @param int|null $ignoreId
@@ -94,7 +94,7 @@ class Merchant extends Model
         return $query->exists();
     }
 
-    // ✅ Relasi ke Products
+    // Relasi ke Products
     public function products(): HasMany
     {
         return $this->hasMany(Product::class, 'merchant_id');
@@ -149,7 +149,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Scope: Only approved merchants
+     * Scope: Only approved merchants
      */
     public function scopeApproved($query)
     {
@@ -157,7 +157,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Scope: Only pending merchants
+     * Scope: Only pending merchants
      */
     public function scopePending($query)
     {
@@ -165,7 +165,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Scope: Only rejected merchants
+     * Scope: Only rejected merchants
      */
     public function scopeRejected($query)
     {
