@@ -79,7 +79,13 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        $user = User::with('roles')->where('email', $credentials['email'])->first();
+        // ✅ Load merchants with segmentation relationship
+        $user = User::with([
+            'roles:id,name',
+            'merchants' => function ($query) {
+                $query->with('segmentation:id,name');
+            }
+        ])->where('email', $credentials['email'])->first();
 
         if (!$user || !Hash::check($credentials['password'], $user->password)) {
             return response()->json(['message' => 'Kredensial tidak valid.'], 422);
