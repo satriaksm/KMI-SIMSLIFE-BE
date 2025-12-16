@@ -264,8 +264,8 @@ class ProductController
                     $q->with([
                         'options' => function ($oq) {
                             $oq->with('addon:id,addon_name')
-                                ->select('id', 'addon_group_id', 'addon_id', 'addon_price', 'addon_stock')
-                                ->whereRaw('(addon_stock IS NULL OR addon_stock > 0)');
+                                ->select('id', 'addon_group_id', 'addon_id', 'addon_price')
+                            ;
                         }
                     ])
                         ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
@@ -975,7 +975,6 @@ class ProductController
                 $addonGroup->options()->create([
                     'addon_id' => $addon->id,
                     'addon_price' => $optionData['price'],
-                    'addon_stock' => null,
                 ]);
             }
         }
@@ -1078,7 +1077,7 @@ class ProductController
                     $q->with([
                         'options' => function ($oq) {
                             $oq->with('addon:id,addon_name')
-                                ->select('id', 'addon_group_id', 'addon_id', 'addon_price', 'addon_stock');
+                                ->select('id', 'addon_group_id', 'addon_id', 'addon_price');
                         }
                     ])
                         ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
@@ -1526,7 +1525,6 @@ class ProductController
                 $optPayload = [
                     'addon_id' => $addonMaster->id,
                     'addon_price' => $optionData['price'],
-                    'addon_stock' => null,
                 ];
 
                 if ($groupOption) {
