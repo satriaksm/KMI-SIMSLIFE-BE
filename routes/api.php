@@ -7,6 +7,7 @@ use App\Http\Controllers\CategoryController;
 
 // Legacy (Jasa / Promo / Orders)
 use App\Http\Controllers\JasaController;
+use App\Http\Controllers\JasaCategoryController;
 use App\Http\Controllers\PromoController;
 use App\Http\Controllers\OrderController;
 use App\Models\Jasa;
@@ -76,6 +77,11 @@ Route::prefix('public')->name('public.')->group(function () {
     Route::get('jasa', [JasaController::class, 'index']);         // ✅ LEGACY: singular alias for frontend
     Route::get('jasas/{id}', [JasaController::class, 'show']);    // detail jasa + packages
     Route::get('jasa/{id}', [JasaController::class, 'show']);     // ✅ LEGACY: singular alias for frontend
+    
+    // -------- JASA CATEGORIES & SUBCATEGORIES --------
+    Route::get('jasa-categories', [JasaCategoryController::class, 'index']);
+    Route::get('jasa-categories/{id}', [JasaCategoryController::class, 'show']);
+    Route::get('jasa-categories/{id}/subcategories', [JasaCategoryController::class, 'getSubcategories']);
     
     // DEBUG: Show all jasas without filtering
     Route::get('debug/all-jasas', function () {
@@ -217,6 +223,9 @@ Route::middleware(['api', 'auth:sanctum'])->group(function () {
             Route::put('/{id}', [JasaController::class, 'update'])->where('id', '[0-9]+');
             Route::delete('/{id}', [JasaController::class, 'destroy'])->where('id', '[0-9]+');
         });
+
+        // ✅ Alternative route: POST /merchants/{merchantId}/jasas (owner create for specific merchant)
+        Route::post('merchants/{merchantId}/jasas', [JasaController::class, 'store']);
 
         // ✅ -------- PACKAGES CRUD (Owner) --------
         // list & create by jasa, update/delete by package id

@@ -20,6 +20,7 @@ class DatabaseSeeder extends Seeder
             MasterDataSeeder::class,
             CategorySeeder::class,
             RoleSeeder::class,
+            JasaCategorySeeder::class,
             JasaSeeder::class,
             PromoSeeder::class,
             UserSeeder::class,

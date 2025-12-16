@@ -165,38 +165,66 @@ class JasaController extends Controller
     {
         $merchant = $this->getOwnerMerchantOrAbort($request);
 
-        // Accept both 'name' and 'title' for flexibility with frontend
-        $titleField = $request->filled('name') ? 'name' : 'title';
-        
         $validated = $request->validate([
-            'name' => 'nullable|string|max:255',
-            'title' => 'nullable|string|max:255',
-            'vendor' => 'nullable|string|max:255',
-            'price' => 'required|integer|min:0',
-            'image' => 'nullable|string|max:500',
-            'rating' => 'nullable|numeric|min:0|max:5',
-            'distance_km' => 'nullable|numeric|min:0',
-            'duration_hours' => 'nullable|numeric|min:0',
+            // Basic Info
+            'title' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'is_active' => 'boolean',
+            
+            // Category & Subcategory
+            'jasa_category_id' => 'required|exists:jasa_categories,id',
+            'jasa_subcategory_id' => 'nullable|exists:jasa_subcategories,id',
+            
+            // Pricing
+            'price_type' => 'required|in:per_jam,per_sesi,per_hari,per_project',
+            'base_price' => 'required|integer|min:0',
+            'min_order' => 'required|integer|min:1',
+            'negotiable' => 'boolean',
+            
+            // Duration & Hours
+            'estimated_duration' => 'nullable|string',
+            'operating_hours_start' => 'nullable|date_format:H:i',
+            'operating_hours_end' => 'nullable|date_format:H:i',
+            'operating_days' => 'nullable|string',
+            'booking_advance_days' => 'nullable|integer|min:0',
+            
+            // Location & Service Area
+            'service_type' => 'required|in:on_site,at_location,online',
+            'location_address' => 'nullable|string',
+            'service_area' => 'nullable|string',
+            
+            // Capacity & Limits
+            'capacity_per_slot' => 'nullable|integer|min:1',
+            'max_orders_per_day' => 'nullable|integer|min:1',
+            
+            // Terms & Conditions
+            'cancellation_policy' => 'nullable|string',
+            'customer_requirements' => 'nullable|string',
+            'special_notes' => 'nullable|string',
+            
+            // Media & Support
+            'portfolio' => 'nullable|string',
+            'social_media' => 'nullable|string',
+            
+            // Admin
+            'status' => 'nullable|in:draft,active,inactive',
+            'internal_code' => 'nullable|string|unique:jasas,internal_code',
+            'priority' => 'nullable|integer',
+            'is_featured' => 'boolean',
+            'image' => 'nullable|string|max:500',
         ]);
 
-        // Map 'name' to 'title' if provided
-        if ($request->filled('name')) {
-            $validated['title'] = $request->input('name');
-            unset($validated['name']);
-        }
-
-        // Ensure title is set
-        if (empty($validated['title'])) {
-            return response()->json(['message' => 'Title atau name harus diisi'], 422);
-        }
-
-        // Default publish to active when not explicitly provided
-        $validated['is_active'] = $request->boolean('is_active', true);
         $validated['merchant_id'] = $merchant->id;
+        $validated['status'] = $validated['status'] ?? 'draft';
+        $validated['negotiable'] = $request->boolean('negotiable', false);
+        $validated['is_featured'] = $request->boolean('is_featured', false);
 
         $jasa = Jasa::create($validated);
+
+        return response()->json([
+            'message' => 'Data jasa berhasil ditambahkan',
+            'data' => $jasa->load(['category', 'subcategory'])
+        ], 201);
+    }
 
         return response()->json([
             'message' => 'Data jasa berhasil ditambahkan',
@@ -215,22 +243,58 @@ class JasaController extends Controller
         }
 
         $validated = $request->validate([
+            // Basic Info
             'title' => 'sometimes|required|string|max:255',
-            'vendor' => 'nullable|string|max:255',
-            'price' => 'sometimes|required|integer|min:0',
-            'image' => 'nullable|string|max:500',
-            'rating' => 'nullable|numeric|min:0|max:5',
-            'distance_km' => 'nullable|numeric|min:0',
-            'duration_hours' => 'nullable|numeric|min:0',
             'description' => 'nullable|string',
-            'is_active' => 'boolean',
+            
+            // Category & Subcategory
+            'jasa_category_id' => 'sometimes|required|exists:jasa_categories,id',
+            'jasa_subcategory_id' => 'nullable|exists:jasa_subcategories,id',
+            
+            // Pricing
+            'price_type' => 'sometimes|required|in:per_jam,per_sesi,per_hari,per_project',
+            'base_price' => 'sometimes|required|integer|min:0',
+            'min_order' => 'sometimes|required|integer|min:1',
+            'negotiable' => 'boolean',
+            
+            // Duration & Hours
+            'estimated_duration' => 'nullable|string',
+            'operating_hours_start' => 'nullable|date_format:H:i',
+            'operating_hours_end' => 'nullable|date_format:H:i',
+            'operating_days' => 'nullable|string',
+            'booking_advance_days' => 'nullable|integer|min:0',
+            
+            // Location & Service Area
+            'service_type' => 'sometimes|required|in:on_site,at_location,online',
+            'location_address' => 'nullable|string',
+            'service_area' => 'nullable|string',
+            
+            // Capacity & Limits
+            'capacity_per_slot' => 'nullable|integer|min:1',
+            'max_orders_per_day' => 'nullable|integer|min:1',
+            
+            // Terms & Conditions
+            'cancellation_policy' => 'nullable|string',
+            'customer_requirements' => 'nullable|string',
+            'special_notes' => 'nullable|string',
+            
+            // Media & Support
+            'portfolio' => 'nullable|string',
+            'social_media' => 'nullable|string',
+            
+            // Admin
+            'status' => 'nullable|in:draft,active,inactive',
+            'internal_code' => 'nullable|string|unique:jasas,internal_code,' . $id,
+            'priority' => 'nullable|integer',
+            'is_featured' => 'boolean',
+            'image' => 'nullable|string|max:500',
         ]);
 
         $jasa->update($validated);
 
         return response()->json([
             'message' => 'Data jasa berhasil diperbarui',
-            'data' => $jasa->fresh()->load('packages')
+            'data' => $jasa->fresh()->load(['category', 'subcategory'])
         ]);
     }
 
