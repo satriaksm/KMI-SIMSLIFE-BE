@@ -10,6 +10,7 @@ class Jasa extends Model
     use HasFactory;
 
     protected $fillable = [
+        'merchant_id', // ✅ tambahkan
         'title',
         'vendor',
         'price',
@@ -18,8 +19,17 @@ class Jasa extends Model
         'distance_km',
         'duration_hours',
         'description',
-        'is_active', // 🆕 tambahkan untuk kontrol aktif/tidak
+        'is_active',
     ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+    ];
+
+    public function merchant()
+    {
+        return $this->belongsTo(Merchant::class);
+    }
 
     public function packages()
     {

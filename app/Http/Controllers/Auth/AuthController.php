@@ -92,13 +92,31 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Login user menggunakan session (Sanctum SPA)
-        Auth::login($user);
-        $request->session()->regenerate();
+        // ✅ For SPA/API: Use Sanctum token instead of session
+        $token = $user->createToken('auth-token')->plainTextToken;
 
         return response()->json([
             'message' => 'Login berhasil.',
-            'user' => $user,
+            'token' => $token,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'roles' => $user->roles->pluck('name'),
+                'merchants' => $user->merchants ? $user->merchants->map(function ($merchant) {
+                    return [
+                        'id' => $merchant->id,
+                        'name' => $merchant->name,
+                        'status' => $merchant->status,
+                        'segmentation_id' => $merchant->segmentation_id,
+                        'segmentation' => $merchant->segmentation ? [
+                            'id' => $merchant->segmentation->id,
+                            'name' => $merchant->segmentation->name,
+                        ] : null,
+                    ];
+                }) : [],
+            ],
         ]);
     }
 
@@ -124,6 +142,7 @@ class AuthController extends Controller
                     'id' => $merchant->id,
                     'name' => $merchant->name,
                     'status' => $merchant->status,
+                    'segmentation_id' => $merchant->segmentation_id,
                     'segmentation' => $merchant->segmentation ? [
                         'id' => $merchant->segmentation->id,
                         'name' => $merchant->segmentation->name,
