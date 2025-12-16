@@ -11,7 +11,7 @@ Atur Ulang Kata Sandi
 
 Jika Anda tidak meminta reset kata sandi, abaikan email ini.
 Jika tombol di atas tidak berfungsi, klik atau salin link berikut:
-[{{ $actionUrl }}]({{ $actionUrl }})
+<a href="{{ $actionUrl }}" style="color:#FFA30E;text-decoration:underline;">{{ $actionUrl }}</a>
 
 Terima kasih,<br>
 Tim SUMILIR
