@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Product;
 
 use App\Models\Image;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\Merchant;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -557,55 +558,28 @@ class ProductController
             // Basic product info
             'merchant_id' => ['required', 'integer', 'exists:merchants,id'],
             'name' => ['required', 'string', 'max:255'],
-            'slug' => ['nullable', 'string', 'max:255', 'unique:products,slug'],
-            'description' => ['required', 'string'],
-            'category_id' => ['required', 'integer', 'exists:categories,id'],
-            'sub_categories' => ['nullable', 'array', 'max:4'],
-            'sub_categories.*' => ['integer', 'exists:categories,id'],
-            'min_purchase' => ['required', 'integer', 'min:1'],
-            'status' => ['nullable', 'in:draft,published'],
+            'description' => ['nullable', 'string'],
+            'min_purchase' => ['nullable', 'integer', 'min:1'],
+            'status' => ['nullable', 'in:draft,published,archived'],
 
-            // Product images (REQUIRED minimal 1)
-            'images' => ['required', 'array', 'min:1', 'max:6'],
+            // ✅ Categories (multiple)
+            'category_ids' => ['required', 'array', 'min:1'],
+            'category_ids.*' => ['required', 'integer', 'exists:categories,id'],
+
+            // Images
+            'images' => ['nullable', 'array'],
             'images.*.file' => ['required', 'file', 'image', 'max:5120'],
             'images.*.order' => ['required', 'integer', 'min:0'],
-            'cover_image_index' => ['required', 'integer', 'min:0'],
+            'cover_image_index' => ['nullable', 'integer', 'min:0'],
 
-            // ✅ NEW: SKU untuk produk tanpa variasi
-            'sku' => ['nullable', 'string', 'max:100', 'unique:product_variants,sku'],
-
-            // Non-variant: harga & stok langsung
-            'price' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
-
-            // Variants (optional)
-            'variants' => ['nullable', 'array', 'max:2'],
-            'variants.*.name' => ['required', 'string', 'max:100'],
-            'variants.*.uses_images' => ['required', 'in:0,1'],
-            'variants.*.options' => ['required', 'array', 'min:1'],
-            'variants.*.options.*.name' => ['required', 'string', 'max:100'],
-            'variants.*.options.*.images' => ['nullable', 'array', 'max:1'],
-            'variants.*.options.*.images.*.file' => ['file', 'image', 'max:5120'],
-
-            // Combinations (jika pakai variants)
-            'combinations' => ['nullable', 'array', 'max:' . self::MAX_VARIANTS],
-            'combinations.*.combination' => ['required', 'string', 'max:255'],
-            'combinations.*.sku' => ['nullable', 'string', 'max:100', 'unique:product_variants,sku'], // ✅ UPDATED: Add unique validation
-            'combinations.*.price' => ['required', 'numeric', 'min:0'],
-            'combinations.*.stock' => ['required', 'integer', 'min:0'],
-            'combinations.*.attributes' => ['required', 'array'],
-            'combinations.*.attributes.*.name' => ['required', 'string'],
-            'combinations.*.attributes.*.value' => ['required', 'string'],
+            // Variants & combinations
+            'variants' => ['nullable', 'array'],
+            'combinations' => ['nullable', 'array'],
 
             // Addon groups
-            'add_on_groups' => ['nullable', 'array', 'max:' . self::MAX_ADDON_GROUPS],
-            'add_on_groups.*.name' => ['required', 'string', 'max:100'],
-            'add_on_groups.*.min_selection' => ['required', 'integer', 'min:0'],
-            'add_on_groups.*.max_selection' => ['required', 'integer', 'min:1'],
-            'add_on_groups.*.options' => ['required', 'array', 'min:1'],
-            'add_on_groups.*.options.*.name' => ['required', 'string', 'max:100'],
-            'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
+            'add_on_groups' => ['nullable', 'array'],
         ]);
+
         // Validasi merchant ownership & segment
         $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
         if (is_array($merchantOrError) && isset($merchantOrError['error'])) {
@@ -613,129 +587,59 @@ class ProductController
         }
         $merchant = $merchantOrError;
 
-        // Validasi: jika tidak pakai variants, harus ada price & stock
-        $useVariants = !empty($data['variants']);
-        if (!$useVariants && (!isset($data['price']) || !isset($data['stock']))) {
-            return response()->json([
-                'message' => 'Harga dan stok wajib diisi jika tidak menggunakan variasi.',
-            ], 422);
-        }
-
-        // Validasi: jika pakai variants, harus ada combinations
-        if ($useVariants && empty($data['combinations'])) {
-            return response()->json([
-                'message' => 'Kombinasi variasi wajib diisi jika menggunakan variasi.',
-            ], 422);
-        }
-
-        // ✅ FIXED: Validasi addon groups
-        if (!empty($data['add_on_groups'])) {
-            foreach ($data['add_on_groups'] as $groupIndex => $group) {
-                // Validasi: min_selection tidak boleh > max_selection
-                if ($group['min_selection'] > $group['max_selection']) {
-                    return response()->json([
-                        'message' => "Grup add-on #{$groupIndex}: minimal pilihan tidak boleh lebih besar dari maksimal.",
-                    ], 422);
-                }
-
-                // Validasi: max_selection tidak boleh > jumlah opsi
-                $optionCount = count($group['options']);
-                if ($group['max_selection'] > $optionCount) {
-                    return response()->json([
-                        'message' => "Grup add-on #{$groupIndex}: maksimal pilihan tidak boleh lebih besar dari jumlah opsi ({$optionCount}).",
-                    ], 422);
-                }
-
-                // ✅ NEW: Validasi min_selection harus <= jumlah opsi
-                if ($group['min_selection'] > $optionCount) {
-                    return response()->json([
-                        'message' => "Grup add-on #{$groupIndex}: minimal pilihan tidak boleh lebih besar dari jumlah opsi ({$optionCount}).",
-                    ], 422);
-                }
-            }
-        }
-
-        // Validasi: combinations tidak boleh duplikat
-        if ($useVariants) {
-            $combinations = collect($data['combinations']);
-            $uniqueCombinations = $combinations->pluck('combination')->unique();
-
-            if ($combinations->count() !== $uniqueCombinations->count()) {
-                return response()->json([
-                    'message' => 'Kombinasi variasi tidak boleh duplikat.',
-                ], 422);
-            }
-        }
-
         DB::beginTransaction();
         try {
-            // 1. CREATE PRODUCT
+            // Create product
             $product = Product::create([
                 'merchant_id' => $merchant->id,
                 'name' => $data['name'],
-                'slug' => $data['slug'] ?? $this->generateUniqueSlug($data['name']),
-                'description' => $data['description'],
-                'min_purchase' => $data['min_purchase'],
+                'slug' => $this->generateUniqueSlug($data['name']),
+                'description' => $data['description'] ?? null,
+                'min_purchase' => $data['min_purchase'] ?? 1,
                 'status' => $data['status'] ?? 'draft',
             ]);
 
-            // 2. ATTACH CATEGORIES
-            $categoryIds = [$data['category_id']];
-            if (!empty($data['sub_categories'])) {
-                $categoryIds = array_merge($categoryIds, $data['sub_categories']);
+            // ✅ Attach categories
+            if (!empty($data['category_ids'])) {
+                $product->categories()->attach($data['category_ids']);
             }
-            $product->categories()->attach(array_unique($categoryIds));
 
-            // 3. UPLOAD PRODUCT IMAGES
-            $this->storeProductImages($product, $data['images'], $data['cover_image_index']);
+            // Upload images
+            if (!empty($data['images'])) {
+                $this->storeProductImages($product, $data['images'], $data['cover_image_index'] ?? 0);
+            }
 
-            // 4. CREATE VARIANTS OR DIRECT PRICING
-            if ($useVariants) {
-                // Create options + option values
+            // Create variants if provided
+            if (!empty($data['variants']) && !empty($data['combinations'])) {
                 $optionMap = $this->createProductOptions($product, $data['variants']);
-
-                // Create variants (combinations)
                 $this->createProductVariants($product, $data['combinations'], $optionMap);
             } else {
-                // Direct pricing (single variant tanpa options)
-                $product->variants()->create([
-                    'sku' => $data['sku'] ?? null,
+                // Single variant (no options)
+                ProductVariant::create([
+                    'product_id' => $product->id,
                     'price' => $data['price'],
                     'stock' => $data['stock'],
+                    'sku' => $data['sku'] ?? null,
                 ]);
             }
 
-            // 5. CREATE ADDON GROUPS (optional)
+            // Create addon groups
             if (!empty($data['add_on_groups'])) {
                 $this->createAddonGroups($product, $merchant, $data['add_on_groups']);
             }
 
             DB::commit();
 
-            return response()->json(
-                $product->load([
-                    'coverImage',
-                    'images',
-                    'categories',
-                    'options.values',
-                    'variants.optionValues',
-                    'addonGroups.options.addon',
-                ]),
-                201
-            );
-
+            return response()->json([
+                'message' => 'Produk berhasil dibuat',
+                'data' => $product->load(['categories', 'images', 'variants', 'options.values', 'addonGroups.options.addon']),
+            ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
-
-            // Cleanup uploaded files
             if (isset($product)) {
                 $this->cleanupProductFiles($product);
             }
-
-            return response()->json([
-                'message' => 'Gagal membuat produk.',
-                'error' => $e->getMessage(),
-            ], 500);
+            throw $e;
         }
     }
 
@@ -994,153 +898,71 @@ class ProductController
         $product = Product::where('slug', $slug)->firstOrFail();
 
         $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
-            return $error;
+        if ($error) return $error;
 
         $data = $request->validate([
-            // Basic info
-            'name' => ['sometimes', 'required', 'string', 'max:255'],
-            'slug' => ['nullable', 'string', 'max:255', 'unique:products,slug,' . $product->id],
-            'description' => ['sometimes', 'required', 'string'],
-            'category_id' => ['sometimes', 'required', 'integer', 'exists:categories,id'],
-            'sub_categories' => ['nullable', 'array', 'max:4'],
-            'sub_categories.*' => ['integer', 'exists:categories,id'],
-            'min_purchase' => ['sometimes', 'required', 'integer', 'min:1'],
-            'status' => ['sometimes', 'in:draft,published,archived'],
+            'name' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string'],
+            'min_purchase' => ['nullable', 'integer', 'min:1'],
+            'status' => ['nullable', 'in:draft,published,archived'],
 
-            // Images (new uploads)
-            'images' => ['nullable', 'array', 'max:6'],
-            'images.*.file' => ['required', 'file', 'image', 'max:5120'],
-            'images.*.order' => ['required', 'integer', 'min:0'],
+            // ✅ Categories (multiple)
+            'category_ids' => ['required', 'array', 'min:1'],
+            'category_ids.*' => ['required', 'integer', 'exists:categories,id'],
 
-            // Existing images (to keep)
+            // Images
             'existing_images' => ['nullable', 'array'],
-            'existing_images.*.id' => ['required', 'integer', 'exists:images,id'],
-            'existing_images.*.order' => ['required', 'integer', 'min:0'],
-            'existing_images.*.is_cover' => ['required', 'boolean'],
-
-            // ✅ NEW: SKU untuk produk tanpa variasi
-            'sku' => ['nullable', 'string', 'max:100', 'unique:product_variants,sku'],
-            // Non-variant pricing
-            'price' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
+            'images' => ['nullable', 'array'],
+            'cover_image_index' => ['nullable', 'integer', 'min:0'],
 
             // Variants
-            'variants' => ['nullable', 'array', 'max:2'],
-            'variants.*.id' => ['nullable', 'integer'], // null for new variants
-            'variants.*.name' => ['required', 'string', 'max:100'],
-            'variants.*.uses_images' => ['required', 'in:0,1'],
-            'variants.*.options' => ['required', 'array', 'min:1'],
-            'variants.*.options.*.id' => ['nullable', 'integer'],
-            'variants.*.options.*.name' => ['required', 'string', 'max:100'],
-            'variants.*.options.*.images' => ['nullable', 'array', 'max:1'],
-            'variants.*.options.*.images.*.file' => ['file', 'image', 'max:5120'],
-            'variants.*.options.*.existing_images' => ['nullable', 'array'],
+            'variants' => ['nullable', 'array'],
+            'combinations' => ['nullable', 'array'],
 
-            // Combinations
-            'combinations' => ['nullable', 'array', 'max:' . self::MAX_VARIANTS],
-            'combinations.*.combination' => ['required', 'string'],
-            'combinations.*.sku' => ['nullable', 'string', 'max:100'],
-            'combinations.*.price' => ['required', 'numeric', 'min:0'],
-            'combinations.*.stock' => ['required', 'integer', 'min:0'],
-            'combinations.*.attributes' => ['required', 'array'],
-
-            // Add-ons
-            'add_on_groups' => ['nullable', 'array', 'max:' . self::MAX_ADDON_GROUPS],
-            'add_on_groups.*.id' => ['nullable', 'integer'], // null for new groups
-            'add_on_groups.*.name' => ['required', 'string', 'max:100'],
-            'add_on_groups.*.min_selection' => ['required', 'integer', 'min:0'],
-            'add_on_groups.*.max_selection' => ['required', 'integer', 'min:1'],
-            'add_on_groups.*.options' => ['required', 'array', 'min:1'],
-            'add_on_groups.*.options.*.id' => ['nullable', 'integer'],
-            'add_on_groups.*.options.*.name' => ['required', 'string', 'max:100'],
-            'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
+            // Addons
+            'add_on_groups' => ['nullable', 'array'],
         ]);
 
         DB::beginTransaction();
         try {
-            // 1. UPDATE BASIC INFO
-            $newName = $data['name'] ?? $product->name;
-            $updateData = [
-                'name' => $newName,
-                'description' => $data['description'] ?? $product->description,
-                'min_purchase' => $data['min_purchase'] ?? $product->min_purchase,
-            ];
+            // Update basic info
+            $product->update([
+                'name' => $data['name'],
+                'slug' => $this->generateUniqueSlugForUpdate($data['name'], $product->id),
+                'description' => $data['description'] ?? null,
+                'min_purchase' => $data['min_purchase'] ?? 1,
+                'status' => $data['status'] ?? $product->status,
+            ]);
 
-            // Jika slug dikirim, gunakan slug dari request (tetap sesuai validasi unik).
-            if (!empty($data['slug'])) {
-                $updateData['slug'] = $data['slug'];
-            } else {
-                // Jika slug tidak dikirim tapi name berubah, regenerate slug unik.
-                if ($newName !== $product->name) {
-                    $updateData['slug'] = $this->generateUniqueSlugForUpdate($newName, $product->id);
-                }
+            // ✅ Sync categories
+            if (!empty($data['category_ids'])) {
+                $product->categories()->sync($data['category_ids']);
             }
 
-            if (isset($data['status'])) {
-                $updateData['status'] = $data['status'];
+            // Update images
+            if (isset($data['existing_images']) || isset($data['images'])) {
+                $this->updateProductImages($product, $data);
             }
 
-            $product->update($updateData);
-
-            // 2. UPDATE CATEGORIES
-            if (isset($data['category_id'])) {
-                $categoryIds = [$data['category_id']];
-                if (!empty($data['sub_categories'])) {
-                    $categoryIds = array_merge($categoryIds, $data['sub_categories']);
-                }
-                $product->categories()->sync(array_unique($categoryIds));
-            }
-
-            // 3. UPDATE IMAGES
-            $this->updateProductImages($product, $data);
-
-            // 4. UPDATE VARIANTS OR DIRECT PRICING
-            $useVariants = isset($data['variants']) && is_array($data['variants']) && count($data['variants']) > 0;
-
-            if ($useVariants) {
+            // Update variants
+            if (isset($data['variants'])) {
                 $this->updateProductVariants($product, $data);
-            } else {
-                // ✅ Perbaikan: guard agar tidak akses index yang tidak ada
-                $variant = $product->variants()->first();
-
-                $updateVariantPayload = [
-                    'sku' => $data['sku'] ?? ($variant?->sku ?? null),
-                    'price' => $data['price'] ?? ($variant?->price ?? 0),
-                    'stock' => $data['stock'] ?? ($variant?->stock ?? 0),
-                ];
-
-                if ($variant) {
-                    $variant->update($updateVariantPayload);
-                } else {
-                    $product->variants()->create($updateVariantPayload);
-                }
             }
 
-            // 5. UPDATE ADDON GROUPS
+            // Update addon groups
             if (isset($data['add_on_groups'])) {
                 $this->updateAddonGroups($product, $data['add_on_groups']);
             }
 
             DB::commit();
 
-            return response()->json(
-                $product->fresh()->load([
-                    'coverImage',
-                    'images',
-                    'categories',
-                    'options.values',
-                    'variants.optionValues',
-                    'addonGroups.options.addon',
-                ])
-            );
-
+            return response()->json([
+                'message' => 'Produk berhasil diupdate',
+                'data' => $product->fresh()->load(['categories', 'images', 'variants', 'options.values', 'addonGroups.options.addon']),
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'message' => 'Gagal memperbarui produk.',
-                'error' => $e->getMessage(),
-            ], 500);
+            throw $e;
         }
     }
 
@@ -1152,8 +974,8 @@ class ProductController
 
         while (
             Product::where('slug', $slug)
-                ->where('id', '!=', $currentProductId)
-                ->exists()
+            ->where('id', '!=', $currentProductId)
+            ->exists()
         ) {
             $slug = "{$base}-{$count}";
             $count++;
@@ -1984,6 +1806,8 @@ class ProductController
 
         // Use helper to build variant query with same filters
         $variantsQuery = $this->buildFilteredVariantQuery($merchantId, $data);
+
+
 
         $rows = $variantsQuery->get();
 

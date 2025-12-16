@@ -1,10 +1,12 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Models\Voucher;
 use App\Models\VoucherUsage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 class VoucherController extends Controller
 {
@@ -174,4 +176,93 @@ class VoucherController extends Controller
             'data' => $voucher,
         ], 201);
     }
+
+    /**
+     * ADMIN: List all vouchers (from merchants and events)
+     */
+    public function adminIndex(Request $request)
+    {
+        Log::info('[VoucherController] adminIndex called', [
+            'params' => $request->all()
+        ]);
+
+        $query = Voucher::with([
+            'merchant:id,name,logo_path',
+            'event:id,event_name',
+            'usages',
+        ])
+            ->withCount('usages');
+
+        // Filter by status
+        if ($request->has('voucher_status')) {
+            $query->where('voucher_status', $request->voucher_status);
+        }
+
+        // Filter by type
+        if ($request->has('voucher_type')) {
+            $query->where('voucher_type', $request->voucher_type);
+        }
+
+        // Filter by merchant
+        if ($request->has('merchant_id')) {
+            $query->where('merchant_id', $request->merchant_id);
+        }
+
+        // Search
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('voucher_code', 'like', "%{$search}%")
+                    ->orWhere('voucher_description', 'like', "%{$search}%");
+            });
+        }
+
+        $vouchers = $query->latest()
+            ->paginate($request->input('per_page', 15));
+
+        Log::info('[VoucherController] Returning vouchers', [
+            'count' => $vouchers->count(),
+            'total' => $vouchers->total()
+        ]);
+
+        return response()->json($vouchers);
+    }
+
+    /**
+     * ADMIN: Get single voucher detail
+     */
+    public function adminShow($id)
+    {
+        $voucher = Voucher::with([
+            'merchant.user',
+            'event',
+            'usages.user',
+        ])
+            ->withCount('usages')
+            ->findOrFail($id);
+
+        return response()->json(['data' => $voucher]);
+    }
+
+    /**
+     * ADMIN: Delete voucher (only if not used)
+     */
+    public function destroy($id)
+    {
+        $voucher = Voucher::withCount('usages')->findOrFail($id);
+
+        if ($voucher->usages_count > 0) {
+            return response()->json([
+                'message' => 'Cannot delete voucher that has been used',
+            ], 422);
+        }
+
+        $voucher->delete();
+
+        return response()->json([
+            'message' => 'Voucher deleted successfully'
+        ]);
+    }
+
+    // ... existing methods (store, update, etc) ...
 }

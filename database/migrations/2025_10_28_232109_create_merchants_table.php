@@ -17,7 +17,7 @@ return new class extends Migration {
             $table->foreignId('segmentation_id')->constrained('segmentations')->cascadeOnUpdate()->restrictOnDelete();
             $table->string('name');
             $table->string('slug')->unique()->index();
-            $table->string('description')->nullable();
+            $table->text('description')->nullable();
             $table->string('logo_path')->nullable();
             $table->string('phone')->nullable();
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');

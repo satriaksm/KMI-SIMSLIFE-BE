@@ -1,9 +1,11 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Models\Event;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class EventController extends Controller
 {
@@ -26,21 +28,117 @@ class EventController extends Controller
     }
 
     /**
-     * PUBLIC: Show single event
+     * ADMIN: List all events (with filters)
      */
-    public function show($id)
+    public function adminIndex(Request $request)
+    {
+        Log::info('[EventController] adminIndex called', [
+            'params' => $request->all()
+        ]);
+
+        $query = Event::with(['creator:id,name'])
+            ->withCount(['merchants', 'vouchers']);
+
+        // Filter by status
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // Search
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where('event_name', 'like', "%{$search}%");
+        }
+
+        // Filter active only
+        if ($request->boolean('active_only')) {
+            $query->active();
+        }
+
+        $events = $query->latest('event_start_date')
+            ->paginate($request->input('per_page', 10));
+
+        Log::info('[EventController] Returning events', [
+            'count' => $events->count(),
+            'total' => $events->total()
+        ]);
+
+        return response()->json($events);
+    }
+
+    /**
+     * ADMIN: Get single event detail
+     */
+    public function adminShow($id)
     {
         $event = Event::with([
             'creator:id,name',
             'merchants' => function ($query) {
                 $query->where('event_merchants.status', 'accepted');
             },
-            'vouchers' => function ($query) {
-                $query->active();
-            }
-        ])->findOrFail($id);
+            'vouchers'
+        ])
+            ->withCount(['merchants', 'vouchers'])
+            ->findOrFail($id);
 
-        return response()->json($event);
+        return response()->json(['data' => $event]);
+    }
+
+    /**
+     * ADMIN: Update event
+     */
+    public function update(Request $request, $id)
+    {
+        $event = Event::findOrFail($id);
+
+        $validated = $request->validate([
+            'event_name' => 'sometimes|required|string|max:255',
+            'event_description' => 'nullable|string',
+            'event_start_date' => 'sometimes|required|date',
+            'event_end_date' => 'sometimes|required|date|after_or_equal:event_start_date',
+            'banner_img' => 'nullable|image|max:2048',
+            'status' => 'sometimes|required|in:draft,published,archived',
+        ]);
+
+        if ($request->hasFile('banner_img')) {
+            // Delete old banner
+            if ($event->banner_img_path) {
+                Storage::disk('public')->delete($event->banner_img_path);
+            }
+
+            $validated['banner_img_path'] = $request->file('banner_img')
+                ->store('events/banners', 'public');
+        }
+
+        $event->update($validated);
+
+        return response()->json([
+            'message' => 'Event updated successfully',
+            'data' => $event->fresh(),
+        ]);
+    }
+
+    /**
+     * ADMIN: Delete event
+     */
+    public function destroy($id)
+    {
+        $event = Event::findOrFail($id);
+
+        // Delete banner image
+        if ($event->banner_img_path) {
+            Storage::disk('public')->delete($event->banner_img_path);
+        }
+
+        // Detach merchants
+        $event->merchants()->detach();
+
+        // Delete event
+        $event->delete();
+
+        return response()->json([
+            'message' => 'Event deleted successfully'
+        ]);
     }
 
     /**

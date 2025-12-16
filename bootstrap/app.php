@@ -13,33 +13,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-<<<<<<< Updated upstream
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
         ]);
         $middleware->api(prepend: [
             HandleCors::class,
         ]);
-=======
-        $middleware->api(prepend: [
-            HandleCors::class,
-        ]);
-
-        $middleware->statefulApi();
-
-        $middleware->alias([
-            'role' => \App\Http\Middleware\RoleMiddleware::class,
-        ]);
-
-        if (env('APP_ENV') === 'local') {
-            $middleware->validateCsrfTokens(except: [
-                'login',
-                'register',
-                'logout',
-                'api/*',
-            ]);
-        }
->>>>>>> Stashed changes
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

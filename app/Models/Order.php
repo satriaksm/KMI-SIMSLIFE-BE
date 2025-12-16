@@ -22,7 +22,6 @@ class Order extends Model
         'metode_pembayaran',
         'promo_code',
         'total',
-        'status' // 🆕 status pesanan: pending/proses/selesai/batal
     ];
 
     public function jasa()

@@ -21,6 +21,10 @@ use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\VoucherController;
+use App\Http\Controllers\PaguyubanController;
+use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\AdminUserController;
+use App\Http\Controllers\Admin\ContentReportController;
 use Illuminate\Http\Request;
 
 // ============================================================
@@ -41,6 +45,9 @@ Route::prefix('public')->name('public.')->group(function () {
 
         Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
         Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
+
+        // ✅ Filter by category
+        Route::get('/category/{categorySlug}', [ProductController::class, 'publicByCategory'])->name('by-category');
 
         // ✅ Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
@@ -80,7 +87,7 @@ Route::prefix('public')->name('public.')->group(function () {
     });
 });
 
-// ✅ Public Community Posts (tanpa auth)
+// Public Community Posts (tanpa auth)
 Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
     Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
@@ -95,7 +102,7 @@ Route::middleware('web')->group(function () {
 
 
 // ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
+// PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
 // ============================================================
 
 // ---------- JASA ----------
@@ -224,7 +231,7 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
     });
 
-    // ✅ PROTECTED Community Actions (require auth)
+    // PROTECTED Community Actions (require auth)
     Route::prefix('community')->group(function () {
 
         // My Posts (auth required)
@@ -249,889 +256,98 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::get('/my-comments', [PostCommentController::class, 'myComments'])
             ->name('community.comments.my-comments');
     });
-<<<<<<< Updated upstream
 });
 
 // ============================================================
-// PUBLIC ROUTES (No Auth Required)
+// ADMIN ROUTES (Protected)
 // ============================================================
-Route::prefix('public')->name('public.')->group(function () {
+Route::middleware(['web', 'auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
 
-    // Public Products
-    Route::prefix('products')->name('products.')->group(function () {
-        Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
-        Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
+    // ===== DASHBOARD STATISTICS =====
+    Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
+    Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']); // ✅ NEW
 
-        // ✅ Public show by slug (only published)
-        Route::get('/{slug}', [ProductController::class, 'publicShow'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('show');
-
-        // Get variant availability by selected option values
-        Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('variant');
+    // ===== USER MANAGEMENT =====
+    Route::prefix('users')->name('users.')->group(function () {
+        Route::get('/', [AdminUserController::class, 'index'])->name('index');
+        Route::get('/{id}', [AdminUserController::class, 'show'])->name('show');
+        Route::patch('/{id}/toggle-status', [AdminUserController::class, 'toggleStatus'])->name('toggle-status');
+        Route::delete('/{id}', [AdminUserController::class, 'destroy'])->name('destroy');
+        Route::post('/', [AdminUserController::class, 'store'])->name('store'); // Create user + merchant
     });
 
-    // ✅ NEW: Public Merchants
+    // ===== MERCHANT MANAGEMENT =====
     Route::prefix('merchants')->name('merchants.')->group(function () {
-        // List merchants (with pagination & filters)
-        Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
-
-        // Random merchants for homepage
-        Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
-
-        // Show single merchant
-        Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');
-
-        // Merchant's products (already exists)
-        Route::get('/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
-            ->name('products');
+        Route::get('/', [MerchantController::class, 'adminIndex'])->name('index');
+        Route::get('/{id}', [MerchantController::class, 'adminShow'])->name('show');
+        Route::patch('/{merchant}/approve', [MerchantController::class, 'approve'])->name('approve');
+        Route::patch('/{merchant}/reject', [MerchantController::class, 'reject'])->name('reject');
+        Route::patch('/{id}/toggle-status', [MerchantController::class, 'toggleStatus'])->name('toggle-status');
     });
 
-    // Category Routes
-    Route::prefix('categories')->group(function () {
-        Route::get('/level-1', [CategoryController::class, 'getLevel1Categories']);
-        Route::get('/{parentId}/sub-categories', [CategoryController::class, 'getSubCategories']);
-        Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
-        Route::get('/search', [CategoryController::class, 'searchCategories']);
+    // ===== PAGUYUBAN MANAGEMENT =====
+    Route::prefix('paguyubans')->name('paguyubans.')->group(function () {
+        Route::get('/', [PaguyubanController::class, 'index'])->name('index');
+        Route::post('/', [PaguyubanController::class, 'store'])->name('store');
+        Route::get('/{id}', [PaguyubanController::class, 'show'])->name('show');
+        Route::put('/{id}', [PaguyubanController::class, 'update'])->name('update');
+        Route::delete('/{id}', [PaguyubanController::class, 'destroy'])->name('destroy');
+        Route::patch('/{id}/toggle-status', [PaguyubanController::class, 'toggleStatus'])->name('toggle-status');
     });
 
-});
-
-// ✅ Public Community Posts (tanpa auth)
-Route::prefix('community')->name('community.')->group(function () {
-    Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
-    Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
-    Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
-    Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
-    Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
-});
-Route::middleware('web')->group(function () {
-    Route::get('images/{image}', [ImageController::class, 'show'])
-        ->name('images.show');
-});
-
-
-// ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
-// ============================================================
-
-// ---------- JASA ----------
-Route::prefix('jasa')->group(function () {
-    Route::get('/', [JasaController::class, 'index']);
-    Route::get('/{id}', [JasaController::class, 'show']);
-    Route::post('/', [JasaController::class, 'store']);
-    Route::put('/{id}', [JasaController::class, 'update']);
-    Route::delete('/{id}', [JasaController::class, 'destroy']);
-});
-
-// ---------- PROMO ----------
-Route::prefix('promos')->group(function () {
-    Route::get('/', [PromoController::class, 'index']);
-    Route::get('/{id}', [PromoController::class, 'show'])->name('promos.show');
-    Route::post('/', [PromoController::class, 'store']);
-    Route::delete('/{id}', [PromoController::class, 'destroy']);
-});
-
-// ---------- ORDERS ----------
-Route::prefix('orders')->group(function () {
-    Route::get('/', [OrderController::class, 'index']);
-    Route::get('/{id}', [OrderController::class, 'show']);
-    Route::post('/', [OrderController::class, 'store']);
-});
-
-
-// ============================================================
-// AUTH ROUTES
-// ============================================================
-Route::prefix('auth')->group(function () {
-    // Public auth endpoints
-    Route::post('register', [AuthController::class, 'register'])->name('register');
-    Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])->name('forgot-password');
-    Route::post('reset-password', [PasswordResetController::class, 'reset'])->name('reset-password');
-
-    // Email verification
-    Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-        ->middleware(['signed', 'throttle:6,1'])
-        ->name('api.verification.verify');
-
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
-        Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
-        Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
-            ->middleware('throttle:6,1')
-            ->name('api.verification.send');
-    });
-});
-
-// ============================================================
-// PROTECTED ROUTES (AUTH + VERIFIED)
-// ============================================================
-// Wrap protected routes with 'web' so session/cookie middlewares are available,
-// then apply 'auth:sanctum' and other guards.
-Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
-
-    // Locations
-    Route::prefix('locations')->controller(LocationController::class)->group(function () {
-        Route::get('provinces', 'provinces');
-        Route::get('cities/{provinceId}', 'cities');
-        Route::get('districts/{cityId}', 'districts');
-        Route::get('villages/{districtId}', 'villages');
+    // ===== CATEGORY MANAGEMENT =====
+    Route::prefix('categories')->name('categories.')->group(function () {
+        Route::get('/', [CategoryController::class, 'adminIndex'])->name('index');
+        Route::post('/', [CategoryController::class, 'store'])->name('store');
+        Route::get('/{id}', [CategoryController::class, 'show'])->name('show');
+        Route::put('/{id}', [CategoryController::class, 'update'])->name('update');
+        Route::delete('/{id}', [CategoryController::class, 'destroy'])->name('destroy');
     });
 
-    Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
-
-    // CUSTOMER ONLY: Register Merchant
-    Route::middleware('role:customer')->group(function () {
-        Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
+    // ===== EVENT MANAGEMENT =====
+    Route::prefix('events')->name('events.')->group(function () {
+        Route::get('/', [EventController::class, 'adminIndex'])->name('index');
+        Route::post('/', [EventController::class, 'store'])->name('store');
+        Route::get('/{id}', [EventController::class, 'adminShow'])->name('show');
+        Route::put('/{id}', [EventController::class, 'update'])->name('update');
+        Route::delete('/{id}', [EventController::class, 'destroy'])->name('destroy');
+        Route::post('/{event}/invite-merchants', [EventController::class, 'inviteMerchants'])->name('invite-merchants');
     });
 
-    // UMKM OWNER ONLY
-    Route::middleware('role:umkm-owner')->group(function () {
-
-        // PRODUCT CRUD & NESTED
-        Route::prefix('products')->name('products.')->group(function () {
-            // Product CRUD list & create
-            Route::get('/', [ProductController::class, 'index'])->name('index');
-            Route::post('/', [ProductController::class, 'store'])->name('store');
-
-            // ✅ Move export routes ABOVE dynamic {slug}
-            Route::get('/export/excel', [ProductController::class, 'exportExcel']);
-            Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
-
-            // ✅ Slug routes with constraints to avoid matching "export"
-            Route::get('{slug}', [ProductController::class, 'show'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('show');
-
-            Route::put('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update');
-
-            Route::patch('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update.patch');
-
-            Route::delete('{slug}', [ProductController::class, 'destroy'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('destroy');
-
-            // ✅ Endpoint khusus status pakai slug
-            Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update-status');
-
-            // Variant combination counter
-            Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
-                ->where('slug', '^[a-z0-9-]+$');
-
-            // Upload images by slug
-            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
-                ->where('slug', '^[a-z0-9-]+$');
-        });
+    // ===== VOUCHER MANAGEMENT =====
+    Route::prefix('vouchers')->name('vouchers.')->group(function () {
+        Route::get('/', [VoucherController::class, 'adminIndex'])->name('index');
+        Route::get('/{id}', [VoucherController::class, 'adminShow'])->name('show');
+        Route::delete('/{id}', [VoucherController::class, 'destroy'])->name('destroy');
     });
 
-    // ADMIN ONLY: merchant approval
-    Route::middleware('role:admin')->prefix('merchants')->group(function () {
-        Route::post('{merchant}/approve', [MerchantController::class, 'approve']);
-        Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
+    // ===== CONTENT MODERATION =====
+    Route::prefix('reports')->name('reports.')->group(function () {
+        Route::get('/', [ContentReportController::class, 'index'])->name('index');
+        Route::get('/{id}', [ContentReportController::class, 'show'])->name('show');
+        Route::patch('/{id}/review', [ContentReportController::class, 'review'])->name('review');
+        Route::delete('/{id}', [ContentReportController::class, 'destroy'])->name('destroy');
     });
 
-    // ✅ PROTECTED Community Actions (require auth)
-    Route::prefix('community')->group(function () {
-
-        // My Posts (auth required)
-        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
-            ->name('community.posts.my');
-
-        // Create, Update, Delete Posts (auth required)
-        Route::post('/posts', [CommunityPostController::class, 'store'])
-            ->name('community.posts.store');
-        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
-            ->name('community.posts.update');
-        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
-            ->name('community.posts.destroy');
-
-        // Comments CRUD (auth required)
-        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
-            ->name('community.comments.store');
-        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
-            ->name('community.comments.reply');
-        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
-            ->name('community.comments.destroy');
-        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
-            ->name('community.comments.my-comments');
+    // ===== COMMUNITY MODERATION =====
+    Route::prefix('community')->name('community.')->group(function () {
+        Route::get('/posts', [CommunityPostController::class, 'adminIndex'])->name('posts.index');
+        Route::delete('/posts/{id}', [CommunityPostController::class, 'adminDestroy'])->name('posts.destroy');
+        Route::get('/comments', [PostCommentController::class, 'adminIndex'])->name('comments.index');
+        Route::delete('/comments/{id}', [PostCommentController::class, 'adminDestroy'])->name('comments.destroy');
     });
-});
 
-// ============================================================
-// PUBLIC ROUTES (No Auth Required)
-// ============================================================
-Route::prefix('public')->name('public.')->group(function () {
-
-    // Public Products
+    // ===== PRODUCT MODERATION =====
     Route::prefix('products')->name('products.')->group(function () {
-        Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
-        Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
-
-        // ✅ Public show by slug (only published)
-        Route::get('/{slug}', [ProductController::class, 'publicShow'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('show');
-
-        // Get variant availability by selected option values
-        Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('variant');
-    });
-
-    // ✅ NEW: Public Merchants
-    Route::prefix('merchants')->name('merchants.')->group(function () {
-        // List merchants (with pagination & filters)
-        Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
-
-        // Random merchants for homepage
-        Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
-
-        // Show single merchant
-        Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');
-
-        // Merchant's products (already exists)
-        Route::get('/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
-            ->name('products');
-    });
-
-    // Category Routes
-    Route::prefix('categories')->group(function () {
-        Route::get('/level-1', [CategoryController::class, 'getLevel1Categories']);
-        Route::get('/{parentId}/sub-categories', [CategoryController::class, 'getSubCategories']);
-        Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
-        Route::get('/search', [CategoryController::class, 'searchCategories']);
-    });
-
-});
-
-// ✅ Public Community Posts (tanpa auth)
-Route::prefix('community')->name('community.')->group(function () {
-    Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
-    Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
-    Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
-    Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
-    Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
-});
-Route::middleware('web')->group(function () {
-    Route::get('images/{image}', [ImageController::class, 'show'])
-        ->name('images.show');
-});
-
-
-// ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
-// ============================================================
-
-// ---------- JASA ----------
-Route::prefix('jasa')->group(function () {
-    Route::get('/', [JasaController::class, 'index']);
-    Route::get('/{id}', [JasaController::class, 'show']);
-    Route::post('/', [JasaController::class, 'store']);
-    Route::put('/{id}', [JasaController::class, 'update']);
-    Route::delete('/{id}', [JasaController::class, 'destroy']);
-});
-
-// ---------- PROMO ----------
-Route::prefix('promos')->group(function () {
-    Route::get('/', [PromoController::class, 'index']);
-    Route::get('/{id}', [PromoController::class, 'show'])->name('promos.show');
-    Route::post('/', [PromoController::class, 'store']);
-    Route::delete('/{id}', [PromoController::class, 'destroy']);
-});
-
-// ---------- ORDERS ----------
-Route::prefix('orders')->group(function () {
-    Route::get('/', [OrderController::class, 'index']);
-    Route::get('/{id}', [OrderController::class, 'show']);
-    Route::post('/', [OrderController::class, 'store']);
-});
-
-
-// ============================================================
-// AUTH ROUTES
-// ============================================================
-Route::prefix('auth')->group(function () {
-    // Public auth endpoints
-    Route::post('register', [AuthController::class, 'register'])->name('register');
-    Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])->name('forgot-password');
-    Route::post('reset-password', [PasswordResetController::class, 'reset'])->name('reset-password');
-
-    // Email verification
-    Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-        ->middleware(['signed', 'throttle:6,1'])
-        ->name('api.verification.verify');
-
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
-        Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
-        Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
-            ->middleware('throttle:6,1')
-            ->name('api.verification.send');
+        Route::get('/', [ProductController::class, 'adminIndex'])->name('index');
+        Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
     });
 });
 
-// ============================================================
-// PROTECTED ROUTES (AUTH + VERIFIED)
-// ============================================================
-// Wrap protected routes with 'web' so session/cookie middlewares are available,
-// then apply 'auth:sanctum' and other guards.
-Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
-
-    // Locations
-    Route::prefix('locations')->controller(LocationController::class)->group(function () {
-        Route::get('provinces', 'provinces');
-        Route::get('cities/{provinceId}', 'cities');
-        Route::get('districts/{cityId}', 'districts');
-        Route::get('villages/{districtId}', 'villages');
-    });
-
-    Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
-
-    // CUSTOMER ONLY: Register Merchant
-    Route::middleware('role:customer')->group(function () {
-        Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
-    });
-
-    // UMKM OWNER ONLY
-    Route::middleware('role:umkm-owner')->group(function () {
-
-        // PRODUCT CRUD & NESTED
-        Route::prefix('products')->name('products.')->group(function () {
-            // Product CRUD list & create
-            Route::get('/', [ProductController::class, 'index'])->name('index');
-            Route::post('/', [ProductController::class, 'store'])->name('store');
-
-            // ✅ Move export routes ABOVE dynamic {slug}
-            Route::get('/export/excel', [ProductController::class, 'exportExcel']);
-            Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
-
-            // ✅ Slug routes with constraints to avoid matching "export"
-            Route::get('{slug}', [ProductController::class, 'show'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('show');
-
-            Route::put('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update');
-
-            Route::patch('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update.patch');
-
-            Route::delete('{slug}', [ProductController::class, 'destroy'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('destroy');
-
-            // ✅ Endpoint khusus status pakai slug
-            Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update-status');
-
-            // Variant combination counter
-            Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
-                ->where('slug', '^[a-z0-9-]+$');
-
-            // Upload images by slug
-            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
-                ->where('slug', '^[a-z0-9-]+$');
-        });
-    });
-
-    // ADMIN ONLY: merchant approval
-    Route::middleware('role:admin')->prefix('merchants')->group(function () {
-        Route::post('{merchant}/approve', [MerchantController::class, 'approve']);
-        Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
-    });
-
-    // ✅ PROTECTED Community Actions (require auth)
-    Route::prefix('community')->group(function () {
-
-        // My Posts (auth required)
-        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
-            ->name('community.posts.my');
-
-        // Create, Update, Delete Posts (auth required)
-        Route::post('/posts', [CommunityPostController::class, 'store'])
-            ->name('community.posts.store');
-        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
-            ->name('community.posts.update');
-        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
-            ->name('community.posts.destroy');
-
-        // Comments CRUD (auth required)
-        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
-            ->name('community.comments.store');
-        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
-            ->name('community.comments.reply');
-        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
-            ->name('community.comments.destroy');
-        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
-            ->name('community.comments.my-comments');
-    });
-});
-
-// ============================================================
-// PUBLIC ROUTES (No Auth Required)
-// ============================================================
-Route::prefix('public')->name('public.')->group(function () {
-
-    // Public Products
-    Route::prefix('products')->name('products.')->group(function () {
-        Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
-        Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
-
-        // ✅ Public show by slug (only published)
-        Route::get('/{slug}', [ProductController::class, 'publicShow'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('show');
-
-        // Get variant availability by selected option values
-        Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('variant');
-    });
-
-    // ✅ NEW: Public Merchants
-    Route::prefix('merchants')->name('merchants.')->group(function () {
-        // List merchants (with pagination & filters)
-        Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
-
-        // Random merchants for homepage
-        Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
-
-        // Show single merchant
-        Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');
-
-        // Merchant's products (already exists)
-        Route::get('/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
-            ->name('products');
-    });
-
-    // Category Routes
-    Route::prefix('categories')->group(function () {
-        Route::get('/level-1', [CategoryController::class, 'getLevel1Categories']);
-        Route::get('/{parentId}/sub-categories', [CategoryController::class, 'getSubCategories']);
-        Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
-        Route::get('/search', [CategoryController::class, 'searchCategories']);
-    });
-
-});
-
-// ✅ Public Community Posts (tanpa auth)
-Route::prefix('community')->name('community.')->group(function () {
-    Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
-    Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
-    Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
-    Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
-    Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
-});
-Route::middleware('web')->group(function () {
-    Route::get('images/{image}', [ImageController::class, 'show'])
-        ->name('images.show');
-});
-
-
-// ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
-// ============================================================
-
-// ---------- JASA ----------
-Route::prefix('jasa')->group(function () {
-    Route::get('/', [JasaController::class, 'index']);
-    Route::get('/{id}', [JasaController::class, 'show']);
-    Route::post('/', [JasaController::class, 'store']);
-    Route::put('/{id}', [JasaController::class, 'update']);
-    Route::delete('/{id}', [JasaController::class, 'destroy']);
-});
-
-// ---------- PROMO ----------
-Route::prefix('promos')->group(function () {
-    Route::get('/', [PromoController::class, 'index']);
-    Route::get('/{id}', [PromoController::class, 'show'])->name('promos.show');
-    Route::post('/', [PromoController::class, 'store']);
-    Route::delete('/{id}', [PromoController::class, 'destroy']);
-});
-
-// ---------- ORDERS ----------
-Route::prefix('orders')->group(function () {
-    Route::get('/', [OrderController::class, 'index']);
-    Route::get('/{id}', [OrderController::class, 'show']);
-    Route::post('/', [OrderController::class, 'store']);
-});
-
-
-// ============================================================
-// AUTH ROUTES
-// ============================================================
-Route::prefix('auth')->group(function () {
-    // Public auth endpoints
-    Route::post('register', [AuthController::class, 'register'])->name('register');
-    Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])->name('forgot-password');
-    Route::post('reset-password', [PasswordResetController::class, 'reset'])->name('reset-password');
-
-    // Email verification
-    Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-        ->middleware(['signed', 'throttle:6,1'])
-        ->name('api.verification.verify');
-
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
-        Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
-        Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
-            ->middleware('throttle:6,1')
-            ->name('api.verification.send');
-    });
-});
-
-// ============================================================
-// PROTECTED ROUTES (AUTH + VERIFIED)
-// ============================================================
-// Wrap protected routes with 'web' so session/cookie middlewares are available,
-// then apply 'auth:sanctum' and other guards.
-Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
-
-    // Locations
-    Route::prefix('locations')->controller(LocationController::class)->group(function () {
-        Route::get('provinces', 'provinces');
-        Route::get('cities/{provinceId}', 'cities');
-        Route::get('districts/{cityId}', 'districts');
-        Route::get('villages/{districtId}', 'villages');
-    });
-
-    Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
-
-    // CUSTOMER ONLY: Register Merchant
-    Route::middleware('role:customer')->group(function () {
-        Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
-    });
-
-    // UMKM OWNER ONLY
-    Route::middleware('role:umkm-owner')->group(function () {
-
-        // PRODUCT CRUD & NESTED
-        Route::prefix('products')->name('products.')->group(function () {
-            // Product CRUD list & create
-            Route::get('/', [ProductController::class, 'index'])->name('index');
-            Route::post('/', [ProductController::class, 'store'])->name('store');
-
-            // ✅ Move export routes ABOVE dynamic {slug}
-            Route::get('/export/excel', [ProductController::class, 'exportExcel']);
-            Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
-
-            // ✅ Slug routes with constraints to avoid matching "export"
-            Route::get('{slug}', [ProductController::class, 'show'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('show');
-
-            Route::put('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update');
-
-            Route::patch('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update.patch');
-
-            Route::delete('{slug}', [ProductController::class, 'destroy'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('destroy');
-
-            // ✅ Endpoint khusus status pakai slug
-            Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update-status');
-
-            // Variant combination counter
-            Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
-                ->where('slug', '^[a-z0-9-]+$');
-
-            // Upload images by slug
-            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
-                ->where('slug', '^[a-z0-9-]+$');
-        });
-    });
-
-    // ADMIN ONLY: merchant approval
-    Route::middleware('role:admin')->prefix('merchants')->group(function () {
-        Route::post('{merchant}/approve', [MerchantController::class, 'approve']);
-        Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
-    });
-
-    // ✅ PROTECTED Community Actions (require auth)
-    Route::prefix('community')->group(function () {
-
-        // My Posts (auth required)
-        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
-            ->name('community.posts.my');
-
-        // Create, Update, Delete Posts (auth required)
-        Route::post('/posts', [CommunityPostController::class, 'store'])
-            ->name('community.posts.store');
-        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
-            ->name('community.posts.update');
-        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
-            ->name('community.posts.destroy');
-
-        // Comments CRUD (auth required)
-        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
-            ->name('community.comments.store');
-        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
-            ->name('community.comments.reply');
-        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
-            ->name('community.comments.destroy');
-        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
-            ->name('community.comments.my-comments');
-    });
-});
-
-// ============================================================
-// PUBLIC ROUTES (No Auth Required)
-// ============================================================
-Route::prefix('public')->name('public.')->group(function () {
-
-    // Public Products
-    Route::prefix('products')->name('products.')->group(function () {
-        Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
-        Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
-
-        // ✅ Public show by slug (only published)
-        Route::get('/{slug}', [ProductController::class, 'publicShow'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('show');
-
-        // Get variant availability by selected option values
-        Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('variant');
-    });
-
-    // ✅ NEW: Public Merchants
-    Route::prefix('merchants')->name('merchants.')->group(function () {
-        // List merchants (with pagination & filters)
-        Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
-
-        // Random merchants for homepage
-        Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
-
-        // Show single merchant
-        Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');
-
-        // Merchant's products (already exists)
-        Route::get('/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
-            ->name('products');
-    });
-
-    // Category Routes
-    Route::prefix('categories')->group(function () {
-        Route::get('/level-1', [CategoryController::class, 'getLevel1Categories']);
-        Route::get('/{parentId}/sub-categories', [CategoryController::class, 'getSubCategories']);
-        Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
-        Route::get('/search', [CategoryController::class, 'searchCategories']);
-    });
-
-});
-
-// ✅ Public Community Posts (tanpa auth)
-Route::prefix('community')->name('community.')->group(function () {
-    Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
-    Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
-    Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
-    Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
-    Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
-});
-Route::middleware('web')->group(function () {
-    Route::get('images/{image}', [ImageController::class, 'show'])
-        ->name('images.show');
-});
-
-
-// ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
-// ============================================================
-
-// ---------- JASA ----------
-Route::prefix('jasa')->group(function () {
-    Route::get('/', [JasaController::class, 'index']);
-    Route::get('/{id}', [JasaController::class, 'show']);
-    Route::post('/', [JasaController::class, 'store']);
-    Route::put('/{id}', [JasaController::class, 'update']);
-    Route::delete('/{id}', [JasaController::class, 'destroy']);
-});
-
-// ---------- PROMO ----------
-Route::prefix('promos')->group(function () {
-    Route::get('/', [PromoController::class, 'index']);
-    Route::get('/{id}', [PromoController::class, 'show'])->name('promos.show');
-    Route::post('/', [PromoController::class, 'store']);
-    Route::delete('/{id}', [PromoController::class, 'destroy']);
-});
-
-// ---------- ORDERS ----------
-Route::prefix('orders')->group(function () {
-    Route::get('/', [OrderController::class, 'index']);
-    Route::get('/{id}', [OrderController::class, 'show']);
-    Route::post('/', [OrderController::class, 'store']);
-});
-
-
-// ============================================================
-// AUTH ROUTES
-// ============================================================
-Route::prefix('auth')->group(function () {
-    // Public auth endpoints
-    Route::post('register', [AuthController::class, 'register'])->name('register');
-    Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])->name('forgot-password');
-    Route::post('reset-password', [PasswordResetController::class, 'reset'])->name('reset-password');
-
-    // Email verification
-    Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-        ->middleware(['signed', 'throttle:6,1'])
-        ->name('api.verification.verify');
-
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
-        Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
-        Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
-            ->middleware('throttle:6,1')
-            ->name('api.verification.send');
-    });
-});
-
-// ============================================================
-// PROTECTED ROUTES (AUTH + VERIFIED)
-// ============================================================
-// Wrap protected routes with 'web' so session/cookie middlewares are available,
-// then apply 'auth:sanctum' and other guards.
-Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
-
-    // Locations
-    Route::prefix('locations')->controller(LocationController::class)->group(function () {
-        Route::get('provinces', 'provinces');
-        Route::get('cities/{provinceId}', 'cities');
-        Route::get('districts/{cityId}', 'districts');
-        Route::get('villages/{districtId}', 'villages');
-    });
-
-    Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
-
-    // CUSTOMER ONLY: Register Merchant
-    Route::middleware('role:customer')->group(function () {
-        Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
-    });
-
-    // UMKM OWNER ONLY
-    Route::middleware('role:umkm-owner')->group(function () {
-
-        // PRODUCT CRUD & NESTED
-        Route::prefix('products')->name('products.')->group(function () {
-            // Product CRUD list & create
-            Route::get('/', [ProductController::class, 'index'])->name('index');
-            Route::post('/', [ProductController::class, 'store'])->name('store');
-
-            // ✅ Move export routes ABOVE dynamic {slug}
-            Route::get('/export/excel', [ProductController::class, 'exportExcel']);
-            Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
-
-            // ✅ Slug routes with constraints to avoid matching "export"
-            Route::get('{slug}', [ProductController::class, 'show'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('show');
-
-            Route::put('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update');
-
-            Route::patch('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update.patch');
-
-            Route::delete('{slug}', [ProductController::class, 'destroy'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('destroy');
-
-            // ✅ Endpoint khusus status pakai slug
-            Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update-status');
-
-            // Variant combination counter
-            Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
-                ->where('slug', '^[a-z0-9-]+$');
-
-            // Upload images by slug
-            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
-                ->where('slug', '^[a-z0-9-]+$');
-        });
-    });
-
-    // ADMIN ONLY: merchant approval
-    Route::middleware('role:admin')->prefix('merchants')->group(function () {
-        Route::post('{merchant}/approve', [MerchantController::class, 'approve']);
-        Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
-    });
-
-    // ✅ PROTECTED Community Actions (require auth)
-    Route::prefix('community')->group(function () {
-
-        // My Posts (auth required)
-        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
-            ->name('community.posts.my');
-
-        // Create, Update, Delete Posts (auth required)
-        Route::post('/posts', [CommunityPostController::class, 'store'])
-            ->name('community.posts.store');
-        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
-            ->name('community.posts.update');
-        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
-            ->name('community.posts.destroy');
-
-        // Comments CRUD (auth required)
-        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
-            ->name('community.comments.store');
-        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
-            ->name('community.comments.reply');
-        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
-            ->name('community.comments.destroy');
-        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
-            ->name('community.comments.my-comments');
-=======
-
-    // Public Events
-    Route::prefix('events')->group(function () {
-        Route::get('/', [EventController::class, 'index']);
-        Route::get('/{event}', [EventController::class, 'show']);
-    });
-
-    // Public Vouchers
-    Route::prefix('vouchers')->group(function () {
-        Route::get('/', [VoucherController::class, 'index']);
-        Route::post('/validate', [VoucherController::class, 'validateVoucher'])->middleware('auth:sanctum');
-    });
-
-    // Merchant Vouchers
-    Route::middleware('role:umkm-owner')->prefix('merchant/vouchers')->group(function () {
-        Route::post('/', [VoucherController::class, 'store']);
-    });
-
-    // Admin Events
-    Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(function () {
-        Route::get('/events', [EventController::class, 'index']);
-        Route::post('/events', [EventController::class, 'store']);
-        Route::get('/events/{id}', [EventController::class, 'show']);
-        Route::put('/events/{id}', [EventController::class, 'update']);
-        Route::delete('/events/{id}', [EventController::class, 'destroy']);
-        Route::post('/events/{id}/invite-merchants', [EventController::class, 'inviteMerchants']);
->>>>>>> Stashed changes
-    });
+// Admin Reports
+Route::middleware(['auth:sanctum'])->prefix('admin')->group(function () {
+    Route::get('/reports', [ContentReportController::class, 'index'])->name('admin.reports.index');
+    Route::get('/reports/{id}', [ContentReportController::class, 'show'])->name('admin.reports.show');
+    Route::put('/reports/{id}', [ContentReportController::class, 'update'])->name('admin.reports.update');
+    Route::get('/report-reasons', [ContentReportController::class, 'reasons'])->name('admin.report-reasons');
 });

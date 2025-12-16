@@ -6,11 +6,11 @@ use Carbon\Carbon;
 use App\Models\Merchant;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
-class MerchantController
+class MerchantController extends Controller
 {
     /**
      * ✅ NEW: Public endpoint untuk list merchants
@@ -64,7 +64,7 @@ class MerchantController
     // }
 
     /**
-     * ✅ NEW: Public endpoint untuk random merchants
+     * Public endpoint untuk random merchants
      * Khusus untuk homepage/recommendation
      */
     public function publicRandom(Request $request)
@@ -75,7 +75,6 @@ class MerchantController
         try {
             $query = Merchant::query()
                 ->where('status', 'approved')
-                // ✅ Count only published products
                 ->withCount([
                     'products' => function ($query) {
                         $query->where('status', 'published');
@@ -115,7 +114,7 @@ class MerchantController
     }
 
     /**
-     * ✅ NEW: Public endpoint untuk show single merchant
+     * Public endpoint untuk show single merchant
      */
     public function publicShow(Request $request, $slugOrId)
     {
@@ -131,7 +130,7 @@ class MerchantController
             ->where('status', 'approved')
             ->where(function ($q) use ($slugOrId) {
                 $q->where('id', $slugOrId)
-                    ->orWhere('slug', $slugOrId); // Jika Anda punya kolom slug
+                    ->orWhere('slug', $slugOrId); 
             })
             ->withCount('products')
             ->firstOrFail();
@@ -154,7 +153,6 @@ class MerchantController
             ], 403);
         }
 
-        // Optional: cegah multi-pendaftaran saat masih pending/approved
         $already = Merchant::query()
             ->where('user_id', $user->id)
             ->whereIn('status', ['pending'])
@@ -257,7 +255,7 @@ class MerchantController
         }
 
         DB::transaction(function () use ($merchant) {
-            // ✅ Ensure slug exists (safety check)
+            // Ensure slug exists (safety check)
             if (empty($merchant->slug)) {
                 $merchant->slug = Merchant::generateUniqueSlug($merchant->name);
             }
@@ -279,7 +277,7 @@ class MerchantController
                     ]);
                 }
 
-                // ✅ Use firstOrCreate untuk avoid duplicate entry
+                // Use firstOrCreate untuk avoid duplicate entry
                 DB::table('role_user')->updateOrInsert(
                     ['user_id' => $owner->id, 'role_id' => $roleId],
                     ['created_at' => now(), 'updated_at' => now()]
@@ -318,5 +316,75 @@ class MerchantController
             'message' => 'Merchant ditolak.',
             'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
         ]);
+    }
+
+    /**
+     * ADMIN: List all merchants with filters
+     */
+    public function adminIndex(Request $request)
+    {
+        Log::info('[MerchantController] adminIndex called', [
+            'params' => $request->all()
+        ]);
+
+        $query = Merchant::with([
+            'user:id,name,email,phone',
+            'segmentation:id,name',
+            'primaryAddress',
+        ])
+            ->withCount('products');
+
+        // Filter by status
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // Filter by segmentation
+        if ($request->has('segmentation_id')) {
+            $query->where('segmentation_id', $request->segmentation_id);
+        }
+
+        // Search
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhereHas('user', function ($qu) use ($search) {
+                        $qu->where('name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        $merchants = $query->latest()
+            ->paginate($request->input('per_page', 15));
+
+        Log::info('[MerchantController] Returning merchants', [
+            'count' => $merchants->count(),
+            'total' => $merchants->total()
+        ]);
+
+        return response()->json($merchants);
+    }
+
+    /**
+     * ADMIN: Get single merchant detail
+     */
+    public function adminShow($id)
+    {
+        $merchant = Merchant::with([
+            'user.roles',
+            'segmentation',
+            'addresses',
+            'products' => function ($query) {
+                $query->latest()->limit(10);
+            },
+            'vouchers',
+            'events',
+        ])
+            ->withCount(['products', 'vouchers'])
+            ->findOrFail($id);
+
+        return response()->json(['data' => $merchant]);
     }
 }

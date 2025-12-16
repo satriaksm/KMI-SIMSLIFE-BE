@@ -5,9 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class ContentReport extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'user_id',
         'report_reason_id',
@@ -24,25 +27,22 @@ class ContentReport extends Model
         'reviewed_at' => 'datetime',
     ];
 
-    // User who reported
+    // Relations
     public function reporter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    // Admin who reviewed
     public function reviewer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewed_by');
     }
 
-    // Report reason
     public function reason(): BelongsTo
     {
         return $this->belongsTo(ReportReason::class, 'report_reason_id');
     }
 
-    // Polymorphic relation to reported content
     public function reportable(): MorphTo
     {
         return $this->morphTo();
@@ -62,5 +62,10 @@ class ContentReport extends Model
     public function scopeResolved($query)
     {
         return $query->where('status', 'resolved');
+    }
+
+    public function scopeDismissed($query)
+    {
+        return $query->where('status', 'dismissed');
     }
 }

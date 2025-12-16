@@ -54,7 +54,6 @@ class Merchant extends Model
         });
     }
 
-<<<<<<< Updated upstream
     /**
      * ✅ Generate unique slug
      *
@@ -96,8 +95,6 @@ class Merchant extends Model
     }
 
     // ✅ Relasi ke Products
-=======
->>>>>>> Stashed changes
     public function products(): HasMany
     {
         return $this->hasMany(Product::class, 'merchant_id');
@@ -150,7 +147,6 @@ class Merchant extends Model
         }
         return null;
     }
-<<<<<<< Updated upstream
 
     /**
      * ✅ Scope: Only approved merchants
@@ -174,24 +170,5 @@ class Merchant extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
-=======
-    
-    public function vouchers()
-    {
-        return $this->hasMany(Voucher::class);
-    }
-
-    public function events()
-    {
-        return $this->belongsToMany(Event::class, 'event_merchants')
-            ->using(EventMerchant::class)
-            ->withPivot('status', 'responded_at')
-            ->withTimestamps();
-    }
-
-    public function reviewer()
-    {
-        return $this->belongsTo(User::class, 'reviewed_by');
->>>>>>> Stashed changes
     }
 }
