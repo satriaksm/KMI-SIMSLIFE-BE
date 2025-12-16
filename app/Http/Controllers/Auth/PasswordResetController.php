@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers\Auth;
 
-use Illuminate\Routing\Controller as Controller;
-use Illuminate\Auth\Events\PasswordReset;
+use App\Models\User;
+use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
-use Illuminate\Support\Str;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Routing\Controller as Controller;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 
 class PasswordResetController extends Controller
@@ -15,6 +16,21 @@ class PasswordResetController extends Controller
     public function sendResetLink(Request $request)
     {
         $request->validate(['email' => ['required', 'email']]);
+
+        $user = User::where('email', $request->only('email'))->first();
+
+        if (!$user) {
+            return response()->json([
+                'message' => 'Email tidak terdaftar.',
+            ], 404);
+        }
+        $requireVerification = config('auth.verify_email_before_reset', false);
+
+        if ($requireVerification && !$user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email belum diverifikasi. Silakan verifikasi email Anda terlebih dahulu.',
+            ], 403);
+        }
 
         $status = Password::sendResetLink($request->only('email'));
 
