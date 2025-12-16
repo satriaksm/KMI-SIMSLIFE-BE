@@ -220,60 +220,138 @@ class ProductController
      */
     public function publicShow(string $slug)
     {
-        $product = Product::where('slug', $slug)
-            ->whereIn('status', ['published', 'archived'])
+        // 1. QUERY PRODUCT
+        $product = Product::select([
+            'id',
+            'merchant_id',
+            'name',
+            'description',
+            'status',
+            'min_purchase',
+        ])
+            ->where('slug', $slug)
+            ->whereIn('status', ['published', 'archived']) // Public usually only allows these
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
                 // Images
-                'coverImage',
-                'images' => fn($q) => $q->orderBy('display_order'),
+                'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
 
                 // Merchant & categories
-                'merchant:id,name,slug,description,phone',
-                'merchant.primaryAddress',
-                'merchant.primaryAddress.province:id,name',
-                'merchant.primaryAddress.city:id,name',
-                'merchant.primaryAddress.district:id,name',
-                'merchant.primaryAddress.village:id,name',
+                'merchant:id,name,slug,phone',
                 'categories:id,name,slug',
 
-                // Options dengan option_name dan values
+                // Options
                 'options' => function ($q) {
-                    $q->with([
-                        'values' => fn($vq) => $vq
-                            ->select('id', 'product_option_id', 'option_value', 'image_path')
-                    ])
-                        ->select('id', 'product_id', 'option_name', 'uses_image')
-                        ->orderBy('id');
+                    $q->select('id', 'product_id', 'option_name', 'uses_image')
+                        ->orderBy('id')
+                        ->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')]);
                 },
 
-                // Variants lengkap + optionValues dengan option_name
+                // Variants
                 'variants' => function ($q) {
-                    $q->with([
-                        'optionValues' => function ($ovq) {
-                            $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
-                                ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                                ->addSelect('product_options.option_name');
-                        }
-                    ])
-                        ->select('id', 'product_id', 'stock', 'price', 'sku')
-                        ->orderBy('price', 'asc');
+                    $q->select('id', 'product_id', 'stock', 'price', 'sku')
+                        ->orderBy('price', 'asc')
+                        ->with([
+                            'optionValues' => function ($ovq) {
+                                $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
+                                    ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                                    ->addSelect('product_options.option_name');
+                            }
+                        ]);
                 },
 
                 // Addon groups
                 'addonGroups' => function ($q) {
-                    $q->with([
-                        'options' => function ($oq) {
-                            $oq->with('addon:id,addon_name')
-                                ->select('id', 'addon_group_id', 'addon_id', 'addon_price')
-                            ;
-                        }
-                    ])
-                        ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
-                        ->orderBy('id');
+                    $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
+                        ->orderBy('id')
+                        ->with([
+                            'options' => function ($oq) {
+                                $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price')
+                                    ->with('addon:id,addon_name');
+                            }
+                        ]);
                 },
             ])
             ->firstOrFail();
+
+        // ============================================================
+        // 2. TRANSFORMASI DATA & URL GENERATION
+        // ============================================================
+
+        // Karena ini publicShow, logikanya status pasti published/archived.
+        // Tapi kita tetap pakai pengecekan in_array untuk konsistensi.
+        $isPublic = in_array($product->status, ['published', 'archived']);
+
+        // A. Handle Cover Image
+        if ($product->coverImage) {
+            $product->coverImage->src_url = $isPublic
+                ? route('images.show', ['image' => $product->coverImage->id])
+                : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+
+            $product->coverImage->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+        }
+
+        // B. Handle Gallery Images
+        if ($product->images) {
+            $product->images->transform(function ($image) use ($isPublic) {
+                $image->src_url = $isPublic
+                    ? route('images.show', ['image' => $image->id])
+                    : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+
+                $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+                return $image;
+            });
+        }
+
+        // C. Handle Option Values Images
+        if ($product->options) {
+            $product->options->transform(function ($option) use ($isPublic) {
+                if ($option->values) {
+                    $option->values->transform(function ($value) use ($isPublic) {
+                        if (!empty($value->image_path)) {
+                            $value->src_url = $isPublic
+                                ? route('images.product-option-value.show', ['optionValue' => $value->id])
+                                : URL::signedRoute('images.product-option-value.show', ['optionValue' => $value->id], now()->addMinutes(60));
+                        } else {
+                            $value->src_url = null;
+                        }
+
+                        $value->makeHidden(['image_path', 'created_at', 'updated_at', 'image_url']); // hide accessor image_url if exists
+                        return $value;
+                    });
+                }
+                $option->makeHidden(['created_at', 'updated_at']);
+                return $option;
+            });
+        }
+
+        // D. Clean Categories Pivot
+        if ($product->categories) {
+            $product->categories->transform(function ($cat) {
+                $cat->makeHidden(['pivot', 'created_at', 'updated_at']);
+                return $cat;
+            });
+        }
+
+        // E. Clean Variants Pivot & Accessor
+        if ($product->variants) {
+            $product->variants->transform(function ($variant) {
+                $variant->makeHidden(['display_image', 'created_at', 'updated_at']); // Hide display_image accessor
+
+                if ($variant->optionValues) {
+                    $variant->optionValues->transform(function ($ov) {
+                        $ov->makeHidden(['pivot', 'image_url', 'created_at', 'updated_at']);
+                        return $ov;
+                    });
+                }
+                return $variant;
+            });
+        }
+
+        // ============================================================
+        // 3. LOGIC LAINNYA (Address, Related, Price Range)
+        // ============================================================
 
         // Range harga dari variants
         $variants = $product->variants;
@@ -282,11 +360,11 @@ class ProductController
             'max' => $variants->max('price'),
         ];
 
-        // Opsi 1 dan 2 (maksimal 2 opsi)
+        // Opsi 1 dan 2
         $option1 = optional($product->options)->get(0);
         $option2 = optional($product->options)->get(1);
 
-        // Kombinasi harga & stok per variant, pakai id option_value (sizeId & variantId)
+        // Kombinasi harga & stok
         $combinations = [];
         foreach ($variants as $v) {
             $ov = collect($v->optionValues ?? []);
@@ -306,6 +384,7 @@ class ProductController
         // Minimal pembelian
         $minPurchase = (int) ($product->min_purchase ?? 1);
 
+        // Alamat Merchant
         $addr = $product->merchant?->primaryAddress;
         $merchantAddress = $addr?->full_address
             ?? implode(', ', array_filter([
@@ -316,45 +395,54 @@ class ProductController
                 $addr?->province?->name,
             ]));
 
-        // ✅ Ambil 5 produk lain dari merchant yang sama, acak, exclude produk ini
+        // Related Products (Juga perlu di-transform src_url nya)
         $relatedProducts = Product::where('merchant_id', $product->merchant_id)
             ->where('id', '!=', $product->id)
             ->where('status', 'published')
-            ->with(['coverImage'])
+            ->with(['coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')])
             ->inRandomOrder()
             ->limit(5)
             ->get()
             ->map(function ($p) {
+                // Generate URL untuk related product cover
+                $coverUrl = null;
+                if ($p->coverImage) {
+                    $coverUrl = route('images.show', ['image' => $p->coverImage->id]); // Related products pasti Published
+                }
+
                 return [
                     'id' => $p->id,
                     'name' => $p->name,
                     'slug' => $p->slug,
-                    'min_price' => $p->variants->min('price'),
+                    'min_price' => $p->variants->min('price'), // Pastikan variants terload atau gunakan subquery jika lambat
                     'max_price' => $p->variants->max('price'),
                     'merchant' => [
                         'id' => $p->merchant->id,
                         'name' => $p->merchant->name,
                         'slug' => $p->merchant->slug,
                     ],
-                    'cover_image' => $p->coverImage,
+                    'cover_image' => $p->coverImage ? [
+                        'id' => $p->coverImage->id,
+                        'src_url' => $coverUrl
+                    ] : null,
                 ];
             })
             ->values();
 
         return response()->json([
-            'product' => $product,              // berisi images, options(+values), variants(+optionValues dgn option_name), addonGroups(+options+addon)
-            'price_range' => $priceRange,       // min & max price dari variants
+            'product' => $product,
+            'price_range' => $priceRange,
             'total_stock' => $variants->sum('stock'),
             'has_variants' => $variants->isNotEmpty(),
             'has_addons' => $product->addonGroups->isNotEmpty(),
-            'combinations' => $combinations,    // daftar kombinasi harga & stok per variant (sizeId, variantId)
+            'combinations' => $combinations,
             'option_labels' => [
                 'option1' => $option1 ? $option1->option_name : null,
                 'option2' => $option2 ? $option2->option_name : null,
             ],
-            'min_purchase' => $minPurchase,     // minimal beli
+            'min_purchase' => $minPurchase,
             'merchant_address' => $merchantAddress,
-            'related_products' => $relatedProducts, // ✅ produk lain di toko ini
+            'related_products' => $relatedProducts,
         ]);
     }
 
@@ -514,61 +602,88 @@ class ProductController
             'max_stock' => ['nullable', 'integer', 'min:0', 'gte:min_stock'],
             'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
-        ], [
-            'max_price.gte' => 'Harga maksimal harus lebih besar atau sama dengan harga minimal',
-            'max_stock.gte' => 'Stok maksimal harus lebih besar atau sama dengan stok minimal',
         ]);
 
-        // Auto-detect merchant
         if (empty($data['merchant_id'])) {
             $merchant = Merchant::where('user_id', $request->user()->id)
                 ->where('status', 'approved')
                 ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
                 ->first();
 
-            if (!$merchant) {
-                return response()->json([
-                    'message' => 'Anda belum memiliki UMKM.',
-                ], 403);
-            }
-
+            if (!$merchant)
+                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
             $merchantId = $merchant->id;
         } else {
             $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-            if (is_array($merchantOrError) && isset($merchantOrError['error'])) {
+            if (is_array($merchantOrError) && isset($merchantOrError['error']))
                 return $merchantOrError['error'];
-            }
             $merchantId = $merchantOrError->id;
         }
 
-        // Build query using centralized helper
+        // 1. BUILD QUERY (Filter)
         $query = $this->buildFilteredProductQuery($merchantId, $data);
 
+        // [OPTIMASI] Jangan load images dari Model (global scope)
+        $query->without('images');
+
+        // 2. OPTIMASI SELECT
+        // Pilih kolom tabel products
+        $query->select([
+            'products.id',
+            'products.merchant_id',
+            'products.name',
+            'products.status',
+            'products.min_purchase',
+            'products.slug',
+        ]);
+
+        // 3. TAMBAHKAN COMPUTED COLUMNS (Total Stock, Min Price, Max Price)
+        // Menggunakan Subquery agar efisien (hanya 1 query utama)
+        $query->addSelect([
+            'total_stock' => ProductVariant::selectRaw('COALESCE(SUM(stock), 0)')
+                ->whereColumn('product_id', 'products.id'),
+
+            'min_price' => ProductVariant::selectRaw('COALESCE(MIN(price), 0)')
+                ->whereColumn('product_id', 'products.id'),
+
+            'max_price' => ProductVariant::selectRaw('COALESCE(MAX(price), 0)')
+                ->whereColumn('product_id', 'products.id'),
+        ]);
+
+        // 4. EAGER LOAD RELASI (Cover & Categories)
+        $query->with([
+            'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+            'categories' => fn($q) => $q->select('categories.id', 'categories.name'),
+        ]);
+
         $perPage = $data['per_page'] ?? 10;
-        // $perPage = 1;
         $result = $query->paginate($perPage);
 
+        // 5. TRANSFORMASI DATA
         $result->getCollection()->transform(function ($product) {
 
-            // Cek status produk
             $isPublic = in_array($product->status, ['published', 'archived']);
 
-            // 1. Handle Cover Image (Jika diload/ada)
+            // A. Handle Cover Image
             if ($product->coverImage) {
                 $product->coverImage->src_url = $isPublic
                     ? route('images.show', ['image' => $product->coverImage->id])
                     : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+
+                $product->coverImage->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
             }
 
-            // 2. Handle Array Images (Jika diload/ada)
-            if ($product->images) {
-                $product->images->transform(function ($image) use ($isPublic) {
-                    $image->src_url = $isPublic
-                        ? route('images.show', ['image' => $image->id])
-                        : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
-                    return $image;
+            // B. Handle Categories
+            if ($product->categories) {
+                $product->categories->transform(function ($cat) {
+                    $cat->makeHidden(['pivot', 'created_at', 'updated_at']);
+                    return $cat;
                 });
             }
+
+            // C. Bersihkan object product
+            // Kita sembunyikan 'images' agar tidak muncul di JSON
+            $product->makeHidden(['images', 'created_at', 'updated_at', 'description']);
 
             return $product;
         });
@@ -601,6 +716,184 @@ class ProductController
             ],
         ]);
     }
+
+    // public function index(Request $request)
+    // {
+    //     $data = $request->validate([
+
+    //         'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
+
+    //         'q' => ['nullable', 'string', 'max:255'],
+
+    //         'status' => ['nullable', 'in:draft,published,archived'],
+
+    //         'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+
+    //         'min_price' => ['nullable', 'numeric', 'min:0'],
+
+    //         'max_price' => ['nullable', 'numeric', 'min:0', 'gte:min_price'],
+
+    //         'min_stock' => ['nullable', 'integer', 'min:0'],
+
+    //         'max_stock' => ['nullable', 'integer', 'min:0', 'gte:min_stock'],
+
+    //         'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
+
+    //         'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+
+    //     ], [
+
+    //         'max_price.gte' => 'Harga maksimal harus lebih besar atau sama dengan harga minimal',
+
+    //         'max_stock.gte' => 'Stok maksimal harus lebih besar atau sama dengan stok minimal',
+
+    //     ]);
+
+
+
+    //     // Auto-detect merchant
+
+    //     if (empty($data['merchant_id'])) {
+
+    //         $merchant = Merchant::where('user_id', $request->user()->id)
+
+    //             ->where('status', 'approved')
+
+    //             ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
+
+    //             ->first();
+
+
+
+    //         if (!$merchant) {
+
+    //             return response()->json([
+
+    //                 'message' => 'Anda belum memiliki UMKM.',
+
+    //             ], 403);
+
+    //         }
+
+
+
+    //         $merchantId = $merchant->id;
+
+    //     } else {
+
+    //         $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
+
+    //         if (is_array($merchantOrError) && isset($merchantOrError['error'])) {
+
+    //             return $merchantOrError['error'];
+
+    //         }
+
+    //         $merchantId = $merchantOrError->id;
+
+    //     }
+
+
+
+    //     // Build query using centralized helper
+
+    //     $query = $this->buildFilteredProductQuery($merchantId, $data);
+
+
+
+    //     $perPage = $data['per_page'] ?? 10;
+
+    //     // $perPage = 1;
+
+    //     $result = $query->paginate($perPage);
+
+
+
+    //     $result->getCollection()->transform(function ($product) {
+
+
+
+    //         // Cek status produk
+
+    //         $isPublic = in_array($product->status, ['published', 'archived']);
+
+
+
+    //         // 1. Handle Cover Image (Jika diload/ada)
+
+    //         if ($product->coverImage) {
+
+    //             $product->coverImage->src_url = $isPublic
+
+    //                 ? route('images.show', ['image' => $product->coverImage->id])
+
+    //                 : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+
+    //         }
+
+
+
+    //         // 2. Handle Array Images (Jika diload/ada)
+
+    //         if ($product->images) {
+
+    //             $product->images->transform(function ($image) use ($isPublic) {
+
+    //                 $image->src_url = $isPublic
+
+    //                     ? route('images.show', ['image' => $image->id])
+
+    //                     : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+
+    //                 return $image;
+
+    //             });
+
+    //         }
+
+
+
+    //         return $product;
+
+    //     });
+
+
+
+    //     return response()->json([
+
+    //         'data' => $result->items(),
+
+    //         'meta' => [
+
+    //             'current_page' => $result->currentPage(),
+
+    //             'from' => $result->firstItem(),
+
+    //             'last_page' => $result->lastPage(),
+
+    //             'per_page' => $result->perPage(),
+
+    //             'to' => $result->lastItem(),
+    //             'total' => $result->total(),
+    //         ],
+    //         'links' => [
+    //             'first' => $result->url(1),
+    //             'last' => $result->url($result->lastPage()),
+    //             'prev' => $result->previousPageUrl(),
+    //             'next' => $result->nextPageUrl(),
+    //         ],
+    //         'applied_filters' => [
+    //             'search' => $data['q'] ?? null,
+    //             'status' => $data['status'] ?? null,
+    //             'category_id' => $data['category_id'] ?? null,
+    //             'min_price' => $data['min_price'] ?? null,
+    //             'max_price' => $data['max_price'] ?? null,
+    //             'min_stock' => $data['min_stock'] ?? null,
+    //             'max_stock' => $data['max_stock'] ?? null,
+    //             'sort_by' => $data['sort_by'] ?? 'newest',
+    //         ],
+    //     ]);
+    // }
 
     /**
      * UPDATED: Create product
@@ -2024,17 +2317,17 @@ class ProductController
     private function buildFilteredProductQuery(int $merchantId, array $data)
     {
         $query = Product::query()
-            ->where('merchant_id', $merchantId)
-            ->with([
-                'coverImage',
-                'images',
-                'categories:id,name,slug',
-            ])
-            ->withCount('variants');
+            ->where('merchant_id', $merchantId);
+        // ->with([
+        //     'coverImage',
+        //     'images',
+        //     'categories:id,name,slug',
+        // ])
+        // ->withCount('variants');
 
         // add select computed columns
         $query->addSelect([
-            'products.*',
+            // 'products.*',
             'total_stock' => function ($q) {
                 $q->selectRaw('COALESCE(SUM(stock), 0)')
                     ->from('product_variants')

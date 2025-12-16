@@ -19,7 +19,6 @@ class Product extends Model
         'slug',
         'description',
         'status',
-        // ✅ allow min_purchase for mass assignment
         'min_purchase',
     ];
 
