@@ -26,6 +26,13 @@ use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\PostCommentController;
 
 // ============================================================
+// CSRF COOKIE ENDPOINT (REQUIRED FOR SPA TOKEN-BASED AUTH)
+// ============================================================
+Route::get('/sanctum/csrf-cookie', function () {
+    return response()->json(['message' => 'CSRF cookie set']);
+})->middleware(['web'])->name('csrf.cookie');
+
+// ============================================================
 // HEALTH CHECK
 // ============================================================
 Route::get('/', fn () => response()->json(['status' => 'API is running']));
