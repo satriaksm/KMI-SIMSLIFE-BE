@@ -18,7 +18,6 @@ return new class extends Migration {
                 ->cascadeOnUpdate()
                 ->cascadeOnDelete();
             $table->decimal('addon_price', 10, 2)->default(0);
-            $table->unsignedInteger('addon_stock')->nullable(); // null = unlimited
             $table->timestamps();
 
             // Unique constraint: addon tidak boleh duplikat dalam 1 group

@@ -15,7 +15,10 @@
 <a href="{{ $url }}"
    class="button button-{{ $color ?? 'primary' }}"
    target="_blank" rel="noopener"
-   style="color:#ffffff !important;text-decoration:none;display:inline-block;">
+   @if(($color ?? 'primary') === 'primary')
+     style="background-color:#ffa30e !important;border-radius:4px !important;border:1px solid #ffa30e !important;color:#ffffff !important;text-decoration:none;display:inline-block;padding:8px 18px;"
+   @endif
+>
     {{ $slot }}
 </a>
 </td>
