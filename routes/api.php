@@ -1,24 +1,26 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\ImageController;
-use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\CartController;
+use App\Http\Controllers\JasaController;
 
 // Controllers lama (Jasa / Promo / Orders)
-use App\Http\Controllers\JasaController;
-use App\Http\Controllers\PromoController;
+use App\Http\Controllers\ImageController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PromoController;
 
 // Controllers baru
+use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\SegmentationController;
+use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\Product\ProductController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
-use App\Http\Controllers\CommunityPostController;
-use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\ProductOptionValueImageController;
 
 // ============================================================
 // HEALTH CHECK
@@ -86,9 +88,15 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
+
 Route::middleware('web')->group(function () {
     Route::get('images/{image}', [ImageController::class, 'show'])
         ->name('images.show');
+});
+
+Route::middleware('web')->group(function () {
+    Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
+        ->name('images.product-option-value.show');
 });
 
 
@@ -160,6 +168,25 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
         Route::get('villages/{districtId}', 'villages');
     });
 
+    Route::prefix('cart')->group(function () {
+
+        // 🛒 Ambil semua cart user (grouped by merchant)
+        Route::get('/', [CartController::class, 'index']);
+        Route::get('/count', [CartController::class, 'count']);
+        // ➕ Add item ke cart
+        Route::post('/items', [CartController::class, 'addToCart']);
+
+        // 🔄 Update quantity item
+        Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
+        Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
+
+        // ❌ Hapus item dari cart
+        Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
+
+        // 🧹 Clear cart per merchant
+        Route::delete('/{cart}', [CartController::class, 'clearCart']);
+    });
+
     Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
 
     // CUSTOMER ONLY: Register Merchant
@@ -210,9 +237,6 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
                 ->where('slug', '^[a-z0-9-]+$');
 
-            // Upload images by slug
-            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
-                ->where('slug', '^[a-z0-9-]+$');
         });
     });
 

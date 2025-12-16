@@ -83,4 +83,10 @@ class Product extends Model
     {
         return $query->where('status', 'archived');
     }
+
+    public function cartItems()
+    {
+        return $this->morphMany(CartItem::class, 'itemable');
+    }
+
 }
