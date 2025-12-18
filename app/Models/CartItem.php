@@ -10,8 +10,16 @@ class CartItem extends Model
         'cart_id',
         'itemable_id',
         'itemable_type',
-        'product_variant_id',
+
+        // 🔒 UMUM (SEMUA ITEM)
+        'itemable_name_snapshot',
+        'price_snapshot',
         'quantity',
+
+        // 🔒 KHUSUS PRODUCT
+        'product_variant_id',
+        'product_variant_name_snapshot',
+
     ];
     public function itemable()
     {
@@ -25,15 +33,15 @@ class CartItem extends Model
 
     public function variant()
     {
-        return $this->belongsTo(
-            ProductVariant::class,
-            'product_variant_id' // 👈 WAJIB
-        );
+        return $this->belongsTo(ProductVariant::class, 'product_variant_id');
     }
+
 
     public function cart()
     {
         return $this->belongsTo(Cart::class);
     }
+
+
 
 }

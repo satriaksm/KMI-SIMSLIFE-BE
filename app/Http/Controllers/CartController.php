@@ -14,6 +14,26 @@ use Illuminate\Support\Facades\Auth;
 
 class CartController extends Controller
 {
+    private function applyImageSrcUrl($image, bool $isPublic)
+    {
+        if (!$image)
+            return null;
+
+        $image->src_url = $isPublic
+            ? route('images.show', ['image' => $image->id])
+            : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+
+        $image->makeHidden([
+            'imageable_id',
+            'imageable_type',
+            'image_path',
+            'created_at',
+            'updated_at',
+        ]);
+
+        return $image;
+    }
+
     public function index()
     {
         $userId = Auth::id();
@@ -21,14 +41,11 @@ class CartController extends Controller
         // 1. Ambil Cart (Query tetap sama seperti sebelumnya)
         $carts = Cart::with([
             'merchant.addresses.district.city.province',
-            'items.variant.optionValues.option',
             'items.addons.addon',
             'items.addons.addonGroupOption',
             'items.itemable' => function ($q) {
                 $q->with([
-                    'coverImage' => fn($ciq) => $ciq->select('id', 'imageable_id', 'imageable_type', ),
-                    'images' => fn($iq) => $iq->Select('id', 'imageable_id', 'imageable_type', )
-                        ->orderBy('display_order'),
+                    'coverImage' => fn($ciq) => $ciq->select('id', 'imageable_id', 'imageable_type', 'image_path'),
                     'categories' => fn($cq) => $cq->select('categories.id', 'categories.name'),
                     'options' => function ($oq) {
                         $oq->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')])
@@ -63,6 +80,8 @@ class CartController extends Controller
             ->latest()
             ->get();
 
+
+
         // 2. Mapping Data & Transformasi
         $cartStores = $carts->map(function ($cart) {
 
@@ -89,185 +108,129 @@ class CartController extends Controller
                     'logo' => $cart->merchant->logo_url ?? null,
                 ],
                 'items' => $cart->items->map(function ($item) {
+
+                    $variant = $item->variant;
+
+                    // =========================
+                    // SNAPSHOT (STABIL)
+                    // =========================
+                    $snapshotAddons = $item->addons->map(function ($a) {
+                        return [
+                            'label' => $a->addon->addon_name,
+                            'price' => (int) $a->addon_price_snapshot,
+                        ];
+                    });
+
+                    $snapshotUnitPrice = (int) $item->price_snapshot;
+
+                    // =========================
+                    // LIVE DATA
+                    // =========================
+                    $liveUnitPrice = $variant ? (int) $variant?->price : $snapshotUnitPrice;
+                    $liveStock = $variant ? (int) $variant?->stock : 0;
+
+                    $isPublic = in_array($item->itemable->status, ['published', 'archived']);
+
+                    /* =========================
+                     * SNAPSHOT IMAGE
+                     * ========================= */
+                    $image = $this->applyImageSrcUrl($item->imageSnapshot, $isPublic);
+
+                    /* =========================
+                     * PRODUCT DETAIL IMAGES
+                     * ========================= */
                     $product = $item->itemable;
 
-                    // ==========================================================
-                    // START: LOGIC TRANSFORMASI PRODUCT (Sama seperti ProductController)
-                    // ==========================================================
-    
-                    $isPublic = in_array($product->status, ['published', 'archived']);
-
-                    // 1. Cover Image
+                    // cover image
                     if ($product->coverImage) {
-                        $product->coverImage->src_url = $isPublic
-                            ? route('images.show', ['image' => $product->coverImage->id])
-                            : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
-                        $product->coverImage->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+                        $this->applyImageSrcUrl($product->coverImage, $isPublic);
                     }
 
-                    // 2. Images Gallery
+                    // product images (jika dipakai di modal edit)
                     if ($product->images) {
-                        $product->images->transform(function ($img) use ($isPublic) {
-                            $img->src_url = $isPublic
-                                ? route('images.show', ['image' => $img->id])
-                                : URL::signedRoute('images.show', ['image' => $img->id], now()->addMinutes(60));
-                            $img->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
-                            return $img;
-                        });
+                        $product->images->transform(
+                            fn($img) =>
+                            $this->applyImageSrcUrl($img, $isPublic)
+                        );
                     }
 
-                    // 3. Option Values Images
+                    // option values images
                     if ($product->options) {
-                        $product->options->transform(function ($opt) use ($isPublic) {
-                            if ($opt->values) {
-                                $opt->values->transform(function ($val) use ($isPublic) {
-                                    if (!empty($val->image_path)) {
-                                        $val->src_url = $isPublic
-                                            ? route('images.product-option-value.show', ['optionValue' => $val->id])
-                                            : URL::signedRoute('images.product-option-value.show', ['optionValue' => $val->id], now()->addMinutes(60));
+                        $product->options->transform(function ($option) use ($isPublic) {
+                            if ($option->values) {
+                                $option->values->transform(function ($value) use ($isPublic) {
+                                    if (!empty($value->image_path)) {
+                                        $value->src_url = $isPublic
+                                            ? route('images.product-option-value.show', ['optionValue' => $value->id])
+                                            : URL::signedRoute(
+                                                'images.product-option-value.show',
+                                                ['optionValue' => $value->id],
+                                                now()->addMinutes(60)
+                                            );
                                     } else {
-                                        $val->src_url = null;
+                                        $value->src_url = null;
                                     }
-                                    $val->makeHidden(['image_path', 'created_at', 'updated_at', 'pivot']);
-                                    return $val;
+
+                                    $value->makeHidden(['image_path', 'created_at', 'updated_at']);
+                                    return $value;
                                 });
                             }
-                            $opt->makeHidden(['created_at', 'updated_at']);
-                            return $opt;
+                            return $option;
                         });
                     }
 
-                    // 4. Variants Cleaning
-                    if ($product->variants) {
-                        $product->variants->transform(function ($var) {
-                            $var->makeHidden(['display_image', 'created_at', 'updated_at']);
-                            if ($var->optionValues) {
-                                $var->optionValues->transform(function ($ov) {
-                                    $ov->makeHidden(['pivot', 'image_url', 'created_at', 'updated_at']);
-                                    return $ov;
-                                });
-                            }
-                            return $var;
-                        });
-                    }
+                    $currentStock = $variant?->stock ?? 0;
+                    $cartQty = $item->quantity;
 
-                    // 5. Addons Cleaning
-                    if ($product->addonGroups) {
-                        $product->addonGroups->transform(function ($grp) {
-                            $grp->makeHidden(['created_at', 'updated_at']);
-                            if ($grp->options) {
-                                $grp->options->transform(function ($opt) {
-                                    $opt->makeHidden(['created_at', 'updated_at']);
-                                    if ($opt->addon)
-                                        $opt->addon->makeHidden(['created_at', 'updated_at']);
-                                    return $opt;
-                                });
-                            }
-                            return $grp;
-                        });
-                    }
+                    $isOverStock = $cartQty > $currentStock;
 
-                    // 6. Clean Product Categories & Product itself
-                    if ($product->categories)
-                        $product->categories->makeHidden(['pivot', 'created_at', 'updated_at']);
-                    $product->makeHidden(['created_at', 'updated_at', 'images']); // Sembunyikan images raw jika mau
-    
-                    // ==========================================================
-                    // END: LOGIC TRANSFORMASI
-                    // ==========================================================
-    
 
-                    // --- LOGIC DISPLAY ITEM ---
-                    $selectedVariant = $item->variant;
-                    $basePrice = $selectedVariant ? (int) $selectedVariant->price : (int) $product->price;
-
-                    // Tentukan Gambar Tampilan (Menggunakan src_url yang baru digenerate)
-                    $displayImage = null;
-
-                    // 1. Cek gambar spesifik varian (dari option value)
-                    if ($selectedVariant && $selectedVariant->optionValues->isNotEmpty()) {
-                        foreach ($selectedVariant->optionValues as $ov) {
-                            // Kita cari OptionValue yang sesuai di dalam $product->options yang sudah di-transform
-                            // agar mendapatkan src_url yang valid
-                            $matchedOption = $product->options
-                                ->where('id', $ov->product_option_id)->first();
-
-                            if ($matchedOption) {
-                                $matchedValue = $matchedOption->values->where('id', $ov->id)->first();
-                                if ($matchedValue && $matchedValue->src_url) {
-                                    $displayImage = $matchedValue->src_url;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. Cek cover image produk
-                    if (!$displayImage && $product->coverImage) {
-                        $displayImage = $product->coverImage->src_url;
-                    }
-
-                    // 3. Fallback gambar pertama
-                    if (!$displayImage && $product->images && $product->images->isNotEmpty()) {
-                        $displayImage = $product->images->first()->src_url;
-                    }
-
-                    // 4. Placeholder
-                    if (!$displayImage) {
-                        $displayImage = asset('images/placeholder-product.png'); // Atau null
-                    }
-
-                    // String Varian
-                    $variantString = $selectedVariant
-                        ? $selectedVariant->optionValues->pluck('option_value')->implode(', ')
-                        : null;
-
-                    // Addons Display
-                    $addons = $item->addons->map(function ($cartAddon) use ($product) {
-                        $price = 0;
-                        // Logic cari harga addon (sama seperti sebelumnya)
-                        foreach ($product->addonGroups as $group) {
-                            if ($group->id !== $cartAddon->addon_group_id)
-                                continue;
-                            $option = $group->options->firstWhere('addon_id', $cartAddon->addon_id);
-                            if ($option) {
-                                $price = (int) $option->addon_price;
-                                break;
-                            }
-                        }
-                        return [
-                            'label' => $cartAddon->addon->addon_name,
-                            'price' => $price,
-                        ];
-                    })->values();
 
                     return [
                         'cart_item_id' => $item->id,
                         'quantity' => $item->quantity,
-                        'display' => [
-                            'name' => $product->name,
-                            'slug' => $product->slug,
-                            'image' => $displayImage, // ✅ Sudah berupa URL (Signed/Public)
-                            'unit_price' => (int) $basePrice,
-                            'variant_label' => $variantString,
-                            'addons' => $addons,
-                            'addon_total_price' => (int) $addons->sum('price'),
-                            'max_stock' => $selectedVariant ? (int) $selectedVariant->stock : (int) $product->total_stock ?? 0,
+
+                        // 🔒 SNAPSHOT
+                        'snapshot' => [
+                            'name' => $item->itemable_name_snapshot,
+                            'variant_label' => $item->product_variant_name_snapshot,
+                            'image' => $image,
+                            'unit_price' => $snapshotUnitPrice,
+                            'addons' => $snapshotAddons,
+                            'addon_total_price' => (int) $snapshotAddons->sum('price'),
                         ],
+
+                        // 🔥 LIVE
+                        'live' => [
+                            'unit_price' => $liveUnitPrice,
+                            'max_stock' => $liveStock,
+                            'is_available' => $variant !== null && $liveStock > 0,
+                        ],
+
+                        // 🚨 PERUBAHAN
+                        'changes' => [
+                            'price_changed' => $liveUnitPrice !== $snapshotUnitPrice,
+                            'is_over_stock' => $isOverStock,
+                        ],
+
+                        // 🔧 UNTUK EDIT
                         'selected_configuration' => [
-                            'product_id' => $product->id,
-                            'variant_id' => $selectedVariant?->id,
+                            'product_id' => $item->itemable_id,
+                            'variant_id' => $variant?->id,
                             'addon_ids' => $item->addons->map(fn($a) => [
                                 'addon_group_id' => $a->addon_group_id,
                                 'addon_id' => $a->addon_id,
                             ])->values(),
                         ],
-                        // Data Lengkap untuk Edit (Sudah bersih dari timestamps & ada src_url)
-                        'product_details' => $product,
+
+                        // 📦 UNTUK MODAL EDIT
+                        'product_details' => $item->itemable,
                     ];
-                }),
+                })->values(),
+
+
             ];
-        })->values();
+        });
 
         return response()->json([
             'success' => true,
@@ -290,7 +253,7 @@ class CartController extends Controller
 
         // 🧮 cek stock (LIVE)
         $availableStock = $variant
-            ? $variant->stock
+            ? $variant?->stock
             : ($product->stock ?? 0);
 
         if ($request->quantity > $availableStock) {
@@ -348,22 +311,30 @@ class CartController extends Controller
             'product_id' => 'required|exists:products,id',
             'variant_id' => 'nullable|exists:product_variants,id',
             'quantity' => 'required|integer|min:1',
+
             'addons' => 'nullable|array',
             'addons.*.group_id' => 'required|exists:addon_groups,id',
             'addons.*.addon_id' => 'required|exists:addons,id',
         ]);
 
         return DB::transaction(function () use ($request) {
+
+            /** ===============================
+             * 1. AMBIL PRODUCT (LIVE)
+             * =============================== */
             $product = Product::findOrFail($request->product_id);
 
-            // 1. Ambil / Buat Cart
+            /** ===============================
+             * 2. CART PER MERCHANT
+             * =============================== */
             $cart = Cart::firstOrCreate([
                 'user_id' => Auth::id(),
                 'merchant_id' => $product->merchant_id,
             ]);
 
-            // 2. Siapkan Data Addon (Hanya ID)
-            // Sort agar urutan array [1, 2] dianggap sama dengan [2, 1] saat cek duplikat
+            /** ===============================
+             * 3. NORMALISASI ADDONS (UNTUK DUPLIKASI)
+             * =============================== */
             $addonSet = collect($request->addons ?? [])
                 ->map(fn($a) => [
                     'addon_group_id' => (int) $a['group_id'],
@@ -372,15 +343,15 @@ class CartController extends Controller
                 ->sortBy(fn($a) => $a['addon_group_id'] . '-' . $a['addon_id'])
                 ->values();
 
-            // 3. Cek Duplikat Item (Item sama + Varian sama + Addons persis sama)
+            /** ===============================
+             * 4. CEK DUPLIKAT CART ITEM
+             * =============================== */
             $existingItem = $cart->items()
                 ->where('itemable_id', $product->id)
                 ->where('itemable_type', Product::class)
-                ->where('product_variant_id', $request->variant_id) // Cek Varian
-                ->with('addons')
+                ->where('product_variant_id', $request->variant_id)
                 ->get()
                 ->first(function ($item) use ($addonSet) {
-                    // Bandingkan addons yang ada di DB dengan request baru
                     $existingAddonSet = $item->addons
                         ->map(fn($a) => [
                             'addon_group_id' => (int) $a->addon_group_id,
@@ -392,35 +363,79 @@ class CartController extends Controller
                     return $existingAddonSet->toJson() === $addonSet->toJson();
                 });
 
-            // 4. Jika Duplikat -> Tambah Quantity Saja
             if ($existingItem) {
                 $existingItem->increment('quantity', $request->quantity);
+
                 return response()->json([
                     'message' => 'Cart item quantity updated',
                     'cart_item_id' => $existingItem->id,
                 ]);
             }
 
-            // 5. Jika Baru -> Buat Item & Simpan Addons
-            $item = $cart->items()->create([
+            /** ===============================
+             * 5. AMBIL VARIANT (LIVE → SNAPSHOT)
+             * =============================== */
+            $variant = $request->variant_id
+                ? ProductVariant::with('optionValues.option')->findOrFail($request->variant_id)
+                : null;
+
+            $variantLabel = $variant
+                ? $variant->optionValues
+                    ->map(fn($ov) => $ov->option->option_name . ': ' . $ov->option_value)
+                    ->implode(', ')
+                : null;
+
+            /** ===============================
+             * 6. CREATE CART ITEM (PURE SNAPSHOT)
+             * =============================== */
+            $cartItem = $cart->items()->create([
                 'itemable_id' => $product->id,
                 'itemable_type' => Product::class,
-                'product_variant_id' => $request->variant_id, // Pastikan ini masuk ke DB
+
+                // FK NON-RELASI (REFERENCE ONLY)
+                'product_variant_id' => $variant?->id,
+
+                // SNAPSHOT
+                'itemable_name_snapshot' => $product->name,
+                'product_variant_name_snapshot' => $variantLabel,
+                'price_snapshot' => (int) ($variant?->price ?? $product->price),
+
                 'quantity' => $request->quantity,
             ]);
 
-            // Simpan Addons ke tabel cart_item_addons
+            /** ===============================
+             * 7. SIMPAN ADDON SNAPSHOT
+             * =============================== */
             if ($addonSet->isNotEmpty()) {
-                // createMany akan otomatis mengisi 'cart_item_id'
-                $item->addons()->createMany($addonSet->toArray());
+                $addonData = $addonSet->map(function ($a) {
+
+                    $option = AddonGroupOption::with('addon')
+                        ->where('addon_group_id', $a['addon_group_id'])
+                        ->where('addon_id', $a['addon_id'])
+                        ->firstOrFail();
+
+                    return [
+                        // reference only
+                        'addon_group_id' => $a['addon_group_id'],
+                        'addon_id' => $a['addon_id'],
+
+                        // snapshot
+                        'addon_name_snapshot' => $option->addon->addon_name,
+                        'addon_price_snapshot' => (int) $option->addon_price,
+                    ];
+                });
+
+                $cartItem->addons()->createMany($addonData->toArray());
             }
 
             return response()->json([
                 'message' => 'Added to cart',
-                'cart_item_id' => $item->id,
+                'cart_item_id' => $cartItem->id,
             ]);
         });
     }
+
+
 
     public function updateVariant(Request $request, CartItem $cartItem)
     {
@@ -444,7 +459,7 @@ class CartController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($variant->stock < $cartItem->quantity) {
+            if ($variant?->stock < $cartItem->quantity) {
                 return response()->json([
                     'message' => 'Stok varian tidak mencukupi'
                 ], 422);
@@ -468,7 +483,7 @@ class CartController extends Controller
                 ->where('id', '!=', $cartItem->id)
                 ->where('itemable_id', $cartItem->itemable_id)
                 ->where('itemable_type', $cartItem->itemable_type)
-                ->where('product_variant_id', $variant->id)
+                ->where('product_variant_id', $variant?->id)
                 ->with('addons')
                 ->get()
                 ->first(function ($item) use ($addonSet) {
@@ -502,8 +517,15 @@ class CartController extends Controller
             /* ===============================
              * 5. UPDATE VARIANT
              * =============================== */
+            $variantLabel = $variant?->optionValues
+                ->map(fn($ov) => $ov->option->option_name . ': ' . $ov->option_value)
+                ->implode(', ');
+
+
             $cartItem->update([
-                'product_variant_id' => $variant->id,
+                'product_variant_id' => $variant?->id,
+                'product_variant_name_snapshot' => $variantLabel,
+                'price_snapshot' => (int) $variant?->price,
             ]);
 
             /* ===============================
@@ -520,7 +542,7 @@ class CartController extends Controller
                     return [
                         'addon_group_id' => $a['addon_group_id'],
                         'addon_id' => $a['addon_id'],
-                        'price' => $option->addon_price,
+                        'addon_price_snapshot' => (int) $option->addon_price_snapshot,
                     ];
                 });
 

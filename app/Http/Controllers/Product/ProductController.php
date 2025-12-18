@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Product;
 
 use App\Models\Image;
 use App\Models\Product;
+use App\Models\CartItem;
 use App\Models\Merchant;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Intervention\Image\Drivers\Imagick\Driver;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Intervention\Image\ImageManager as ImageIntervention;
@@ -635,6 +637,10 @@ class ProductController
             'products.status',
             'products.min_purchase',
             'products.slug',
+            'sku' => ProductVariant::select('sku')
+                ->whereColumn('product_id', 'products.id')
+                ->orderBy('id')
+                ->limit(1),
         ]);
 
         // 3. TAMBAHKAN COMPUTED COLUMNS (Total Stock, Min Price, Max Price)
@@ -1543,6 +1549,7 @@ class ProductController
 
             // Combinations (SKUs)
             'combinations' => ['nullable', 'array', 'max:' . self::MAX_VARIANT_COMBINATIONS],
+            'combinations.*.id' => ['nullable', 'integer', 'exists:product_variants,id'],
             'combinations.*.sku' => ['nullable', 'string', 'max:100'],
             'combinations.*.price' => ['required', 'numeric', 'min:0'],
             'combinations.*.stock' => ['required', 'integer', 'min:0', 'max:9999'],
@@ -1559,6 +1566,9 @@ class ProductController
             'add_on_groups.*.options.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
         ]);
+
+
+
         $existingCount = isset($data['existing_images'])
             ? count($data['existing_images'])
             : 0;
@@ -1601,16 +1611,27 @@ class ProductController
             ], 422);
         }
         // Validasi: combinations tidak boleh duplikat
+// ✅ VALIDASI: kombinasi tidak boleh duplikat (BERDASARKAN name + value)
         if ($useVariants) {
-            $combinations = collect($data['combinations']);
-            $uniqueCombinations = $combinations->pluck('combination')->unique();
+            $uniqueCombinations = collect($data['combinations'])
+                ->map(function ($combo) {
+                    return collect($combo['attributes'])
+                        ->map(
+                            fn($a) =>
+                            strtolower(trim($a['name'])) . ':' . strtolower(trim($a['value']))
+                        )
+                        ->sort()
+                        ->implode('|');
+                })
+                ->unique();
 
-            if ($combinations->count() !== $uniqueCombinations->count()) {
+            if (count($data['combinations']) !== $uniqueCombinations->count()) {
                 return response()->json([
                     'message' => 'Kombinasi variasi tidak boleh duplikat.',
                 ], 422);
             }
         }
+
         if (!empty($data['add_on_groups'])) {
             $groupNames = collect($data['add_on_groups'])
                 ->mapWithKeys(function ($group) {
@@ -1684,22 +1705,31 @@ class ProductController
 
             if ($useVariants) {
                 // Hapus data single variant jika ada (agar tidak bentrok)
-                $product->variants()->whereNull('product_id')->delete(); // Sesuaikan query jika perlu
-
+                $product->variants()->each(function ($variant) {
+                    $variant->optionValues()->detach();
+                    $variant->delete();
+                });
                 // Update Logic Variant Kompleks
                 $this->updateProductVariants($product, $data);
             } else {
-                // Mode Produk Tanpa Varian (Single SKU)
-                // Hapus semua opsi/varian lama jika sebelumnya produk ini punya varian
-                $product->options()->delete();
-                $product->variants()->delete();
+                // ==============================
+                // MODE TANPA VARIAN (SINGLE SKU)
+                // ==============================
 
-                // Create/Update Single Variant
+                // 1️⃣ Hapus SEMUA relasi varian lama
+                $product->variants()->each(function ($variant) {
+                    $variant->optionValues()->detach(); // pivot
+                    $variant->delete();
+                });
+
+                // 2️⃣ Hapus semua product options
+                $product->options()->delete();
+
+                // 3️⃣ Buat 1 single variant baru
                 $product->variants()->create([
                     'sku' => $data['sku'] ?? null,
-                    'price' => $data['price'] ?? 0,
-                    'stock' => $data['stock'] ?? 0,
-                    'is_active' => 1
+                    'price' => $data['price'],
+                    'stock' => $data['stock'],
                 ]);
             }
 
@@ -1736,117 +1766,59 @@ class ProductController
      */
     private function updateProductVariants(Product $product, array $data): void
     {
-        $submittedOptionIds = [];
+        // 0️⃣ RESET OPTIONS
+        $product->options()->delete();
 
-        // 1. UPDATE / CREATE OPTIONS (Warna, Ukuran)
+        $optionValueMap = [];
+
         foreach ($data['variants'] as $vIndex => $variantData) {
-            $option = null;
 
-            // Cek apakah ID valid dan ada di database
-            if (!empty($variantData['id'])) {
-                $option = $product->options()->find($variantData['id']);
-            }
-
-            $usesImages = ($vIndex === 0) && ((int) $variantData['uses_images'] === 1);
-            $payload = [
+            $option = $product->options()->create([
                 'option_name' => $variantData['name'],
-                'uses_image' => $usesImages,
-                'order' => $vIndex
-            ];
+                'uses_image' => $variantData['uses_images'],
+            ]);
 
-            if ($option) {
-                $option->update($payload);
-            } else {
-                $option = $product->options()->create($payload);
+            foreach ($variantData['options'] as $opt) {
+                $value = $option->values()->create([
+                    'option_value' => $opt['name'],
+                ]);
+
+                // 🔑 KEY BERDASARKAN VALUE NAME
+                $optionValueMap[$vIndex][strtolower(trim($opt['name']))] = $value->id;
             }
-
-            $submittedOptionIds[] = $option->id;
-
-            // 1b. UPDATE / CREATE OPTION VALUES (Merah, Biru / S, M)
-            $submittedValueIds = [];
-            $valuesMap = []; // Untuk mapping nama value ke ID (dipakai kombinasi nanti)
-
-            foreach ($variantData['options'] as $valIndex => $valData) {
-                $value = null;
-
-                if (!empty($valData['id'])) {
-                    $value = $option->values()->find($valData['id']);
-                }
-
-                if ($value) {
-                    $value->update(['option_value' => $valData['name']]);
-                } else {
-                    $value = $option->values()->create(['option_value' => $valData['name']]);
-                }
-
-                $submittedValueIds[] = $value->id;
-
-                // Simpan mapping untuk kombinasi: "Warna:Merah" => ID 5
-                // Kita simpan mapping global berdasarkan nama opsi dan nama value
-                $valuesMap[$valData['name']] = $value->id;
-
-                // Handle Image Upload untuk Option Value (misal foto warna Merah)
-                if ($usesImages && !empty($valData['images'])) {
-                    // Cek file upload baru
-                    if (isset($valData['images'][0]['file'])) {
-                        // Hapus gambar lama jika ada
-                        if ($value->image_path) {
-                            Storage::disk('public')->delete($value->image_path);
-                        }
-                        $path = $valData['images'][0]['file']->store('option-values', 'public');
-                        $value->update(['image_path' => $path]);
-                    }
-                }
-            }
-
-            // Hapus value yang tidak ada di request
-            $option->values()->whereNotIn('id', $submittedValueIds)->delete();
-
-            // Simpan referensi map ke variant data agar mudah diakses loop kombinasi
-            $data['variants'][$vIndex]['_value_map'] = $valuesMap;
         }
 
-        // Hapus Option yang tidak ada di request
-        $product->options()->whereNotIn('id', $submittedOptionIds)->delete();
+        $existingVariants = $product->variants()->get()->keyBy('id');
 
+        foreach ($data['combinations'] as $combo) {
 
-        // 2. REGENERATE COMBINATIONS (SKU Real)
-        // Cara paling aman saat update struktur varian adalah menghapus semua SKU kombinasi lama
-        // dan membuat ulang berdasarkan data kombinasi baru dari frontend.
+            $optionValueIds = [];
 
-        $product->variants()->delete(); // Hapus SKU lama
+            foreach ($combo['attributes'] as $aIndex => $attr) {
+                $valueName = strtolower(trim($attr['value']));
 
-        if (!empty($data['combinations'])) {
-            foreach ($data['combinations'] as $combo) {
+                if (isset($optionValueMap[$aIndex][$valueName])) {
+                    $optionValueIds[] = $optionValueMap[$aIndex][$valueName];
+                }
+            }
+
+            if (!empty($combo['id']) && $existingVariants->has($combo['id'])) {
+                $variant = $existingVariants[$combo['id']];
+                $variant->update([
+                    'sku' => $combo['sku'] ?? null,
+                    'price' => $combo['price'],
+                    'stock' => $combo['stock'],
+                ]);
+            } else {
                 $variant = $product->variants()->create([
                     'sku' => $combo['sku'] ?? null,
                     'price' => $combo['price'],
                     'stock' => $combo['stock'],
-                    'is_active' => 1
                 ]);
-
-                // Attach ke tabel pivot product_option_value_product_variant
-                // Kita perlu mencari ID dari option_values berdasarkan nama atribut
-                $optionValueIdsToAttach = [];
-
-                foreach ($combo['attributes'] as $attr) {
-                    $attrName = $attr['name']; // Misal "Warna"
-                    $attrValue = $attr['value']; // Misal "Merah"
-
-                    // Cari ID option value yang cocok dari proses update opsi di atas
-                    // Kita loop data variants yang sudah kita proses map-nya
-                    foreach ($data['variants'] as $vProcessed) {
-                        if ($vProcessed['name'] === $attrName && isset($vProcessed['_value_map'][$attrValue])) {
-                            $optionValueIdsToAttach[] = $vProcessed['_value_map'][$attrValue];
-                            break;
-                        }
-                    }
-                }
-
-                if (!empty($optionValueIdsToAttach)) {
-                    $variant->optionValues()->attach($optionValueIdsToAttach);
-                }
             }
+
+            // ✅ INI SEKARANG TERISI
+            $variant->optionValues()->sync($optionValueIds);
         }
     }
 
@@ -1857,100 +1829,125 @@ class ProductController
     {
         $submittedGroupIds = [];
 
-        // ==============================
-        // VALIDASI DUPLIKAT GROUP NAME (DB LEVEL)
-        // ==============================
+        /**
+         * =================================================
+         * 1️⃣ VALIDASI DUPLIKAT NAMA GROUP (CASE INSENSITIVE)
+         * =================================================
+         */
         $groupNameMap = [];
 
         foreach ($groups as $groupData) {
-            $key = strtolower(trim($groupData['name']));
+            $groupName = strtolower(trim($groupData['name']));
 
-            if (isset($groupNameMap[$key])) {
+            if (isset($groupNameMap[$groupName])) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'add_on_groups' => 'Nama grup add-on tidak boleh sama.',
                 ]);
             }
 
-            $groupNameMap[$key] = true;
+            $groupNameMap[$groupName] = true;
         }
 
+        /**
+         * =================================================
+         * 2️⃣ CREATE / UPDATE GROUP
+         * =================================================
+         */
         foreach ($groups as $groupData) {
             $addonGroup = null;
 
-            if (!empty($groupData['id'])) {
+            // 🔐 TERIMA ID HANYA JIKA INTEGER (ID DB)
+            if (isset($groupData['id']) && is_int($groupData['id'])) {
                 $addonGroup = $product->addonGroups()->find($groupData['id']);
             }
 
-            $selectionType = ($groupData['max_selection'] === 1) ? 'single' : 'multiple';
+            $selectionType = ((int) $groupData['max_selection'] === 1)
+                ? 'single'
+                : 'multiple';
 
-            $payload = [
+            $groupPayload = [
                 'addon_group_name' => trim($groupData['name']),
                 'selection_type' => $selectionType,
-                'min_selection' => $groupData['min_selection'],
-                'max_selection' => $groupData['max_selection'],
+                'min_selection' => (int) $groupData['min_selection'],
+                'max_selection' => (int) $groupData['max_selection'],
             ];
 
             if ($addonGroup) {
-                $addonGroup->update($payload);
+                $addonGroup->update($groupPayload);
             } else {
-                $addonGroup = $product->addonGroups()->create($payload);
+                $addonGroup = $product->addonGroups()->create($groupPayload);
             }
 
             $submittedGroupIds[] = $addonGroup->id;
 
-            // ==============================
-            // VALIDASI DUPLIKAT OPTION NAME (PER GROUP)
-            // ==============================
-            $optionNameMap = [];
+            /**
+             * =================================================
+             * 3️⃣ CREATE / UPDATE OPTIONS (PER GROUP)
+             * =================================================
+             */
             $submittedOptionIds = [];
+            $optionNameMap = [];
 
             foreach ($groupData['options'] as $optionData) {
-                $optKey = strtolower(trim($optionData['name']));
+                $optionName = strtolower(trim($optionData['name']));
 
-                if (isset($optionNameMap[$optKey])) {
+                // ❌ DUPLIKAT NAMA OPTION
+                if (isset($optionNameMap[$optionName])) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'add_on_groups' =>
                             "Nama opsi '{$optionData['name']}' pada grup '{$groupData['name']}' tidak boleh sama.",
                     ]);
                 }
 
-                $optionNameMap[$optKey] = true;
+                $optionNameMap[$optionName] = true;
 
+                // 🔁 MASTER ADDON (GLOBAL PER MERCHANT)
                 $addonMaster = $product->merchant->addons()->firstOrCreate(
                     ['addon_name' => trim($optionData['name'])],
                     ['addon_name' => trim($optionData['name'])]
                 );
 
                 $groupOption = null;
-                if (!empty($optionData['id'])) {
+
+                // 🔐 TERIMA ID OPTION HANYA JIKA INTEGER (ID DB)
+                if (isset($optionData['id']) && is_int($optionData['id'])) {
                     $groupOption = $addonGroup->options()->find($optionData['id']);
                 }
 
-                $optPayload = [
+                $optionPayload = [
                     'addon_id' => $addonMaster->id,
-                    'addon_price' => $optionData['price'],
+                    'addon_price' => (float) $optionData['price'],
                 ];
 
                 if ($groupOption) {
-                    $groupOption->update($optPayload);
+                    $groupOption->update($optionPayload);
                 } else {
-                    $groupOption = $addonGroup->options()->create($optPayload);
+                    $groupOption = $addonGroup->options()->create($optionPayload);
                 }
 
                 $submittedOptionIds[] = $groupOption->id;
             }
 
-            // Hapus opsi yang dihapus user
+            /**
+             * =================================================
+             * 4️⃣ DELETE OPTION YANG DIHAPUS USER
+             * =================================================
+             */
             $addonGroup->options()
                 ->whereNotIn('id', $submittedOptionIds)
                 ->delete();
         }
 
-        // Hapus grup yang dihapus user
+        /**
+         * =================================================
+         * 5️⃣ DELETE GROUP YANG DIHAPUS USER
+         * =================================================
+         */
         $product->addonGroups()
             ->whereNotIn('id', $submittedGroupIds)
             ->delete();
     }
+
 
 
     private function generateUniqueSlugForUpdate(string $name, int $currentProductId): string

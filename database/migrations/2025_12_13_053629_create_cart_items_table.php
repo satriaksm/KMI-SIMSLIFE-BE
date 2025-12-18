@@ -12,12 +12,31 @@ return new class extends Migration {
     {
         Schema::create('cart_items', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('cart_id')->constrained()->onDelete('cascade');
+
+            // Cart masih FK (aman)
+            $table->foreignId('cart_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            // Polymorphic product reference (aman)
             $table->morphs('itemable');
-            $table->foreignId('product_variant_id')->nullable()->constrained()->onDelete('cascade');
+
+            // ❌ TIDAK FK — hanya pointer
+            $table->unsignedBigInteger('product_variant_id')->nullable();
+
+            // 🔒 SNAPSHOT
+            $table->string('itemable_name_snapshot');
+            $table->string('product_variant_name_snapshot')->nullable();
+
+            $table->integer('price_snapshot');
             $table->unsignedInteger('quantity')->default(1);
+
             $table->timestamps();
+
+            // Optional index (performance)
+            $table->index('product_variant_id');
         });
+
     }
 
     /**

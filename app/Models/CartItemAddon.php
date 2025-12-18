@@ -10,6 +10,8 @@ class CartItemAddon extends Model
         'cart_item_id',
         'addon_group_id',
         'addon_id',
+        'addon_name_snapshot',
+        'addon_price_snapshot',
     ];
 
     public function cartItem()
