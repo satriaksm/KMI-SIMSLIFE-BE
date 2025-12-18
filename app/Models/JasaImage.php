@@ -5,16 +5,18 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Package extends Model
+class JasaImage extends Model
 {
     use HasFactory;
 
     protected $fillable = [
         'jasa_id',
-        'name',
-        'description',
-        'price',
-        'image'
+        'path',
+        'is_cover',
+    ];
+
+    protected $casts = [
+        'is_cover' => 'boolean',
     ];
 
     public function jasa()

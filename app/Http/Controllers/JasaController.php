@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Jasa;
 use App\Models\Package;
+use App\Models\JasaImage;
+use Illuminate\Support\Facades\Storage;
 use App\Models\Merchant;
 use Illuminate\Http\Request;
 
@@ -19,7 +21,7 @@ class JasaController extends Controller
     public function index()
     {
         $jasas = Jasa::query()
-            ->with('packages')
+            ->with(['packages','images'])
             ->where('is_active', true)
             ->whereHas('merchant', function ($q) {
                 $q->where('status', 'approved')
@@ -52,7 +54,7 @@ class JasaController extends Controller
     public function show($id)
     {
         $jasa = Jasa::query()
-            ->with('packages')
+            ->with(['packages','images', 'category', 'subcategory'])
             ->where('is_active', true)
             ->whereHas('merchant', function ($q) {
                 $q->where('status', 'approved')
@@ -77,7 +79,7 @@ class JasaController extends Controller
         $merchant = $this->getOwnerMerchantOrAbort($request);
 
         // Build query dengan pagination dan filtering
-        $query = Jasa::with('packages')
+        $query = Jasa::with(['packages', 'images', 'category', 'subcategory'])
             ->where('merchant_id', $merchant->id);
 
         // Search by title
@@ -149,7 +151,7 @@ class JasaController extends Controller
     {
         $merchant = $this->getOwnerMerchantOrAbort($request);
 
-        $jasa = Jasa::with('packages')
+        $jasa = Jasa::with(['packages', 'images', 'category', 'subcategory'])
             ->where('merchant_id', $merchant->id)
             ->find($id);
 
@@ -157,7 +159,11 @@ class JasaController extends Controller
             return response()->json(['message' => 'Jasa tidak ditemukan'], 404);
         }
 
-        return response()->json($jasa);
+        // Bungkus dalam key "data" dan pastikan dikonversi ke array
+        // untuk menghindari masalah serialisasi JSON yang sempat muncul di log.
+        return response()->json([
+            'data' => $jasa->toArray(),
+        ]);
     }
 
     // POST /api/jasas (owner create)
@@ -175,60 +181,54 @@ class JasaController extends Controller
             'jasa_subcategory_id' => 'nullable|exists:jasa_subcategories,id',
             
             // Pricing
-            'price_type' => 'required|in:per_jam,per_sesi,per_hari,per_project',
+            'fixed_price' => 'required|integer|min:0',
             'base_price' => 'required|integer|min:0',
-            'min_order' => 'required|integer|min:1',
-            'negotiable' => 'boolean',
-            
-            // Duration & Hours
-            'estimated_duration' => 'nullable|string',
-            'operating_hours_start' => 'nullable|date_format:H:i',
-            'operating_hours_end' => 'nullable|date_format:H:i',
-            'operating_days' => 'nullable|string',
-            'booking_advance_days' => 'nullable|integer|min:0',
             
             // Location & Service Area
             'service_type' => 'required|in:on_site,at_location,online',
             'location_address' => 'nullable|string',
             'service_area' => 'nullable|string',
             
-            // Capacity & Limits
-            'capacity_per_slot' => 'nullable|integer|min:1',
-            'max_orders_per_day' => 'nullable|integer|min:1',
-            
-            // Terms & Conditions
-            'cancellation_policy' => 'nullable|string',
-            'customer_requirements' => 'nullable|string',
+            // Special Notes
             'special_notes' => 'nullable|string',
             
-            // Media & Support
-            'portfolio' => 'nullable|string',
-            'social_media' => 'nullable|string',
+            // Payment
+            'payment_methods' => 'nullable|string',
             
             // Admin
             'status' => 'nullable|in:draft,active,inactive',
-            'internal_code' => 'nullable|string|unique:jasas,internal_code',
-            'priority' => 'nullable|integer',
-            'is_featured' => 'boolean',
-            'image' => 'nullable|string|max:500',
         ]);
 
         $validated['merchant_id'] = $merchant->id;
         $validated['status'] = $validated['status'] ?? 'draft';
-        $validated['negotiable'] = $request->boolean('negotiable', false);
         $validated['is_featured'] = $request->boolean('is_featured', false);
 
         $jasa = Jasa::create($validated);
 
-        return response()->json([
-            'message' => 'Data jasa berhasil ditambahkan',
-            'data' => $jasa->load(['category', 'subcategory'])
-        ], 201);
-    }
+        // Handle images (optional) - accept multiple files under key 'images'
+        // Simpan ke folder "public/jasa" (tanpa s) agar konsisten dengan struktur existing
+        \Log::info('[JasaController@store] Incoming images info', [
+            'content_type' => $request->header('Content-Type'),
+            'has_images' => $request->hasFile('images'),
+            'all_files_keys' => array_keys($request->allFiles()),
+            'all_input_keys' => array_keys($request->all()),
+        ]);
+
+        if ($request->hasFile('images')) {
+            foreach ($request->file('images') as $index => $file) {
+                if (!$file->isValid()) continue;
+                $path = $file->store('public/jasa');
+                JasaImage::create([
+                    'jasa_id' => $jasa->id,
+                    'path' => Storage::url($path),
+                    'is_cover' => $index === 0,
+                ]);
+            }
+        }
 
         return response()->json([
             'message' => 'Data jasa berhasil ditambahkan',
-            'data' => $jasa->load('packages')
+            'data' => $jasa->load(['category', 'subcategory', 'packages', 'images'])
         ], 201);
     }
 
@@ -252,49 +252,58 @@ class JasaController extends Controller
             'jasa_subcategory_id' => 'nullable|exists:jasa_subcategories,id',
             
             // Pricing
-            'price_type' => 'sometimes|required|in:per_jam,per_sesi,per_hari,per_project',
+            'fixed_price' => 'sometimes|required|integer|min:0',
             'base_price' => 'sometimes|required|integer|min:0',
-            'min_order' => 'sometimes|required|integer|min:1',
-            'negotiable' => 'boolean',
-            
-            // Duration & Hours
-            'estimated_duration' => 'nullable|string',
-            'operating_hours_start' => 'nullable|date_format:H:i',
-            'operating_hours_end' => 'nullable|date_format:H:i',
-            'operating_days' => 'nullable|string',
-            'booking_advance_days' => 'nullable|integer|min:0',
             
             // Location & Service Area
             'service_type' => 'sometimes|required|in:on_site,at_location,online',
             'location_address' => 'nullable|string',
             'service_area' => 'nullable|string',
             
-            // Capacity & Limits
-            'capacity_per_slot' => 'nullable|integer|min:1',
-            'max_orders_per_day' => 'nullable|integer|min:1',
-            
-            // Terms & Conditions
-            'cancellation_policy' => 'nullable|string',
-            'customer_requirements' => 'nullable|string',
+            // Special Notes
             'special_notes' => 'nullable|string',
-            
-            // Media & Support
-            'portfolio' => 'nullable|string',
-            'social_media' => 'nullable|string',
             
             // Admin
             'status' => 'nullable|in:draft,active,inactive',
-            'internal_code' => 'nullable|string|unique:jasas,internal_code,' . $id,
-            'priority' => 'nullable|integer',
-            'is_featured' => 'boolean',
-            'image' => 'nullable|string|max:500',
+        ]);
+
+        \Log::info('[JasaController@update] Before update', [
+            'jasa_id' => $jasa->id,
+            'old_status' => $jasa->status,
+            'old_is_active' => $jasa->is_active,
+            'validated_status' => $validated['status'] ?? 'not set',
         ]);
 
         $jasa->update($validated);
 
+        // Sync is_active based on status
+        if (isset($validated['status'])) {
+            $jasa->is_active = ($validated['status'] === 'active');
+            $jasa->save();
+            
+            \Log::info('[JasaController@update] After status sync', [
+                'jasa_id' => $jasa->id,
+                'new_status' => $jasa->status,
+                'new_is_active' => $jasa->is_active,
+            ]);
+        }
+
+        // Append new images if provided
+        // Simpan ke folder "public/jasa" (tanpa s) agar konsisten dengan struktur existing
+        if ($request->hasFile('images')) {
+            foreach ($request->file('images') as $index => $file) {
+                if (!$file->isValid()) continue;
+                $path = $file->store('public/jasa');
+                $jasa->images()->create([
+                    'path' => Storage::url($path),
+                    'is_cover' => false,
+                ]);
+            }
+        }
+
         return response()->json([
             'message' => 'Data jasa berhasil diperbarui',
-            'data' => $jasa->fresh()->load(['category', 'subcategory'])
+            'data' => $jasa->fresh()->load(['category', 'subcategory', 'packages', 'images'])
         ]);
     }
 

@@ -25,6 +25,7 @@ use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\ChatController;
 
 // ============================================================
 // CSRF COOKIE ENDPOINT (REQUIRED FOR SPA TOKEN-BASED AUTH)
@@ -192,6 +193,19 @@ Route::middleware(['api', 'auth:sanctum'])->group(function () {
         Route::post('/', [OrderController::class, 'store']);          // create order (customer)
         Route::get('/mine', [OrderController::class, 'myOrders']);    // list order milik sendiri
         Route::get('/{id}', [OrderController::class, 'myOrderShow']); // detail order milik sendiri
+    });
+
+    // ============================================================
+    // CHAT (Buyer & Merchant)
+    // ============================================================
+    Route::prefix('chats')->group(function () {
+        Route::get('/', [ChatController::class, 'index']);
+        Route::post('/start', [ChatController::class, 'start']);
+        Route::get('/{id}', [ChatController::class, 'show']);
+        Route::post('/{id}/messages', [ChatController::class, 'sendMessage']);
+        Route::post('/{id}/offers', [ChatController::class, 'makeOffer']);
+        Route::post('/{id}/offers/{messageId}/accept', [ChatController::class, 'acceptOffer']);
+        Route::post('/{id}/offers/{messageId}/reject', [ChatController::class, 'rejectOffer']);
     });
 
     // ============================================================

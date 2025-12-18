@@ -28,6 +28,7 @@ class DatabaseSeeder extends Seeder
             SegmentationSeeder::class,
             CommunityPostSeeder::class,
             PostCommentSeeder::class,
+            ChatSeeder::class,
         ]);
     }
 }
