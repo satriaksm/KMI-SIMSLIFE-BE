@@ -363,20 +363,11 @@ class CartController extends Controller
                     return $existingAddonSet->toJson() === $addonSet->toJson();
                 });
 
-            if ($existingItem) {
-                $existingItem->increment('quantity', $request->quantity);
-
-                return response()->json([
-                    'message' => 'Cart item quantity updated',
-                    'cart_item_id' => $existingItem->id,
-                ]);
-            }
-
             /** ===============================
              * 5. AMBIL VARIANT (LIVE → SNAPSHOT)
              * =============================== */
             $variant = $request->variant_id
-                ? ProductVariant::with('optionValues.option')->findOrFail($request->variant_id)
+                ? ProductVariant::findOrFail($request->variant_id)
                 : null;
 
             $variantLabel = $variant
@@ -384,6 +375,43 @@ class CartController extends Controller
                     ->map(fn($ov) => $ov->option->option_name . ': ' . $ov->option_value)
                     ->implode(', ')
                 : null;
+            /** ===============================
+             * 5.5 VALIDASI STOCK
+             * =============================== */
+
+            // stok live
+            $availableStock = $variant
+                ? (int) $variant->stock
+                : (int) ($product->stock ?? 0);
+
+            // qty sudah ada di cart (SEMUA ITEM DENGAN VARIANT INI)
+            $currentQtyInCart = $cart->items()
+                ->where('itemable_id', $product->id)
+                ->where('itemable_type', Product::class)
+                ->where('product_variant_id', $variant?->id)
+                ->sum('quantity');
+
+            $requestedQty = (int) $request->quantity;
+            $totalAfterAdd = $currentQtyInCart + $requestedQty;
+
+            if ($totalAfterAdd > $availableStock) {
+                return response()->json([
+                    'message' => 'Stok tidak mencukupi',
+                    'available_stock' => $availableStock,
+                    'current_in_cart' => $currentQtyInCart,
+                    'requested' => $requestedQty,
+                ], 422);
+            }
+
+            if ($existingItem) {
+                $existingItem->increment('quantity', $requestedQty);
+
+                return response()->json([
+                    'message' => 'Cart item quantity updated',
+                    'cart_item_id' => $existingItem->id,
+                ]);
+            }
+
 
             /** ===============================
              * 6. CREATE CART ITEM (PURE SNAPSHOT)
@@ -434,8 +462,6 @@ class CartController extends Controller
             ]);
         });
     }
-
-
 
     public function updateVariant(Request $request, CartItem $cartItem)
     {

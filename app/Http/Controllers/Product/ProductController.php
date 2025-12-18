@@ -130,24 +130,34 @@ class ProductController
                 $q->where('status', 'approved')
                     ->where('segmentation_id', 1); // Toko
             })
+
+            // 🔴 PENTING: HANYA PRODUK YANG MASIH ADA STOK
+            ->whereHas('variants', function ($q) {
+                $q->where('stock', '>', 0);
+            })
+
             ->with([
                 'coverImage',
                 'merchant:id,name,slug',
                 'categories:id,name',
             ])
             ->withCount('variants')
+
             ->addSelect([
                 'products.*',
+
                 'min_price' => function ($q) {
                     $q->selectRaw('MIN(price)')
                         ->from('product_variants')
                         ->whereColumn('product_id', 'products.id');
                 },
+
                 'max_price' => function ($q) {
                     $q->selectRaw('MAX(price)')
                         ->from('product_variants')
                         ->whereColumn('product_id', 'products.id');
                 },
+
                 'total_stock' => function ($q) {
                     $q->selectRaw('COALESCE(SUM(stock), 0)')
                         ->from('product_variants')
@@ -182,6 +192,11 @@ class ProductController
                 $q->where('status', 'approved')
                     ->where('segmentation_id', 2); // Kuliner
             })
+            // 🔴 PENTING: HANYA PRODUK YANG MASIH ADA STOK
+            ->whereHas('variants', function ($q) {
+                $q->where('stock', '>', 0);
+            })
+
             ->with([
                 'coverImage',
                 'merchant:id,name,slug',
@@ -401,31 +416,46 @@ class ProductController
         $relatedProducts = Product::where('merchant_id', $product->merchant_id)
             ->where('id', '!=', $product->id)
             ->where('status', 'published')
-            ->with(['coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')])
+
+            // 🔥 FILTER PENTING: HARUS ADA STOK
+            ->whereHas('variants', function ($q) {
+                $q->where('stock', '>', 0);
+            })
+
+            ->with([
+                'merchant:id,name,slug',
+                'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                'variants:id,product_id,price,stock',
+            ])
+
             ->inRandomOrder()
             ->limit(5)
             ->get()
+
             ->map(function ($p) {
-                // Generate URL untuk related product cover
-                $coverUrl = null;
-                if ($p->coverImage) {
-                    $coverUrl = route('images.show', ['image' => $p->coverImage->id]); // Related products pasti Published
-                }
+
+                $coverUrl = $p->coverImage
+                    ? route('images.show', ['image' => $p->coverImage->id])
+                    : null;
 
                 return [
                     'id' => $p->id,
                     'name' => $p->name,
                     'slug' => $p->slug,
-                    'min_price' => $p->variants->min('price'), // Pastikan variants terload atau gunakan subquery jika lambat
-                    'max_price' => $p->variants->max('price'),
+
+                    // 🔥 harga hanya dari variant yang ada stok
+                    'min_price' => $p->variants->where('stock', '>', 0)->min('price'),
+                    'max_price' => $p->variants->where('stock', '>', 0)->max('price'),
+
                     'merchant' => [
                         'id' => $p->merchant->id,
                         'name' => $p->merchant->name,
                         'slug' => $p->merchant->slug,
                     ],
+
                     'cover_image' => $p->coverImage ? [
                         'id' => $p->coverImage->id,
-                        'src_url' => $coverUrl
+                        'src_url' => $coverUrl,
                     ] : null,
                 ];
             })
@@ -723,188 +753,6 @@ class ProductController
         ]);
     }
 
-    // public function index(Request $request)
-    // {
-    //     $data = $request->validate([
-
-    //         'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
-
-    //         'q' => ['nullable', 'string', 'max:255'],
-
-    //         'status' => ['nullable', 'in:draft,published,archived'],
-
-    //         'category_id' => ['nullable', 'integer', 'exists:categories,id'],
-
-    //         'min_price' => ['nullable', 'numeric', 'min:0'],
-
-    //         'max_price' => ['nullable', 'numeric', 'min:0', 'gte:min_price'],
-
-    //         'min_stock' => ['nullable', 'integer', 'min:0'],
-
-    //         'max_stock' => ['nullable', 'integer', 'min:0', 'gte:min_stock'],
-
-    //         'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
-
-    //         'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
-
-    //     ], [
-
-    //         'max_price.gte' => 'Harga maksimal harus lebih besar atau sama dengan harga minimal',
-
-    //         'max_stock.gte' => 'Stok maksimal harus lebih besar atau sama dengan stok minimal',
-
-    //     ]);
-
-
-
-    //     // Auto-detect merchant
-
-    //     if (empty($data['merchant_id'])) {
-
-    //         $merchant = Merchant::where('user_id', $request->user()->id)
-
-    //             ->where('status', 'approved')
-
-    //             ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
-
-    //             ->first();
-
-
-
-    //         if (!$merchant) {
-
-    //             return response()->json([
-
-    //                 'message' => 'Anda belum memiliki UMKM.',
-
-    //             ], 403);
-
-    //         }
-
-
-
-    //         $merchantId = $merchant->id;
-
-    //     } else {
-
-    //         $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-
-    //         if (is_array($merchantOrError) && isset($merchantOrError['error'])) {
-
-    //             return $merchantOrError['error'];
-
-    //         }
-
-    //         $merchantId = $merchantOrError->id;
-
-    //     }
-
-
-
-    //     // Build query using centralized helper
-
-    //     $query = $this->buildFilteredProductQuery($merchantId, $data);
-
-
-
-    //     $perPage = $data['per_page'] ?? 10;
-
-    //     // $perPage = 1;
-
-    //     $result = $query->paginate($perPage);
-
-
-
-    //     $result->getCollection()->transform(function ($product) {
-
-
-
-    //         // Cek status produk
-
-    //         $isPublic = in_array($product->status, ['published', 'archived']);
-
-
-
-    //         // 1. Handle Cover Image (Jika diload/ada)
-
-    //         if ($product->coverImage) {
-
-    //             $product->coverImage->src_url = $isPublic
-
-    //                 ? route('images.show', ['image' => $product->coverImage->id])
-
-    //                 : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
-
-    //         }
-
-
-
-    //         // 2. Handle Array Images (Jika diload/ada)
-
-    //         if ($product->images) {
-
-    //             $product->images->transform(function ($image) use ($isPublic) {
-
-    //                 $image->src_url = $isPublic
-
-    //                     ? route('images.show', ['image' => $image->id])
-
-    //                     : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
-
-    //                 return $image;
-
-    //             });
-
-    //         }
-
-
-
-    //         return $product;
-
-    //     });
-
-
-
-    //     return response()->json([
-
-    //         'data' => $result->items(),
-
-    //         'meta' => [
-
-    //             'current_page' => $result->currentPage(),
-
-    //             'from' => $result->firstItem(),
-
-    //             'last_page' => $result->lastPage(),
-
-    //             'per_page' => $result->perPage(),
-
-    //             'to' => $result->lastItem(),
-    //             'total' => $result->total(),
-    //         ],
-    //         'links' => [
-    //             'first' => $result->url(1),
-    //             'last' => $result->url($result->lastPage()),
-    //             'prev' => $result->previousPageUrl(),
-    //             'next' => $result->nextPageUrl(),
-    //         ],
-    //         'applied_filters' => [
-    //             'search' => $data['q'] ?? null,
-    //             'status' => $data['status'] ?? null,
-    //             'category_id' => $data['category_id'] ?? null,
-    //             'min_price' => $data['min_price'] ?? null,
-    //             'max_price' => $data['max_price'] ?? null,
-    //             'min_stock' => $data['min_stock'] ?? null,
-    //             'max_stock' => $data['max_stock'] ?? null,
-    //             'sort_by' => $data['sort_by'] ?? 'newest',
-    //         ],
-    //     ]);
-    // }
-
-    /**
-     * UPDATED: Create product
-     * ✅ FIXED: Remove is_required, gunakan min_selection untuk logic required
-     */
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -992,7 +840,27 @@ class ProductController
                 'message' => 'Harga dan stok wajib diisi jika tidak menggunakan variasi.',
             ], 422);
         }
+        if ($useVariants) {
+            $hasVariantWithAtLeastTwoOptions = collect($data['variants'])
+                ->some(function ($variant) {
+                    if (empty($variant['options']) || !is_array($variant['options'])) {
+                        return false;
+                    }
 
+                    // hitung opsi yang valid (nama terisi)
+                    $validOptionsCount = collect($variant['options'])
+                        ->filter(fn($opt) => !empty(trim($opt['name'] ?? '')))
+                        ->count();
+
+                    return $validOptionsCount >= 2;
+                });
+
+            if (!$hasVariantWithAtLeastTwoOptions) {
+                return response()->json([
+                    'message' => 'Jika menggunakan variasi, minimal salah satu varian harus memiliki 2 pilihan atau lebih.',
+                ], 422);
+            }
+        }
         // Validasi: jika pakai variants, harus ada combinations
         if ($useVariants && empty($data['combinations'])) {
             return response()->json([
@@ -1603,7 +1471,27 @@ class ProductController
                 'message' => 'Harga dan stok wajib diisi jika tidak menggunakan variasi.',
             ], 422);
         }
+        if ($useVariants) {
+            $hasVariantWithAtLeastTwoOptions = collect($data['variants'])
+                ->some(function ($variant) {
+                    if (empty($variant['options']) || !is_array($variant['options'])) {
+                        return false;
+                    }
 
+                    // hitung opsi yang valid (nama terisi)
+                    $validOptionsCount = collect($variant['options'])
+                        ->filter(fn($opt) => !empty(trim($opt['name'] ?? '')))
+                        ->count();
+
+                    return $validOptionsCount >= 2;
+                });
+
+            if (!$hasVariantWithAtLeastTwoOptions) {
+                return response()->json([
+                    'message' => 'Jika menggunakan variasi, minimal salah satu varian harus memiliki 2 pilihan atau lebih.',
+                ], 422);
+            }
+        }
         // Validasi: jika pakai variants, harus ada combinations
         if ($useVariants && empty($data['combinations'])) {
             return response()->json([
@@ -1766,39 +1654,108 @@ class ProductController
      */
     private function updateProductVariants(Product $product, array $data): void
     {
-        // 0️⃣ RESET OPTIONS
-        $product->options()->delete();
+        $incomingOptions = collect($data['variants']);
+        $existingOptions = $product->options()->with('values')->get()->keyBy('id');
 
-        $optionValueMap = [];
+        $optionValueMap = []; // [optionIndex][valueName] => valueId
+        $keptOptionIds = [];
 
-        foreach ($data['variants'] as $vIndex => $variantData) {
+        /**
+         * ==================================================
+         * 1️⃣ UPSERT OPTIONS & OPTION VALUES
+         * ==================================================
+         */
+        foreach ($incomingOptions as $vIndex => $variantData) {
 
-            $option = $product->options()->create([
-                'option_name' => $variantData['name'],
-                'uses_image' => $variantData['uses_images'],
-            ]);
+            // ---------- OPTION ----------
+            if (!empty($variantData['id']) && $existingOptions->has($variantData['id'])) {
+                $option = $existingOptions[$variantData['id']];
+                $option->update([
+                    'option_name' => $variantData['name'],
+                    'uses_image' => $variantData['uses_images'],
+                ]);
+            } else {
+                $option = $product->options()->create([
+                    'option_name' => $variantData['name'],
+                    'uses_image' => $variantData['uses_images'],
+                ]);
+            }
+
+            $keptOptionIds[] = $option->id;
+
+            // ---------- OPTION VALUES ----------
+            $existingValues = $option->values->keyBy('id');
+            $keptValueIds = [];
 
             foreach ($variantData['options'] as $opt) {
-                $value = $option->values()->create([
-                    'option_value' => $opt['name'],
-                ]);
 
-                // 🔑 KEY BERDASARKAN VALUE NAME
+                // upload image jika ada
+                $imagePath = null;
+                if (!empty($opt['images'][0]['file'])) {
+                    $imagePath = $opt['images'][0]['file']
+                        ->store("product-options/{$product->id}", 'public');
+                }
+
+                if (!empty($opt['id']) && $existingValues->has($opt['id'])) {
+                    // UPDATE
+                    $value = $existingValues[$opt['id']];
+                    $value->update([
+                        'option_value' => $opt['name'],
+                        'image_path' => $imagePath ?? $value->image_path,
+                    ]);
+                } else {
+                    // CREATE
+                    $value = $option->values()->create([
+                        'option_value' => $opt['name'],
+                        'image_path' => $imagePath,
+                    ]);
+                }
+
+                $keptValueIds[] = $value->id;
+
+                // map utk combinations
                 $optionValueMap[$vIndex][strtolower(trim($opt['name']))] = $value->id;
             }
+
+            // DELETE VALUE yang dihapus user
+            $option->values()
+                ->whereNotIn('id', $keptValueIds)
+                ->each(function ($val) {
+                    if ($val->image_path) {
+                        Storage::disk('public')->delete($val->image_path);
+                    }
+                    $val->delete();
+                });
         }
 
+        // DELETE OPTION yang dihapus user
+        $product->options()
+            ->whereNotIn('id', $keptOptionIds)
+            ->each(function ($opt) {
+                foreach ($opt->values as $val) {
+                    if ($val->image_path) {
+                        Storage::disk('public')->delete($val->image_path);
+                    }
+                }
+                $opt->delete();
+            });
+
+        /**
+         * ==================================================
+         * 2️⃣ UPSERT PRODUCT VARIANTS (COMBINATIONS)
+         * ==================================================
+         */
         $existingVariants = $product->variants()->get()->keyBy('id');
+        $keptVariantIds = [];
 
         foreach ($data['combinations'] as $combo) {
 
             $optionValueIds = [];
 
             foreach ($combo['attributes'] as $aIndex => $attr) {
-                $valueName = strtolower(trim($attr['value']));
-
-                if (isset($optionValueMap[$aIndex][$valueName])) {
-                    $optionValueIds[] = $optionValueMap[$aIndex][$valueName];
+                $key = strtolower(trim($attr['value']));
+                if (isset($optionValueMap[$aIndex][$key])) {
+                    $optionValueIds[] = $optionValueMap[$aIndex][$key];
                 }
             }
 
@@ -1817,10 +1774,19 @@ class ProductController
                 ]);
             }
 
-            // ✅ INI SEKARANG TERISI
             $variant->optionValues()->sync($optionValueIds);
+            $keptVariantIds[] = $variant->id;
         }
+
+        // DELETE VARIANT yang dihapus user
+        $product->variants()
+            ->whereNotIn('id', $keptVariantIds)
+            ->each(function ($variant) {
+                $variant->optionValues()->detach();
+                $variant->delete();
+            });
     }
+
 
     /**
      * LOGIKA UPDATE ADDONS YANG AMAN
