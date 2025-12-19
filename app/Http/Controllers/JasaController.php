@@ -18,34 +18,22 @@ class JasaController extends Controller
     // ============================================================
 
     // GET /api/jasa
-    public function index()
+    public function index(Request $request)
     {
-        $jasas = Jasa::query()
-            ->with(['packages','images'])
+        $query = Jasa::query()
+            ->with(['packages','images','category','subcategory'])
             ->where('is_active', true)
             ->whereHas('merchant', function ($q) {
                 $q->where('status', 'approved')
                   ->where('segmentation_id', self::JASA_SEGMENT_ID);
-            })
-            ->orderByDesc('id')
-            ->get();
+            });
 
-        // Debug: Log the query and count
-        \Log::debug('[JasaController@index] Query Result:', [
-            'total_jasa_count' => Jasa::count(),
-            'active_jasa_count' => Jasa::where('is_active', true)->count(),
-            'returned_count' => count($jasas),
-            'jasa_data' => $jasas->map(function($j) {
-                return [
-                    'id' => $j->id,
-                    'title' => $j->title,
-                    'is_active' => $j->is_active,
-                    'merchant_id' => $j->merchant_id,
-                    'merchant_status' => $j->merchant?->status ?? 'NO MERCHANT',
-                    'merchant_segmentation_id' => $j->merchant?->segmentation_id ?? 'NO MERCHANT',
-                ];
-            })->toArray()
-        ]);
+        // Filter by merchant_id jika ada
+        if ($request->filled('merchant_id')) {
+            $query->where('merchant_id', $request->merchant_id);
+        }
+
+        $jasas = $query->orderByDesc('id')->get();
 
         return response()->json($jasas);
     }
@@ -54,7 +42,14 @@ class JasaController extends Controller
     public function show($id)
     {
         $jasa = Jasa::query()
-            ->with(['packages','images', 'category', 'subcategory'])
+            ->with([
+                'packages',
+                'images', 
+                'category', 
+                'subcategory',
+                'merchant:id,name,logo_path,status,segmentation_id',
+                'merchant.segmentation:id,name'
+            ])
             ->where('is_active', true)
             ->whereHas('merchant', function ($q) {
                 $q->where('status', 'approved')
@@ -189,6 +184,10 @@ class JasaController extends Controller
             'location_address' => 'nullable|string',
             'service_area' => 'nullable|string',
             
+            // Operating Days & Times
+            'operating_days' => 'nullable|string',
+            'operating_times' => 'nullable|string',
+            
             // Special Notes
             'special_notes' => 'nullable|string',
             
@@ -217,10 +216,10 @@ class JasaController extends Controller
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $index => $file) {
                 if (!$file->isValid()) continue;
-                $path = $file->store('public/jasa');
+                $path = $file->store('jasa', 'public');
                 JasaImage::create([
                     'jasa_id' => $jasa->id,
-                    'path' => Storage::url($path),
+                    'path' => '/storage/' . $path,
                     'is_cover' => $index === 0,
                 ]);
             }
@@ -260,6 +259,10 @@ class JasaController extends Controller
             'location_address' => 'nullable|string',
             'service_area' => 'nullable|string',
             
+            // Operating Days & Times
+            'operating_days' => 'nullable|string',
+            'operating_times' => 'nullable|string',
+            
             // Special Notes
             'special_notes' => 'nullable|string',
             
@@ -289,13 +292,13 @@ class JasaController extends Controller
         }
 
         // Append new images if provided
-        // Simpan ke folder "public/jasa" (tanpa s) agar konsisten dengan struktur existing
+        // Simpan ke folder "jasa" di disk public
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $index => $file) {
                 if (!$file->isValid()) continue;
-                $path = $file->store('public/jasa');
+                $path = $file->store('jasa', 'public');
                 $jasa->images()->create([
-                    'path' => Storage::url($path),
+                    'path' => '/storage/' . $path,
                     'is_cover' => false,
                 ]);
             }

@@ -72,6 +72,8 @@ Route::prefix('public')->name('public.')->group(function () {
     // -------- MERCHANT CATALOG --------
     Route::get('merchants/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
         ->name('merchants.products');
+    Route::get('merchants/{id}', [MerchantController::class, 'publicShow'])
+        ->name('merchants.show');
 
     // -------- JASA (Customer Catalog) --------
     Route::get('jasas', [JasaController::class, 'index']);        // list jasa + packages

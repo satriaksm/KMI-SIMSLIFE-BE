@@ -13,7 +13,8 @@ class JasaCategoryController extends Controller
     {
         $query = JasaCategory::query();
 
-        if ($request->boolean('is_active') !== null) {
+        // Only filter by is_active if the parameter is explicitly provided
+        if ($request->has('is_active')) {
             $query->where('is_active', $request->boolean('is_active'));
         }
 

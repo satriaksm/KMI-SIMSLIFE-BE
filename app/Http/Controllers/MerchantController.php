@@ -189,4 +189,23 @@ class MerchantController
             'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
         ]);
     }
+
+    /**
+     * Public endpoint: Get merchant detail by ID
+     * For customer store page
+     */
+    public function publicShow($id)
+    {
+        $merchant = Merchant::with(['segmentation:id,name'])
+            ->where('status', 'approved')
+            ->find($id);
+
+        if (!$merchant) {
+            return response()->json(['message' => 'Toko tidak ditemukan'], 404);
+        }
+
+        return response()->json([
+            'data' => $merchant
+        ]);
+    }
 }
