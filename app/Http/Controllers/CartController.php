@@ -582,6 +582,25 @@ class CartController extends Controller
         });
     }
 
+
+    public function clearCart(Request $request, Cart $cart)
+    {
+        if ($cart->user_id !== $request->user()->id) {
+            abort(403);
+        }
+
+        // Hapus semua item cart
+        $cart->items()->delete();
+
+        // Hapus cart itu sendiri
+        $cart->delete();
+
+        return response()->json([
+            'message' => 'Cart berhasil dikosongkan dan dihapus',
+        ]);
+    }
+
+
     public function count()
     {
         $userId = Auth::id();

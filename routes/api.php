@@ -1,15 +1,16 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Request;
 
 // Controllers lama (Jasa / Promo / Orders)
+use Illuminate\Support\Facades\Request;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
-use App\Http\Controllers\ImageController;
 
 // Controllers baru
+use App\Http\Controllers\ImageController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PromoController;
 use App\Http\Controllers\CategoryController;
@@ -89,16 +90,14 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
 
-Route::middleware('web')->group(function () {
-    Route::get('images/{image}', [ImageController::class, 'show'])
-        ->name('images.show');
-    Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
-        ->name('images.product-option-value.show');
-});
 
 // ============================================================
 // 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
 // ============================================================
+Route::get('images/{image}', [ImageController::class, 'show'])
+    ->name('images.show');
+Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
+    ->name('images.product-option-value.show');
 
 // ---------- JASA ----------
 Route::prefix('jasa')->group(function () {
@@ -141,7 +140,7 @@ Route::prefix('auth')->group(function () {
 
     // Protected auth endpoints (require session + sanctum)
     // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
             ->middleware('throttle:6,1')
@@ -149,12 +148,14 @@ Route::prefix('auth')->group(function () {
     });
 });
 
+Route::middleware(['auth:sanctum'])->get('/me', [AuthController::class, 'me'])->name('me');
+
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
 // ============================================================
 // Wrap protected routes with 'web' so session/cookie middlewares are available,
 // then apply 'auth:sanctum' and other guards.
-Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
+Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     // Locations
     Route::prefix('locations')->controller(LocationController::class)->group(function () {
@@ -277,9 +278,6 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
-Route::middleware('web')->group(function () {
-
-});
 
 
 // ============================================================
@@ -327,7 +325,7 @@ Route::prefix('auth')->group(function () {
 
     // Protected auth endpoints (require session + sanctum)
     // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
             ->middleware('throttle:6,1')
@@ -340,7 +338,7 @@ Route::prefix('auth')->group(function () {
 // ============================================================
 // Wrap protected routes with 'web' so session/cookie middlewares are available,
 // then apply 'auth:sanctum' and other guards.
-Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
+Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     // Locations
     Route::prefix('locations')->controller(LocationController::class)->group(function () {
@@ -434,3 +432,5 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             ->name('community.comments.my-comments');
     });
 });
+
+
