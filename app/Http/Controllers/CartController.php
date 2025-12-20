@@ -237,24 +237,24 @@ class CartController extends Controller
             'data' => $cartStores
         ]);
     }
-    public function updateQuantity(Request $request, CartItem $cartItem)
+    public function updateQuantity(Request $request, $id)
     {
-        // 🔒 pastikan item milik user
-        if ($cartItem->cart->user_id !== Auth::id()) {
-            abort(403, 'Unauthorized');
-        }
+        $cartItem = CartItem::where('id', $id)
+            ->whereHas(
+                'cart',
+                fn($q) =>
+                $q->where('user_id', Auth::id())
+            )
+            ->with(['variant', 'itemable'])
+            ->firstOrFail();
 
         $request->validate([
             'quantity' => 'required|integer|min:1',
         ]);
 
-        $variant = $cartItem->variant;
-        $product = $cartItem->itemable;
-
-        // 🧮 cek stock (LIVE)
-        $availableStock = $variant
-            ? $variant?->stock
-            : ($product->stock ?? 0);
+        $availableStock = $cartItem->variant
+            ? $cartItem->variant->stock
+            : ($cartItem->itemable->stock ?? 0);
 
         if ($request->quantity > $availableStock) {
             return response()->json([
@@ -275,19 +275,23 @@ class CartController extends Controller
         ]);
     }
 
-    public function removeItem(CartItem $cartItem)
+
+    public function removeItem(int $id)
     {
-        // 🔒 pastikan item milik user
-        abort_if($cartItem->cart->user_id !== Auth::id(), 403, 'Unauthorized');
+        $cartItem = CartItem::where('id', $id)
+            ->whereHas(
+                'cart',
+                fn($q) =>
+                $q->where('user_id', Auth::id())
+            )
+            ->with('cart')
+            ->firstOrFail();
 
         return DB::transaction(function () use ($cartItem) {
-
             $cart = $cartItem->cart;
 
-            // hapus cart item
             $cartItem->delete();
 
-            // 🔥 jika ini item terakhir → hapus cart
             if ($cart->items()->count() === 0) {
                 $cart->delete();
 
@@ -304,6 +308,7 @@ class CartController extends Controller
             ]);
         });
     }
+
 
     public function addToCart(Request $request)
     {
@@ -463,7 +468,7 @@ class CartController extends Controller
         });
     }
 
-    public function updateVariant(Request $request, CartItem $cartItem)
+    public function updateVariant(Request $request, int $cartItemId)
     {
         $request->validate([
             'product_variant_id' => 'required|exists:product_variants,id',
@@ -472,28 +477,27 @@ class CartController extends Controller
             'addons.*.addon_id' => 'required|exists:addons,id',
         ]);
 
-        // 🔐 Security: pastikan cart milik user
-        abort_if($cartItem->cart->user_id !== Auth::id(), 403);
+        $cartItem = CartItem::where('id', $cartItemId)
+            ->whereHas(
+                'cart',
+                fn($q) =>
+                $q->where('user_id', Auth::id())
+            )
+            ->with(['cart', 'addons'])
+            ->firstOrFail();
 
         return DB::transaction(function () use ($request, $cartItem) {
-
-            /* ===============================
-             * 1. VALIDASI VARIANT
-             * =============================== */
             $variant = ProductVariant::where('id', $request->product_variant_id)
                 ->where('product_id', $cartItem->itemable_id)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($variant?->stock < $cartItem->quantity) {
+            if ($variant->stock < $cartItem->quantity) {
                 return response()->json([
                     'message' => 'Stok varian tidak mencukupi'
                 ], 422);
             }
 
-            /* ===============================
-             * 2. NORMALISASI ADDONS
-             * =============================== */
             $addonSet = collect($request->addons ?? [])
                 ->map(fn($a) => [
                     'addon_group_id' => (int) $a['addon_group_id'],
@@ -502,103 +506,76 @@ class CartController extends Controller
                 ->sortBy(fn($a) => $a['addon_group_id'] . '-' . $a['addon_id'])
                 ->values();
 
-            /* ===============================
-             * 3. CEK DUPLIKAT ITEM
-             * =============================== */
             $duplicateItem = $cartItem->cart->items()
                 ->where('id', '!=', $cartItem->id)
-                ->where('itemable_id', $cartItem->itemable_id)
-                ->where('itemable_type', $cartItem->itemable_type)
-                ->where('product_variant_id', $variant?->id)
+                ->where('product_variant_id', $variant->id)
                 ->with('addons')
                 ->get()
-                ->first(function ($item) use ($addonSet) {
-                    $existing = $item->addons
+                ->first(
+                    fn($item) =>
+                    $item->addons
                         ->map(fn($a) => [
                             'addon_group_id' => (int) $a->addon_group_id,
                             'addon_id' => (int) $a->addon_id,
                         ])
                         ->sortBy(fn($a) => $a['addon_group_id'] . '-' . $a['addon_id'])
-                        ->values();
+                        ->values()
+                        ->toJson() === $addonSet->toJson()
+                );
 
-                    return $existing->toJson() === $addonSet->toJson();
-                });
-
-            /* ===============================
-             * 4. JIKA DUPLIKAT → MERGE
-             * =============================== */
             if ($duplicateItem) {
                 $duplicateItem->increment('quantity', $cartItem->quantity);
-
-                // hapus item lama
                 $cartItem->addons()->delete();
                 $cartItem->delete();
 
                 return response()->json([
-                    'message' => 'Item digabung dengan item yang sudah ada',
+                    'message' => 'Item digabung',
                     'cart_item_id' => $duplicateItem->id,
                 ]);
             }
 
-            /* ===============================
-             * 5. UPDATE VARIANT
-             * =============================== */
-            $variantLabel = $variant?->optionValues
-                ->map(fn($ov) => $ov->option->option_name . ': ' . $ov->option_value)
-                ->implode(', ');
-
-
             $cartItem->update([
-                'product_variant_id' => $variant?->id,
-                'product_variant_name_snapshot' => $variantLabel,
-                'price_snapshot' => (int) $variant?->price,
+                'product_variant_id' => $variant->id,
+                'price_snapshot' => (int) $variant->price,
             ]);
 
-            /* ===============================
-             * 6. UPDATE ADDONS
-             * =============================== */
             $cartItem->addons()->delete();
 
             if ($addonSet->isNotEmpty()) {
-                $addonData = $addonSet->map(function ($a) {
-                    $option = AddonGroupOption::where('addon_group_id', $a['addon_group_id'])
-                        ->where('addon_id', $a['addon_id'])
-                        ->firstOrFail();
-
-                    return [
-                        'addon_group_id' => $a['addon_group_id'],
-                        'addon_id' => $a['addon_id'],
-                        'addon_price_snapshot' => (int) $option->addon_price_snapshot,
-                    ];
-                });
+                $addonData = $addonSet->map(fn($a) => [
+                    'addon_group_id' => $a['addon_group_id'],
+                    'addon_id' => $a['addon_id'],
+                    'addon_price_snapshot' =>
+                        AddonGroupOption::where($a)->value('addon_price_snapshot'),
+                ]);
 
                 $cartItem->addons()->createMany($addonData->toArray());
             }
 
             return response()->json([
-                'message' => 'Varian & addon berhasil diperbarui',
+                'message' => 'Varian berhasil diperbarui',
                 'cart_item_id' => $cartItem->id,
             ]);
         });
     }
 
-
-    public function clearCart(Request $request, Cart $cart)
+    public function clearCart(int $cartId)
     {
-        if ($cart->user_id !== $request->user()->id) {
-            abort(403);
-        }
+        $cart = Cart::where('id', $cartId)
+            ->where('user_id', Auth::id())
+            ->with('items')
+            ->firstOrFail();
 
-        // Hapus semua item cart
-        $cart->items()->delete();
-
-        // Hapus cart itu sendiri
-        $cart->delete();
+        DB::transaction(function () use ($cart) {
+            $cart->items()->delete();
+            $cart->delete();
+        });
 
         return response()->json([
-            'message' => 'Cart berhasil dikosongkan dan dihapus',
+            'message' => 'Cart berhasil dikosongkan',
         ]);
     }
+
 
 
     public function count()
