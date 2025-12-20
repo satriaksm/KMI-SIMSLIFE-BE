@@ -542,12 +542,22 @@ class CartController extends Controller
             $cartItem->addons()->delete();
 
             if ($addonSet->isNotEmpty()) {
-                $addonData = $addonSet->map(fn($a) => [
-                    'addon_group_id' => $a['addon_group_id'],
-                    'addon_id' => $a['addon_id'],
-                    'addon_price_snapshot' =>
-                        AddonGroupOption::where($a)->value('addon_price_snapshot'),
-                ]);
+                $addonData = $addonSet->map(function ($a) {
+                    $option = AddonGroupOption::with('addon')
+                        ->where('addon_group_id', $a['addon_group_id'])
+                        ->where('addon_id', $a['addon_id'])
+                        ->firstOrFail();
+
+                    return [
+                        // reference
+                        'addon_group_id' => $a['addon_group_id'],
+                        'addon_id' => $a['addon_id'],
+
+                        // SNAPSHOT (WAJIB SAMA)
+                        'addon_name_snapshot' => $option->addon->addon_name,
+                        'addon_price_snapshot' => (int) $option->addon_price, // ⬅️ INI YANG BENAR
+                    ];
+                });
 
                 $cartItem->addons()->createMany($addonData->toArray());
             }
