@@ -7,6 +7,7 @@ use App\Models\Merchant;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
@@ -319,4 +320,144 @@ class MerchantController
             'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
         ]);
     }
+
+    public function showMyMerchant(Request $request, $id)
+    {
+        $user = $request->user();
+
+        $merchant = Merchant::with([
+            'segmentation',
+            'paguyuban',
+            'primaryAddress.province',
+            'primaryAddress.city',
+            'primaryAddress.district',
+            'primaryAddress.village',
+        ])
+        ->where('id', $id)
+        ->where('user_id', $user->id)
+        ->firstOrFail();
+
+        return response()->json([
+            'data' => $merchant,
+        ]);
+    }
+
+    public function updateMyMerchant(Request $request, $merchant)
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:20'],
+            'description' => ['nullable', 'string'],
+
+            // address
+            'province_id' => ['nullable', 'integer'],
+            'city_id' => ['nullable', 'integer'],
+            'district_id' => ['nullable', 'integer'],
+            'village_id' => ['nullable', 'integer'],
+            'address_detail' => ['nullable', 'string'],
+
+            // coordinate
+            'latitude' => ['nullable', 'numeric'],
+            'longitude' => ['nullable', 'numeric'],
+
+            // images
+            'logo' => ['nullable', 'image', 'max:2048'],
+            'cover' => ['nullable', 'image', 'max:4096'],
+
+            // operational hours
+            'operational_hours' => ['nullable', 'string'], // JSON string
+        ]);
+
+        DB::beginTransaction();
+
+        try {
+            /** ===============================
+             * Update merchant basic info
+             * =============================== */
+            $merchant = Merchant::find($merchant);
+            $merchant->update([
+                'name' => $validated['name'],
+                'phone' => $validated['phone'] ?? null,
+                'description' => $validated['description'] ?? null,
+            ]);
+
+            /** ===============================
+             * Address (primary address)
+             * =============================== */
+            $address = $merchant->primaryAddress()->first();
+
+            if (! $address) {
+                $address = new Address([
+                    'label' => 'utama',
+                ]);
+
+                $merchant->primaryAddress()->save($address);
+            }
+
+            $address->update([
+                'province_id' => $validated['province_id'] ?? null,
+                'city_id' => $validated['city_id'] ?? null,
+                'district_id' => $validated['district_id'] ?? null,
+                'village_id' => $validated['village_id'] ?? null,
+                'detail' => $validated['address_detail'] ?? null,
+                'latitude' => $validated['latitude'] ?? null,
+                'longitude' => $validated['longitude'] ?? null,
+            ]);
+
+            /** ===============================
+             * Operational Hours
+             * =============================== */
+            if ($request->filled('operational_hours')) {
+                $merchant->operational_hours = json_decode(
+                    $request->operational_hours,
+                    true
+                );
+                $merchant->save();
+            }
+
+            /** ===============================
+             * Logo Upload
+             * =============================== */
+            if ($request->hasFile('logo')) {
+                if ($merchant->logo_path && Storage::disk('public')->exists($merchant->logo_path)) {
+                    Storage::disk('public')->delete($merchant->logo_path);
+                }
+
+                $path = $request->file('logo')->store('merchants/logos', 'public');
+
+                $merchant->update([
+                    'logo_path' => $path
+                ]);
+            }
+
+            /** ===============================
+             * Cover Upload (paguyuban / profile)
+             * =============================== */
+            if ($request->hasFile('cover')) {
+                $segmentation = $merchant->segmentation()->firstOrCreate([]);
+
+                die($segmentation);
+                if ($segmentation->image_path) {
+                    Storage::delete($segmentation->image_path);
+                }
+
+                $path = $request->file('cover')->store('merchants/covers');
+                $segmentation->update(['image_path' => $path]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Profil UMKM berhasil diperbarui',
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => 'Gagal memperbarui profil',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
 }

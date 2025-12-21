@@ -224,6 +224,12 @@ Route::middleware(['web', 'auth:sanctum', 'verified'])->group(function () {
             Route::post('{slug}/images', [ProductController::class, 'storeImage'])
                 ->where('slug', '^[a-z0-9-]+$');
         });
+
+        // MERCHANTS
+        Route::prefix('merchants')->name('merchants.')->group(function () {
+            Route::get('/{id}/profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
+            Route::post('/{merchant}/update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
+        });
     });
 
     // ADMIN ONLY: merchant approval

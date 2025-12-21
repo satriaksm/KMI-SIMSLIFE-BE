@@ -31,6 +31,7 @@ class Merchant extends Model
 
     protected $casts = [
         'response_at' => 'datetime',
+        'operational_hours' => 'array',
     ];
 
     protected $appends = ['logo_url'];
