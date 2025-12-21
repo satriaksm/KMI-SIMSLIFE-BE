@@ -25,8 +25,10 @@ class Merchant extends Model
         'phone',
         'description',
         'logo_path',
+        'cover_path',
         'status',
         'response_at',
+        'operational_hours',
     ];
 
     protected $casts = [

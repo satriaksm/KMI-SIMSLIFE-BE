@@ -360,12 +360,17 @@ class MerchantController
             'latitude' => ['nullable', 'numeric'],
             'longitude' => ['nullable', 'numeric'],
 
-            // images
-            'logo' => ['nullable', 'image', 'max:2048'],
-            'cover' => ['nullable', 'image', 'max:4096'],
+            // images - more permissive validation
+            'logo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,gif,webp', 'max:2048'],
+            'cover' => ['nullable', 'file', 'mimes:jpg,jpeg,png,gif,webp', 'max:4096'],
 
             // operational hours
             'operational_hours' => ['nullable', 'string'], // JSON string
+        ], [
+            'logo.mimes' => 'Logo harus berupa file gambar (jpg, jpeg, png, gif, webp)',
+            'logo.max' => 'Ukuran logo maksimal 2MB',
+            'cover.mimes' => 'Cover harus berupa file gambar (jpg, jpeg, png, gif, webp)',
+            'cover.max' => 'Ukuran cover maksimal 4MB',
         ]);
 
         DB::beginTransaction();
@@ -431,18 +436,16 @@ class MerchantController
             }
 
             /** ===============================
-             * Cover Upload (paguyuban / profile)
+             * Cover Upload (saved to merchant directly)
              * =============================== */
             if ($request->hasFile('cover')) {
-                $segmentation = $merchant->segmentation()->firstOrCreate([]);
-
-                die($segmentation);
-                if ($segmentation->image_path) {
-                    Storage::delete($segmentation->image_path);
+                // Delete old cover if exists
+                if ($merchant->cover_path && Storage::disk('public')->exists($merchant->cover_path)) {
+                    Storage::disk('public')->delete($merchant->cover_path);
                 }
 
-                $path = $request->file('cover')->store('merchants/covers');
-                $segmentation->update(['image_path' => $path]);
+                $path = $request->file('cover')->store('merchants/covers', 'public');
+                $merchant->update(['cover_path' => $path]);
             }
 
             DB::commit();
