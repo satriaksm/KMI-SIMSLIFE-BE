@@ -19,7 +19,6 @@ class Product extends Model
         'slug',
         'description',
         'status',
-        // ✅ allow min_purchase for mass assignment
         'min_purchase',
     ];
 
@@ -83,4 +82,10 @@ class Product extends Model
     {
         return $query->where('status', 'archived');
     }
+
+    public function cartItems()
+    {
+        return $this->morphMany(CartItem::class, 'itemable');
+    }
+
 }
