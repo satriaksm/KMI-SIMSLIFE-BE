@@ -1,3 +1,6 @@
+use App\Http\Controllers\PublicImageController;
+// Serve image by storage path (for legacy/quick fix)
+Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->where('path', '.*');
 <?php
 
 use Illuminate\Support\Facades\Route;
@@ -27,12 +30,6 @@ use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\ChatController;
 
-// ============================================================
-// CSRF COOKIE ENDPOINT (REQUIRED FOR SPA TOKEN-BASED AUTH)
-// ============================================================
-Route::get('/sanctum/csrf-cookie', function () {
-    return response()->json(['message' => 'CSRF cookie set']);
-})->middleware(['web'])->name('csrf.cookie');
 
 // ============================================================
 // HEALTH CHECK
@@ -44,9 +41,6 @@ Route::get('/', fn () => response()->json(['status' => 'API is running']));
 // requests; if that route is missing in API context it can throw a
 // RouteNotFoundException and produce a 500. Return a JSON 401 to keep API
 // clients happy without touching middleware logic.
-Route::get('login', function () {
-    return response()->json(['message' => 'Unauthenticated.'], 401);
-})->name('login');
 
 // ============================================================
 // PUBLIC ROUTES (NO AUTH REQUIRED)

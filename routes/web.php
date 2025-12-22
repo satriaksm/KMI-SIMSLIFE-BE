@@ -16,3 +16,5 @@ Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanc
 
 // ✅ Tambahkan route untuk mendapatkan data user yang sedang login
 Route::get('/me', [AuthController::class, 'me'])->middleware('auth:sanctum');
+
+Route::get('/public/jasas', [JasaController::class, 'index']);
