@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Request;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
-
+use App\Http\Controllers\PublicImageController;
 // Controllers baru
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\OrderController;
@@ -30,12 +30,12 @@ use App\Http\Controllers\ProductOptionValueImageController;
 // ============================================================
 Route::get('/', fn() => response()->json(['status' => 'API is running']));
 
-
+Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->where('path', '.*');
 // ============================================================
 // PUBLIC ROUTES (No Auth Required)
 // ============================================================
 Route::prefix('public')->name('public.')->group(function () {
-
+Route::get('/jasas', [JasaController::class, 'index']);
     // Public Products
     Route::prefix('products')->name('products.')->group(function () {
         Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
