@@ -23,6 +23,13 @@ use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\Product\ProductController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
+use App\Http\Controllers\EventController;
+use App\Http\Controllers\VoucherController;
+use App\Http\Controllers\PaguyubanController;
+use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\AdminUserController;
+use App\Http\Controllers\Admin\AdminMerchantController;
+use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\ProductOptionValueImageController;
 
 // ============================================================
@@ -44,7 +51,10 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
         Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
 
-        // ✅ Public show by slug (only published)
+        // Filter by category
+        Route::get('/category/{categorySlug}', [ProductController::class, 'publicByCategory'])->name('by-category');
+
+        // Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
             ->where('slug', '^[a-z0-9-]+$')
             ->name('show');
@@ -55,7 +65,7 @@ Route::prefix('public')->name('public.')->group(function () {
             ->name('variant');
     });
 
-    // ✅ NEW: Public Merchants
+    // Public Merchants
     Route::prefix('merchants')->name('merchants.')->group(function () {
         // List merchants (with pagination & filters)
         Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
@@ -78,10 +88,9 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
         Route::get('/search', [CategoryController::class, 'searchCategories']);
     });
-
 });
 
-// ✅ Public Community Posts (tanpa auth)
+// Public Community Posts (tanpa auth)
 Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
     Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
@@ -92,7 +101,7 @@ Route::prefix('community')->name('community.')->group(function () {
 
 
 // ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
+// PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
 // ============================================================
 Route::get('images/{image}', [ImageController::class, 'show'])
     ->name('images.show');
@@ -128,19 +137,29 @@ Route::prefix('orders')->group(function () {
 // AUTH ROUTES
 // ============================================================
 Route::prefix('auth')->group(function () {
-    // Public auth endpoints
-    Route::post('register', [AuthController::class, 'register'])->name('register');
-    Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])->name('forgot-password');
-    Route::post('reset-password', [PasswordResetController::class, 'reset'])->name('reset-password');
+    // Public auth endpoints with rate limiting for security
+    Route::post('register', [AuthController::class, 'register'])
+        ->middleware('throttle:5,60')
+        ->name('register');
+
+    Route::post('login', [AuthController::class, 'login'])
+        ->middleware('throttle:5,1')
+        ->name('login');
+
+    Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])
+        ->middleware('throttle:3,60')
+        ->name('forgot-password');
+
+    Route::post('reset-password', [PasswordResetController::class, 'reset'])
+        ->middleware('throttle:5,60')
+        ->name('reset-password');
 
     // Email verification
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
         ->middleware(['signed', 'throttle:6,1'])
         ->name('api.verification.verify');
 
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['auth:sanctum'])->group(function () {
+    Route::middleware(['web', 'auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
             ->middleware('throttle:6,1')
@@ -167,20 +186,12 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     Route::prefix('cart')->group(function () {
 
-        // 🛒 Ambil semua cart user (grouped by merchant)
         Route::get('/', [CartController::class, 'index']);
         Route::get('/count', [CartController::class, 'count']);
-        // ➕ Add item ke cart
         Route::post('/items', [CartController::class, 'addToCart']);
-
-        // 🔄 Update quantity item
         Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
         Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
-
-        // ❌ Hapus item dari cart
         Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
-
-        // 🧹 Clear cart per merchant
         Route::delete('/{cart}', [CartController::class, 'clearCart']);
     });
 
@@ -203,12 +214,8 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             Route::post('/bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
             Route::post('/bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
 
-
-            // ✅ Move export routes ABOVE dynamic {slug}
             Route::get('/export/excel', [ProductController::class, 'exportExcel']);
             Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
-
-            // ✅ Slug routes with constraints to avoid matching "export"
             Route::get('{slug}', [ProductController::class, 'show'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('show');
@@ -225,7 +232,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('destroy');
 
-            // ✅ Endpoint khusus status pakai slug
             Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('update-status');
@@ -233,7 +239,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             // Variant combination counter
             Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
                 ->where('slug', '^[a-z0-9-]+$');
-
         });
     });
 
@@ -243,7 +248,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
     });
 
-    // ✅ PROTECTED Community Actions (require auth)
+    // PROTECTED Community Actions (require auth)
     Route::prefix('community')->group(function () {
 
         // My Posts (auth required)
@@ -270,7 +275,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     });
 });
 
-// ✅ Public Community Posts (tanpa auth)
+// Public Community Posts (tanpa auth)
 Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
     Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
@@ -278,10 +283,10 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
-
+Route::middleware('web')->group(function () {});
 
 // ============================================================
-// 🆕 PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
+// PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
 // ============================================================
 
 // ---------- JASA ----------
@@ -322,10 +327,7 @@ Route::prefix('auth')->group(function () {
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
         ->middleware(['signed', 'throttle:6,1'])
         ->name('api.verification.verify');
-
-    // Protected auth endpoints (require session + sanctum)
-    // IMPORTANT: add 'web' so Sanctum can read session cookies
-    Route::middleware(['auth:sanctum'])->group(function () {
+    Route::middleware(['web', 'auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
             ->middleware('throttle:6,1')
@@ -364,11 +366,9 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             Route::get('/', [ProductController::class, 'index'])->name('index');
             Route::post('/', [ProductController::class, 'store'])->name('store');
 
-            // ✅ Move export routes ABOVE dynamic {slug}
             Route::get('/export/excel', [ProductController::class, 'exportExcel']);
             Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
 
-            // ✅ Slug routes with constraints to avoid matching "export"
             Route::get('{slug}', [ProductController::class, 'show'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('show');
@@ -385,7 +385,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('destroy');
 
-            // ✅ Endpoint khusus status pakai slug
             Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
                 ->where('slug', '^[a-z0-9-]+$')
                 ->name('update-status');
@@ -400,13 +399,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         });
     });
 
-    // ADMIN ONLY: merchant approval
-    Route::middleware('role:admin')->prefix('merchants')->group(function () {
-        Route::post('{merchant}/approve', [MerchantController::class, 'approve']);
-        Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
-    });
-
-    // ✅ PROTECTED Community Actions (require auth)
     Route::prefix('community')->group(function () {
 
         // My Posts (auth required)
@@ -434,3 +426,116 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 });
 
 
+
+// ============================================================
+// ADMIN ROUTES (Protected)
+// ============================================================
+Route::middleware(['web', 'auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
+
+    // ===== DASHBOARD STATISTICS =====
+    Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
+    Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']);
+
+    // ===== DASHBOARD USER MANAGEMENT (NEW) =====
+    Route::get('/dashboard', [AdminUserController::class, 'dashboard'])->name('dashboard');
+
+    // ===== USER MANAGEMENT =====
+    Route::prefix('users')->name('users.')->group(function () {
+        Route::get('/', [AdminUserController::class, 'index'])->name('index');
+        Route::post('/', [AdminUserController::class, 'store'])->name('store');
+        Route::get('/roles', [AdminUserController::class, 'getRoles'])->name('roles');
+        Route::get('/{id}/login-trend', [AdminUserController::class, 'loginTrend'])->name('login-trend');
+        Route::get('/overview-stats', [AdminUserController::class, 'overviewStats'])->name('overview-stats');
+        Route::get('/{id}', [AdminUserController::class, 'show'])->name('show');
+        Route::put('/{id}', [AdminUserController::class, 'update'])->name('update');
+        Route::delete('/{id}', [AdminUserController::class, 'destroy'])->name('destroy');
+        Route::post('/bulk-status', [AdminUserController::class, 'bulkUpdateStatus'])->name('bulk-status');
+
+        // ===== USER ACTIONS (NEW) =====
+        Route::post('/{id}/warn', [AdminUserController::class, 'warn'])->name('warn');
+        Route::post('/{id}/suspend', [AdminUserController::class, 'suspend'])->name('suspend');
+        Route::post('/{id}/unsuspend', [AdminUserController::class, 'unsuspend'])->name('unsuspend');
+        Route::patch('/{id}/status', [AdminUserController::class, 'changeStatus'])->name('change-status');
+        Route::post('/{id}/notify', [AdminUserController::class, 'notify'])->name('notify');
+
+        // Merchant Approval (nested under users)
+        Route::prefix('merchants')->name('merchants.')->group(function () {
+            Route::get('/{merchantId}', [AdminUserController::class, 'showMerchant'])->name('show');
+            Route::patch('/{merchantId}/approve', [AdminUserController::class, 'approveMerchant'])->name('approve');
+            Route::patch('/{merchantId}/reject', [AdminUserController::class, 'rejectMerchant'])->name('reject');
+        });
+    });
+
+    // ===== MERCHANT MANAGEMENT =====
+    Route::prefix('merchants')->name('merchants.')->group(function () {
+        Route::get('/', [AdminMerchantController::class, 'index'])->name('index');
+        Route::post('/', [AdminMerchantController::class, 'store'])->name('store');
+        Route::get('/{id}', [AdminMerchantController::class, 'show'])->name('show');
+        Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
+        Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
+        Route::patch('/{id}/toggle-status', [AdminMerchantController::class, 'toggleStatus'])->name('toggle-status');
+        Route::get('/{id}/statistics', [AdminMerchantController::class, 'statistics'])->name('statistics');
+    });
+
+    // ===== PAGUYUBAN MANAGEMENT =====
+    Route::prefix('paguyubans')->name('paguyubans.')->group(function () {
+        Route::get('/', [PaguyubanController::class, 'index'])->name('index');
+        Route::post('/', [PaguyubanController::class, 'store'])->name('store');
+        Route::get('/{id}', [PaguyubanController::class, 'show'])->name('show');
+        Route::put('/{id}', [PaguyubanController::class, 'update'])->name('update');
+        Route::delete('/{id}', [PaguyubanController::class, 'destroy'])->name('destroy');
+        Route::patch('/{id}/toggle-status', [PaguyubanController::class, 'toggleStatus'])->name('toggle-status');
+    });
+
+    // ===== CATEGORY MANAGEMENT =====
+    Route::prefix('categories')->name('categories.')->group(function () {
+        Route::get('/', [CategoryController::class, 'adminIndex'])->name('index');
+        Route::post('/', [CategoryController::class, 'store'])->name('store');
+        Route::get('/{id}', [CategoryController::class, 'show'])->name('show');
+        Route::put('/{id}', [CategoryController::class, 'update'])->name('update');
+        Route::delete('/{id}', [CategoryController::class, 'destroy'])->name('destroy');
+    });
+
+    // ===== EVENT MANAGEMENT =====
+    Route::prefix('events')->name('events.')->group(function () {
+        Route::get('/', [EventController::class, 'adminIndex'])->name('index');
+        Route::post('/', [EventController::class, 'store'])->name('store');
+        Route::get('/{id}', [EventController::class, 'adminShow'])->name('show');
+        Route::put('/{id}', [EventController::class, 'update'])->name('update');
+        Route::delete('/{id}', [EventController::class, 'destroy'])->name('destroy');
+        Route::post('/{event}/invite-merchants', [EventController::class, 'inviteMerchants'])->name('invite-merchants');
+    });
+
+    // ===== VOUCHER MANAGEMENT =====
+    Route::prefix('vouchers')->name('vouchers.')->group(function () {
+        Route::get('/', [VoucherController::class, 'adminIndex'])->name('index');
+        Route::get('/{id}', [VoucherController::class, 'adminShow'])->name('show');
+        Route::delete('/{id}', [VoucherController::class, 'destroy'])->name('destroy');
+    });
+
+    // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
+    Route::prefix('reports')->name('reports.')->group(function () {
+        Route::get('/', [ContentReportController::class, 'index'])->name('index');
+        Route::get('/{id}', [ContentReportController::class, 'show'])->name('show');
+        Route::put('/{id}', [ContentReportController::class, 'update'])->name('update');
+        Route::patch('/{id}/review', [ContentReportController::class, 'review'])->name('review');
+        Route::delete('/{id}', [ContentReportController::class, 'destroy'])->name('destroy');
+    });
+
+    // Report Reasons
+    Route::get('/report-reasons', [ContentReportController::class, 'reasons'])->name('report-reasons');
+
+    // ===== COMMUNITY MODERATION =====
+    Route::prefix('community')->name('community.')->group(function () {
+        Route::get('/posts', [CommunityPostController::class, 'adminIndex'])->name('posts.index');
+        Route::delete('/posts/{id}', [CommunityPostController::class, 'adminDestroy'])->name('posts.destroy');
+        Route::get('/comments', [PostCommentController::class, 'adminIndex'])->name('comments.index');
+        Route::delete('/comments/{id}', [PostCommentController::class, 'adminDestroy'])->name('comments.destroy');
+    });
+
+    // ===== PRODUCT MODERATION =====
+    Route::prefix('products')->name('products.')->group(function () {
+        Route::get('/', [ProductController::class, 'adminIndex'])->name('index');
+        Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
+    });
+});

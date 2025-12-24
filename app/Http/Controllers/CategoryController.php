@@ -161,4 +161,38 @@ class CategoryController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get products by category slug
+     */
+    public function getProductsByCategory(Request $request, string $slug): JsonResponse
+    {
+        try {
+            $category = Category::where('slug', $slug)->firstOrFail();
+
+            $products = $category->products()
+                ->where('status', 'published')
+                ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
+                ->with(['merchant:id,name,slug', 'coverImage', 'variants'])
+                ->paginate($request->input('per_page', 20));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Products retrieved successfully',
+                'category' => [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'slug' => $category->slug,
+                    'parent' => $category->parent,
+                ],
+                'data' => $products,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve products',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
 }

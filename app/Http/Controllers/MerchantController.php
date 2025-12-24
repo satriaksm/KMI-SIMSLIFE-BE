@@ -2,15 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use Carbon\Carbon;
 use App\Models\Merchant;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
-class MerchantController
+class MerchantController extends Controller
 {
     /**
      * ✅ NEW: Public endpoint untuk list merchants
@@ -64,7 +63,7 @@ class MerchantController
     // }
 
     /**
-     * ✅ NEW: Public endpoint untuk random merchants
+     * Public endpoint untuk random merchants
      * Khusus untuk homepage/recommendation
      */
     public function publicRandom(Request $request)
@@ -75,7 +74,6 @@ class MerchantController
         try {
             $query = Merchant::query()
                 ->where('status', 'approved')
-                // ✅ Count only published products
                 ->withCount([
                     'products' => function ($query) {
                         $query->where('status', 'published');
@@ -91,7 +89,6 @@ class MerchantController
                 ->limit($limit)
                 ->get();
 
-            // ✅ Manual load relations untuk avoid nested eager loading issues
             $merchants->load([
                 'segmentation',
                 'primaryAddress.province',
@@ -115,7 +112,7 @@ class MerchantController
     }
 
     /**
-     * ✅ NEW: Public endpoint untuk show single merchant
+     * Public endpoint untuk show single merchant
      */
     public function publicShow(Request $request, $slugOrId)
     {
@@ -131,7 +128,7 @@ class MerchantController
             ->where('status', 'approved')
             ->where(function ($q) use ($slugOrId) {
                 $q->where('id', $slugOrId)
-                    ->orWhere('slug', $slugOrId); // Jika Anda punya kolom slug
+                    ->orWhere('slug', $slugOrId);
             })
             ->withCount('products')
             ->firstOrFail();
@@ -146,15 +143,13 @@ class MerchantController
     {
         $user = $request->user();
 
-        // Wajib punya role "customer"
-        $hasCustomerRole = $user->roles()->whereRaw('LOWER(name) = ?', ['customer'])->exists();
-        if (!$hasCustomerRole) {
+        // Wajib punya role "customer" - Using hasRole helper for safety
+        if (!$user->hasRole('customer')) {
             return response()->json([
                 'message' => 'Akses ditolak. Hanya pengguna dengan role customer yang dapat mendaftar UMKM.',
             ], 403);
         }
 
-        // Optional: cegah multi-pendaftaran saat masih pending/approved
         $already = Merchant::query()
             ->where('user_id', $user->id)
             ->whereIn('status', ['pending'])
@@ -239,84 +234,6 @@ class MerchantController
         ], 201);
     }
 
-    // Admin menyetujui pendaftaran -> status approved + beri role "umkm-owner"
-    public function approve(Request $request, Merchant $merchant)
-    {
-        // Validasi role admin
-        $admin = $request->user();
-        $isAdmin = $admin->roles()->whereRaw('LOWER(name) = ?', ['admin'])->exists();
-        if (!$isAdmin) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
 
-        if ($merchant->status === 'approved') {
-            return response()->json(['message' => 'Merchant sudah disetujui.'], 422);
-        }
-        if ($merchant->status === 'rejected') {
-            return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
-        }
 
-        DB::transaction(function () use ($merchant) {
-            // ✅ Ensure slug exists (safety check)
-            if (empty($merchant->slug)) {
-                $merchant->slug = Merchant::generateUniqueSlug($merchant->name);
-            }
-
-            $merchant->update([
-                'status' => 'approved',
-                'response_at' => Carbon::now(),
-            ]);
-
-            // Beri role "umkm-owner"
-            $owner = $merchant->user;
-            if ($owner) {
-                $roleId = DB::table('roles')->where('name', 'umkm-owner')->value('id');
-                if (!$roleId) {
-                    $roleId = DB::table('roles')->insertGetId([
-                        'name' => 'umkm-owner',
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
-
-                // ✅ Use firstOrCreate untuk avoid duplicate entry
-                DB::table('role_user')->updateOrInsert(
-                    ['user_id' => $owner->id, 'role_id' => $roleId],
-                    ['created_at' => now(), 'updated_at' => now()]
-                );
-            }
-        });
-
-        return response()->json([
-            'message' => 'Merchant disetujui dan slug telah digenerate.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
-    }
-
-    // Admin menolak pendaftaran -> status rejected
-    public function reject(Request $request, Merchant $merchant)
-    {
-        $admin = $request->user();
-        $isAdmin = $admin->roles()->whereRaw('LOWER(name) = ?', ['admin'])->exists();
-        if (!$isAdmin) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
-
-        if ($merchant->status === 'approved') {
-            return response()->json(['message' => 'Merchant sudah disetujui, tidak bisa ditolak.'], 422);
-        }
-        if ($merchant->status === 'rejected') {
-            return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
-        }
-
-        $merchant->update([
-            'status' => 'rejected',
-            'response_at' => Carbon::now(),
-        ]);
-
-        return response()->json([
-            'message' => 'Merchant ditolak.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
-    }
 }

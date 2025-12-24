@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\Segmentation; // pastikan model ada
+use App\Models\Segmentation; 
 
 class SegmentationController
 {

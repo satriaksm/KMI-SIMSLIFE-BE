@@ -8,10 +8,23 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\Log;
+
 
 class Product extends Model
 {
+    use HasFactory;
+
     protected $table = 'products';
+
+    // ✅ Add this to check morphClass
+    public function getMorphClass()
+    {
+        $class = parent::getMorphClass();
+        Log::info('[Product] Morph class: ' . $class);
+        return $class;
+    }
 
     protected $fillable = [
         'merchant_id',
@@ -22,12 +35,14 @@ class Product extends Model
         'min_purchase',
     ];
 
-    // ✅ cast min_purchase to integer and provide a sensible default
+    protected $guarded = [
+        'id',
+    ];
+
     protected $casts = [
         'min_purchase' => 'integer',
     ];
 
-    // optional default attribute so new model instances have a default
     protected $attributes = [
         'min_purchase' => 1,
     ];
@@ -49,7 +64,13 @@ class Product extends Model
 
     public function categories(): MorphToMany
     {
-        return $this->morphToMany(Category::class, 'categorizable')->withTimestamps();
+        return $this->morphToMany(
+            Category::class,
+            'categorizable',
+            'categorizables',
+            'categorizable_id',
+            'category_id'
+        )->withTimestamps();
     }
 
     public function images(): MorphMany
@@ -87,5 +108,4 @@ class Product extends Model
     {
         return $this->morphMany(CartItem::class, 'itemable');
     }
-
 }
