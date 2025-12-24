@@ -4,6 +4,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Http\Middleware\HandleCors;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -25,9 +27,11 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleCors::class,
             \App\Http\Middleware\SecurityHeadersMiddleware::class,
         ]);
-
-        // Apply sanitization to all routes except file uploads
-        $middleware->append(\App\Http\Middleware\SanitizeInputMiddleware::class);
+        $middleware->api(prepend: [
+            EnsureFrontendRequestsAreStateful::class,
+            VerifyCsrfToken::class
+        ]);
+        $middleware->statefulApi();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

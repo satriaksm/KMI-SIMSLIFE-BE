@@ -9,60 +9,70 @@ use Illuminate\Http\Request;
 use App\Models\ProductVariant;
 use App\Models\AddonGroupOption;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Auth;
 
 class CartController extends Controller
 {
+    private function applyImageSrcUrl($image, bool $isPublic)
+    {
+        if (!$image)
+            return null;
+
+        $image->src_url = $isPublic
+            ? route('images.show', ['image' => $image->id])
+            : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+
+        $image->makeHidden([
+            'imageable_id',
+            'imageable_type',
+            'image_path',
+            'created_at',
+            'updated_at',
+        ]);
+
+        return $image;
+    }
+
     public function index()
     {
         $userId = Auth::id();
 
-        // 1. Ambil Cart dengan Eager Loading Super Lengkap
-        // Kita load data "Selected" (Variant/Addon yg dipilih)
-        // DAN data "Master" (Product options/variants/addons lengkap untuk fitur edit)
+        // 1. Ambil Cart (Query tetap sama seperti sebelumnya)
         $carts = Cart::with([
-            'merchant.addresses.district.city.province', // Alamat Merchant Lengkap
-
-            // --- DATA YANG DIPILIH (SELECTED) ---
-            'items.variant.optionValues.option', // Varian yang sedang dipilih (misal: Merah, XL)
+            'merchant.addresses.district.city.province',
             'items.addons.addon',
-            'items.addons.addonGroupOption',             // Addon yang sedang dipilih (misal: Keju)
-
-            // --- DATA MASTER PRODUK (FULL CONTEXT UNTUK EDIT) ---
+            'items.addons.addonGroupOption',
             'items.itemable' => function ($q) {
-                // Ini meniru logic dari ProductController@show
                 $q->with([
-                    'coverImage',
-                    'images' => fn($iq) => $iq->orderBy('display_order'),
-                    'categories',
+                    'coverImage' => fn($ciq) => $ciq->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                    'categories' => fn($cq) => $cq->select('categories.id', 'categories.name'),
                     'options' => function ($oq) {
-                    $oq->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')])
-                        ->select('id', 'product_id', 'option_name', 'uses_image')
-                        ->orderBy('id');
-                },
-                    // Load semua kombinasi stock/harga agar bisa ganti varian di cart
+                        $oq->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')])
+                            ->select('id', 'product_id', 'option_name', 'uses_image')
+                            ->orderBy('id');
+                    },
                     'variants' => function ($vq) {
-                    $vq->with([
-                        'optionValues' => function ($ovq) {
-                            $ovq->select('product_option_values.id', 'product_option_id', 'option_value')
-                                ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                                ->addSelect('product_options.option_name');
-                        }
-                    ])
-                        ->select('id', 'product_id', 'sku', 'price', 'stock')
-                        ->orderBy('price', 'asc');
-                },
-                    // Load semua grup addon agar bisa tambah/kurang addon di cart
+                        $vq->with([
+                            'optionValues' => function ($ovq) {
+                                $ovq->select('product_option_values.id', 'product_option_id', 'option_value')
+                                    ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                                    ->addSelect('product_options.option_name');
+                            }
+                        ])
+                            ->select('id', 'product_id', 'sku', 'price', 'stock')
+                            ->orderBy('price', 'asc');
+                    },
                     'addonGroups' => function ($agq) {
-                    $agq->with([
-                        'options' => function ($aoq) {
-                            $aoq->with('addon:id,addon_name')
-                                ->select('id', 'addon_group_id', 'addon_id', 'addon_price');
-                        }
-                    ])
-                        ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
-                        ->orderBy('id');
-                }
+                        $agq->with([
+                            'options' => function ($aoq) {
+                                $aoq->with('addon:id,addon_name')
+                                    ->select('id', 'addon_group_id', 'addon_id', 'addon_price');
+                            }
+                        ])
+                            ->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
+                            ->orderBy('id');
+                    }
                 ]);
             }
         ])
@@ -70,25 +80,21 @@ class CartController extends Controller
             ->latest()
             ->get();
 
-        // 2. Mapping Data
+
+
+        // 2. Mapping Data & Transformasi
         $cartStores = $carts->map(function ($cart) {
-            // Format Alamat Merchant
+
+            // Format Alamat
             $address = $cart->merchant->addresses->first();
             $fullAddress = null;
             if ($address) {
-                $parts = [];
-                if ($address->detail) {
-                    $parts[] = $address->detail;
-                }
-                if ($address->district?->name) {
-                    $parts[] = $address->district->name;
-                }
-                if ($address->city?->name) {
-                    $parts[] = $address->city->name;
-                }
-                if ($address->province?->name) {
-                    $parts[] = $address->province->name;
-                }
+                $parts = array_filter([
+                    $address->detail,
+                    $address->district?->name,
+                    $address->city?->name,
+                    $address->province?->name
+                ]);
                 $fullAddress = implode(', ', $parts);
             }
 
@@ -99,131 +105,156 @@ class CartController extends Controller
                     'name' => $cart->merchant->name,
                     'phone' => $cart->merchant->phone,
                     'address' => $fullAddress,
-                    'logo' => $cart->merchant->logo_url ?? null, // Asumsi ada accessor/kolom logo
+                    'logo' => $cart->merchant->logo_url ?? null,
                 ],
                 'items' => $cart->items->map(function ($item) {
-                    $product = $item->itemable;
-                    $selectedVariant = $item->variant;
 
-                    $basePrice = $selectedVariant
-                        ? (int) $selectedVariant->price
-                        : (int) $product->price;
+                    $variant = $item->variant;
 
-                    // Gambar Prioritas: Varian > Cover > First Image > Placeholder
-                    $displayImage = null;
-
-                    // 1. Cek gambar spesifik varian (dari option value)
-                    if ($selectedVariant && $selectedVariant->optionValues->isNotEmpty()) {
-                        foreach ($selectedVariant->optionValues as $ov) {
-                            if ($ov->image_path) {
-                                $displayImage = asset('storage/' . $ov->image_path);
-                                break;
-                            }
-                        }
-                    }
-                    // 2. Cek cover image produk
-                    if (!$displayImage && $product->coverImage) {
-                        $displayImage = asset('storage/' . $product->coverImage->image_path);
-                    }
-                    // 3. Fallback gambar pertama
-                    if (!$displayImage && $product->images->isNotEmpty()) {
-                        $displayImage = asset('storage/' . $product->images->first()->image_path);
-                    }
-                    // 4. Placeholder
-                    if (!$displayImage) {
-                        $displayImage = asset('images/placeholder-product.png');
-                    }
-
-                    $variantString = $selectedVariant
-                        ? $selectedVariant->optionValues->pluck('option_value')->implode(', ')
-                        : null;
-                    // --- LABEL ADDON (Untuk Tampilan Ringkas) ---
-                    $addons = $item->addons->map(function ($cartAddon) use ($product) {
-
-                        $price = 0;
-
-                        foreach ($product->addonGroups as $group) {
-                            if ($group->id !== $cartAddon->addon_group_id) {
-                                continue;
-                            }
-
-                            $option = $group->options
-                                ->firstWhere('addon_id', $cartAddon->addon_id);
-
-                            if ($option) {
-                                $price = (int) $option->addon_price;
-                                break;
-                            }
-                        }
-
+                    // =========================
+                    // SNAPSHOT (STABIL)
+                    // =========================
+                    $snapshotAddons = $item->addons->map(function ($a) {
                         return [
-                            'label' => $cartAddon->addon->addon_name,
-                            'price' => $price,
+                            'label' => $a->addon->addon_name,
+                            'price' => (int) $a->addon_price_snapshot,
                         ];
-                    })->values();
+                    });
 
-                    $addonTotal = $addons->sum('price');
+                    $snapshotUnitPrice = (int) $item->price_snapshot;
+
+                    // =========================
+                    // LIVE DATA
+                    // =========================
+                    $liveUnitPrice = $variant ? (int) $variant?->price : $snapshotUnitPrice;
+                    $liveStock = $variant ? (int) $variant?->stock : 0;
+
+                    $isPublic = in_array($item->itemable->status, ['published', 'archived']);
+
+                    /* =========================
+                     * SNAPSHOT IMAGE
+                     * ========================= */
+                    $image = $this->applyImageSrcUrl($item->imageSnapshot, $isPublic);
+
+                    /* =========================
+                     * PRODUCT DETAIL IMAGES
+                     * ========================= */
+                    $product = $item->itemable;
+
+                    // cover image
+                    if ($product->coverImage) {
+                        $this->applyImageSrcUrl($product->coverImage, $isPublic);
+                    }
+
+                    // product images (jika dipakai di modal edit)
+                    if ($product->images) {
+                        $product->images->transform(
+                            fn($img) =>
+                            $this->applyImageSrcUrl($img, $isPublic)
+                        );
+                    }
+
+                    // option values images
+                    if ($product->options) {
+                        $product->options->transform(function ($option) use ($isPublic) {
+                            if ($option->values) {
+                                $option->values->transform(function ($value) use ($isPublic) {
+                                    if (!empty($value->image_path)) {
+                                        $value->src_url = $isPublic
+                                            ? route('images.product-option-value.show', ['optionValue' => $value->id])
+                                            : URL::signedRoute(
+                                                'images.product-option-value.show',
+                                                ['optionValue' => $value->id],
+                                                now()->addMinutes(60)
+                                            );
+                                    } else {
+                                        $value->src_url = null;
+                                    }
+
+                                    $value->makeHidden(['image_path', 'created_at', 'updated_at']);
+                                    return $value;
+                                });
+                            }
+                            return $option;
+                        });
+                    }
+
+                    $currentStock = $variant?->stock ?? 0;
+                    $cartQty = $item->quantity;
+
+                    $isOverStock = $cartQty > $currentStock;
+
 
 
                     return [
-                        // Identitas Item di Cart
                         'cart_item_id' => $item->id,
                         'quantity' => $item->quantity,
-                        // Data Tampilan (Snapshot)
-                        'display' => [
-                            'name' => $product->name,
-                            'slug' => $product->slug,
-                            'image' => $displayImage,
-                            'unit_price' => (int) $basePrice, // Harga dasar sebelum addon
-                            'variant_label' => $variantString, // String "Merah, XL"
-                            'addons' => $addons,
-                            'addon_total_price' => (int) $addonTotal,
-                            'max_stock' => $selectedVariant
-                                ? (int) $selectedVariant->stock
-                                : (int) $product->stock,
+
+                        // 🔒 SNAPSHOT
+                        'snapshot' => [
+                            'name' => $item->itemable_name_snapshot,
+                            'variant_label' => $item->product_variant_name_snapshot,
+                            'image' => $image,
+                            'unit_price' => $snapshotUnitPrice,
+                            'addons' => $snapshotAddons,
+                            'addon_total_price' => (int) $snapshotAddons->sum('price'),
                         ],
 
-                        // Data Seleksi (ID untuk Logic Frontend)
+                        // 🔥 LIVE
+                        'live' => [
+                            'unit_price' => $liveUnitPrice,
+                            'max_stock' => $liveStock,
+                            'is_available' => $variant !== null && $liveStock > 0,
+                        ],
+
+                        // 🚨 PERUBAHAN
+                        'changes' => [
+                            'price_changed' => $liveUnitPrice !== $snapshotUnitPrice,
+                            'is_over_stock' => $isOverStock,
+                        ],
+
+                        // 🔧 UNTUK EDIT
                         'selected_configuration' => [
-                            'product_id' => $product->id,
-                            'variant_id' => $selectedVariant?->id, // ID Kombinasi SKU saat ini
+                            'product_id' => $item->itemable_id,
+                            'variant_id' => $variant?->id,
                             'addon_ids' => $item->addons->map(fn($a) => [
                                 'addon_group_id' => $a->addon_group_id,
                                 'addon_id' => $a->addon_id,
                             ])->values(),
                         ],
 
-                        // --- DATA LENGKAP PRODUK (FULL CONTEXT) ---
-                        // Ini dikirim agar Frontend bisa membuka modal edit tanpa fetch lagi
-                        'product_details' => $product,
+                        // 📦 UNTUK MODAL EDIT
+                        'product_details' => $item->itemable,
                     ];
-                }),
+                })->values(),
+
+
             ];
-        })->values(); // Reset keys agar jadi array JSON standar
+        });
 
         return response()->json([
             'success' => true,
             'data' => $cartStores
         ]);
     }
-    public function updateQuantity(Request $request, CartItem $cartItem)
+    public function updateQuantity(Request $request, $id)
     {
-        // 🔒 pastikan item milik user
-        if ($cartItem->cart->user_id !== Auth::id()) {
-            abort(403, 'Unauthorized');
-        }
+        $cartItem = CartItem::where('id', $id)
+            ->whereHas(
+                'cart',
+                fn($q) =>
+                $q->where('user_id', Auth::id())
+            )
+            ->with(['variant', 'itemable'])
+            ->firstOrFail();
 
         $request->validate([
             'quantity' => 'required|integer|min:1',
         ]);
 
-        $variant = $cartItem->variant;
-        $product = $cartItem->itemable;
-
-        // 🧮 cek stock (LIVE)
-        $availableStock = $variant
-            ? $variant->stock
-            : ($product->stock ?? 0);
+        $availableStock = $cartItem->variant
+            ? $cartItem->variant->stock
+            : ($cartItem->itemable->stock ?? 0);
 
         if ($request->quantity > $availableStock) {
             return response()->json([
@@ -244,19 +275,23 @@ class CartController extends Controller
         ]);
     }
 
-    public function removeItem(CartItem $cartItem)
+
+    public function removeItem(int $id)
     {
-        // 🔒 pastikan item milik user
-        abort_if($cartItem->cart->user_id !== Auth::id(), 403, 'Unauthorized');
+        $cartItem = CartItem::where('id', $id)
+            ->whereHas(
+                'cart',
+                fn($q) =>
+                $q->where('user_id', Auth::id())
+            )
+            ->with('cart')
+            ->firstOrFail();
 
         return DB::transaction(function () use ($cartItem) {
-
             $cart = $cartItem->cart;
 
-            // hapus cart item
             $cartItem->delete();
 
-            // 🔥 jika ini item terakhir → hapus cart
             if ($cart->items()->count() === 0) {
                 $cart->delete();
 
@@ -274,28 +309,37 @@ class CartController extends Controller
         });
     }
 
+
     public function addToCart(Request $request)
     {
         $request->validate([
             'product_id' => 'required|exists:products,id',
             'variant_id' => 'nullable|exists:product_variants,id',
             'quantity' => 'required|integer|min:1',
+
             'addons' => 'nullable|array',
             'addons.*.group_id' => 'required|exists:addon_groups,id',
             'addons.*.addon_id' => 'required|exists:addons,id',
         ]);
 
         return DB::transaction(function () use ($request) {
+
+            /** ===============================
+             * 1. AMBIL PRODUCT (LIVE)
+             * =============================== */
             $product = Product::findOrFail($request->product_id);
 
-            // 1. Ambil / Buat Cart
+            /** ===============================
+             * 2. CART PER MERCHANT
+             * =============================== */
             $cart = Cart::firstOrCreate([
                 'user_id' => Auth::id(),
                 'merchant_id' => $product->merchant_id,
             ]);
 
-            // 2. Siapkan Data Addon (Hanya ID)
-            // Sort agar urutan array [1, 2] dianggap sama dengan [2, 1] saat cek duplikat
+            /** ===============================
+             * 3. NORMALISASI ADDONS (UNTUK DUPLIKASI)
+             * =============================== */
             $addonSet = collect($request->addons ?? [])
                 ->map(fn($a) => [
                     'addon_group_id' => (int) $a['group_id'],
@@ -304,15 +348,15 @@ class CartController extends Controller
                 ->sortBy(fn($a) => $a['addon_group_id'] . '-' . $a['addon_id'])
                 ->values();
 
-            // 3. Cek Duplikat Item (Item sama + Varian sama + Addons persis sama)
+            /** ===============================
+             * 4. CEK DUPLIKAT CART ITEM
+             * =============================== */
             $existingItem = $cart->items()
                 ->where('itemable_id', $product->id)
                 ->where('itemable_type', Product::class)
-                ->where('product_variant_id', $request->variant_id) // Cek Varian
-                ->with('addons')
+                ->where('product_variant_id', $request->variant_id)
                 ->get()
                 ->first(function ($item) use ($addonSet) {
-                    // Bandingkan addons yang ada di DB dengan request baru
                     $existingAddonSet = $item->addons
                         ->map(fn($a) => [
                             'addon_group_id' => (int) $a->addon_group_id,
@@ -324,37 +368,107 @@ class CartController extends Controller
                     return $existingAddonSet->toJson() === $addonSet->toJson();
                 });
 
-            // 4. Jika Duplikat -> Tambah Quantity Saja
+            /** ===============================
+             * 5. AMBIL VARIANT (LIVE → SNAPSHOT)
+             * =============================== */
+            $variant = $request->variant_id
+                ? ProductVariant::findOrFail($request->variant_id)
+                : null;
+
+            $variantLabel = $variant
+                ? $variant->optionValues
+                    ->map(fn($ov) => $ov->option->option_name . ': ' . $ov->option_value)
+                    ->implode(', ')
+                : null;
+            /** ===============================
+             * 5.5 VALIDASI STOCK
+             * =============================== */
+
+            // stok live
+            $availableStock = $variant
+                ? (int) $variant->stock
+                : (int) ($product->stock ?? 0);
+
+            // qty sudah ada di cart (SEMUA ITEM DENGAN VARIANT INI)
+            $currentQtyInCart = $cart->items()
+                ->where('itemable_id', $product->id)
+                ->where('itemable_type', Product::class)
+                ->where('product_variant_id', $variant?->id)
+                ->sum('quantity');
+
+            $requestedQty = (int) $request->quantity;
+            $totalAfterAdd = $currentQtyInCart + $requestedQty;
+
+            if ($totalAfterAdd > $availableStock) {
+                return response()->json([
+                    'message' => 'Stok tidak mencukupi',
+                    'available_stock' => $availableStock,
+                    'current_in_cart' => $currentQtyInCart,
+                    'requested' => $requestedQty,
+                ], 422);
+            }
+
             if ($existingItem) {
-                $existingItem->increment('quantity', $request->quantity);
+                $existingItem->increment('quantity', $requestedQty);
+
                 return response()->json([
                     'message' => 'Cart item quantity updated',
                     'cart_item_id' => $existingItem->id,
                 ]);
             }
 
-            // 5. Jika Baru -> Buat Item & Simpan Addons
-            $item = $cart->items()->create([
+
+            /** ===============================
+             * 6. CREATE CART ITEM (PURE SNAPSHOT)
+             * =============================== */
+            $cartItem = $cart->items()->create([
                 'itemable_id' => $product->id,
                 'itemable_type' => Product::class,
-                'product_variant_id' => $request->variant_id, // Pastikan ini masuk ke DB
+
+                // FK NON-RELASI (REFERENCE ONLY)
+                'product_variant_id' => $variant?->id,
+
+                // SNAPSHOT
+                'itemable_name_snapshot' => $product->name,
+                'product_variant_name_snapshot' => $variantLabel,
+                'price_snapshot' => (int) ($variant?->price ?? $product->price),
+
                 'quantity' => $request->quantity,
             ]);
 
-            // Simpan Addons ke tabel cart_item_addons
+            /** ===============================
+             * 7. SIMPAN ADDON SNAPSHOT
+             * =============================== */
             if ($addonSet->isNotEmpty()) {
-                // createMany akan otomatis mengisi 'cart_item_id'
-                $item->addons()->createMany($addonSet->toArray());
+                $addonData = $addonSet->map(function ($a) {
+
+                    $option = AddonGroupOption::with('addon')
+                        ->where('addon_group_id', $a['addon_group_id'])
+                        ->where('addon_id', $a['addon_id'])
+                        ->firstOrFail();
+
+                    return [
+                        // reference only
+                        'addon_group_id' => $a['addon_group_id'],
+                        'addon_id' => $a['addon_id'],
+
+                        // snapshot
+                        'addon_name_snapshot' => $option->addon->addon_name,
+                        'addon_price_snapshot' => (int) $option->addon_price,
+                    ];
+                });
+
+                $cartItem->addons()->createMany($addonData->toArray());
             }
 
             return response()->json([
                 'message' => 'Added to cart',
-                'cart_item_id' => $item->id,
+                'cart_item_id' => $cartItem->id,
             ]);
         });
     }
 
-    public function updateVariant(Request $request, CartItem $cartItem)
+    public function updateVariant(Request $request, int $cartItemId)
     {
         $request->validate([
             'product_variant_id' => 'required|exists:product_variants,id',
@@ -363,14 +477,16 @@ class CartController extends Controller
             'addons.*.addon_id' => 'required|exists:addons,id',
         ]);
 
-        // 🔐 Security: pastikan cart milik user
-        abort_if($cartItem->cart->user_id !== Auth::id(), 403);
+        $cartItem = CartItem::where('id', $cartItemId)
+            ->whereHas(
+                'cart',
+                fn($q) =>
+                $q->where('user_id', Auth::id())
+            )
+            ->with(['cart', 'addons'])
+            ->firstOrFail();
 
         return DB::transaction(function () use ($request, $cartItem) {
-
-            /* ===============================
-             * 1. VALIDASI VARIANT
-             * =============================== */
             $variant = ProductVariant::where('id', $request->product_variant_id)
                 ->where('product_id', $cartItem->itemable_id)
                 ->lockForUpdate()
@@ -382,9 +498,6 @@ class CartController extends Controller
                 ], 422);
             }
 
-            /* ===============================
-             * 2. NORMALISASI ADDONS
-             * =============================== */
             $addonSet = collect($request->addons ?? [])
                 ->map(fn($a) => [
                     'addon_group_id' => (int) $a['addon_group_id'],
@@ -393,66 +506,56 @@ class CartController extends Controller
                 ->sortBy(fn($a) => $a['addon_group_id'] . '-' . $a['addon_id'])
                 ->values();
 
-            /* ===============================
-             * 3. CEK DUPLIKAT ITEM
-             * =============================== */
             $duplicateItem = $cartItem->cart->items()
                 ->where('id', '!=', $cartItem->id)
-                ->where('itemable_id', $cartItem->itemable_id)
-                ->where('itemable_type', $cartItem->itemable_type)
                 ->where('product_variant_id', $variant->id)
                 ->with('addons')
                 ->get()
-                ->first(function ($item) use ($addonSet) {
-                    $existing = $item->addons
+                ->first(
+                    fn($item) =>
+                    $item->addons
                         ->map(fn($a) => [
                             'addon_group_id' => (int) $a->addon_group_id,
                             'addon_id' => (int) $a->addon_id,
                         ])
                         ->sortBy(fn($a) => $a['addon_group_id'] . '-' . $a['addon_id'])
-                        ->values();
+                        ->values()
+                        ->toJson() === $addonSet->toJson()
+                );
 
-                    return $existing->toJson() === $addonSet->toJson();
-                });
-
-            /* ===============================
-             * 4. JIKA DUPLIKAT → MERGE
-             * =============================== */
             if ($duplicateItem) {
                 $duplicateItem->increment('quantity', $cartItem->quantity);
-
-                // hapus item lama
                 $cartItem->addons()->delete();
                 $cartItem->delete();
 
                 return response()->json([
-                    'message' => 'Item digabung dengan item yang sudah ada',
+                    'message' => 'Item digabung',
                     'cart_item_id' => $duplicateItem->id,
                 ]);
             }
 
-            /* ===============================
-             * 5. UPDATE VARIANT
-             * =============================== */
             $cartItem->update([
                 'product_variant_id' => $variant->id,
+                'price_snapshot' => (int) $variant->price,
             ]);
 
-            /* ===============================
-             * 6. UPDATE ADDONS
-             * =============================== */
             $cartItem->addons()->delete();
 
             if ($addonSet->isNotEmpty()) {
                 $addonData = $addonSet->map(function ($a) {
-                    $option = AddonGroupOption::where('addon_group_id', $a['addon_group_id'])
+                    $option = AddonGroupOption::with('addon')
+                        ->where('addon_group_id', $a['addon_group_id'])
                         ->where('addon_id', $a['addon_id'])
                         ->firstOrFail();
 
                     return [
+                        // reference
                         'addon_group_id' => $a['addon_group_id'],
                         'addon_id' => $a['addon_id'],
-                        'price' => $option->addon_price,
+
+                        // SNAPSHOT (WAJIB SAMA)
+                        'addon_name_snapshot' => $option->addon->addon_name,
+                        'addon_price_snapshot' => (int) $option->addon_price, // ⬅️ INI YANG BENAR
                     ];
                 });
 
@@ -460,11 +563,30 @@ class CartController extends Controller
             }
 
             return response()->json([
-                'message' => 'Varian & addon berhasil diperbarui',
+                'message' => 'Varian berhasil diperbarui',
                 'cart_item_id' => $cartItem->id,
             ]);
         });
     }
+
+    public function clearCart(int $cartId)
+    {
+        $cart = Cart::where('id', $cartId)
+            ->where('user_id', Auth::id())
+            ->with('items')
+            ->firstOrFail();
+
+        DB::transaction(function () use ($cart) {
+            $cart->items()->delete();
+            $cart->delete();
+        });
+
+        return response()->json([
+            'message' => 'Cart berhasil dikosongkan',
+        ]);
+    }
+
+
 
     public function count()
     {
