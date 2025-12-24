@@ -245,4 +245,38 @@ class ContentReportController extends Controller
             return null;
         }
     }
+
+    /**
+     * Assign report to admin
+     */
+    public function assign(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'admin_id' => 'required|exists:users,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $report = ContentReport::findOrFail($id);
+
+        $report->update([
+            'reviewed_by' => $request->admin_id,
+            'status' => 'in_review',
+        ]);
+
+        return response()->json([
+            'message' => 'Report assigned successfully',
+            'data' => $report->fresh(),
+        ]);
+    }
+
+    /**
+     * Resolve report (alias for review)
+     */
+    public function resolve(Request $request, $id)
+    {
+        return $this->review($request, $id);
+    }
 }

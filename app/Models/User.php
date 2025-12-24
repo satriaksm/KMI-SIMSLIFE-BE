@@ -9,6 +9,7 @@ use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Support\Facades\DB;
 
 class User extends Authenticatable implements MustVerifyEmail
 {
@@ -23,6 +24,13 @@ class User extends Authenticatable implements MustVerifyEmail
         'profile_picture_path',
         'nik',
         'status',
+        'computed_status',
+    ];
+
+    protected $guarded = [
+        'id',
+        'email_verified_at',
+        'remember_token',
     ];
 
     protected $hidden = [
@@ -80,5 +88,69 @@ class User extends Authenticatable implements MustVerifyEmail
     public function reviewedMerchants()
     {
         return $this->hasMany(Merchant::class, 'reviewed_by');
+    }
+
+    /**
+     * Activity metric (1-to-1)
+     */
+    public function activityMetric()
+    {
+        return $this->hasOne(UserActivityMetric::class);
+    }
+
+    /**
+     * Activity snapshots (1-to-many)
+     */
+    public function activitySnapshots()
+    {
+        return $this->hasMany(UserActivitySnapshot::class);
+    }
+
+    /**
+     * Alerts related to this user
+     */
+    public function alerts()
+    {
+        return $this->morphMany(Alert::class, 'alertable');
+    }
+
+    /**
+     * Admin actions targeting this user
+     */
+    public function adminActions()
+    {
+        return $this->morphMany(AdminAction::class, 'target');
+    }
+
+    /**
+     * Community posts
+     */
+    public function communityPosts()
+    {
+        return $this->hasMany(CommunityPost::class);
+    }
+
+    /**
+     * Post comments
+     */
+    public function postComments()
+    {
+        return $this->hasMany(PostComment::class);
+    }
+
+    /**
+     * Orders (if exists)
+     * NOTE: Current schema doesn't have user_id in orders table
+     * This is a placeholder for future implementation
+     */
+    public function orders()
+    {
+        // ✅ Check if orders table has user_id column
+        if (DB::getSchemaBuilder()->hasColumn('orders', 'user_id')) {
+            return $this->hasMany(Order::class);
+        }
+
+        // ✅ Return empty relation if column doesn't exist
+        return $this->hasMany(Order::class)->whereRaw('1 = 0'); // Always empty
     }
 }

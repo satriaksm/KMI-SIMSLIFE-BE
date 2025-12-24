@@ -29,6 +29,10 @@ class Merchant extends Model
         'response_at',
     ];
 
+    protected $guarded = [
+        'id',
+    ];
+
     protected $casts = [
         'response_at' => 'datetime',
     ];
@@ -108,6 +112,16 @@ class Merchant extends Model
     public function addons(): HasMany
     {
         return $this->hasMany(Addon::class, 'merchant_id');
+    }
+
+    public function events()
+    {
+        return $this->belongsToMany(Event::class, 'event_merchants', 'merchant_id', 'event_id');
+    }
+
+    public function vouchers()
+    {
+        return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
     // Relasi ke paguyuban

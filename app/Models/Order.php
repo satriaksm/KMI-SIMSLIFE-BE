@@ -26,7 +26,17 @@ class Order extends Model
 
     public function jasa()
     {
-        return $this->belongsTo(Jasa::class);
+        return $this->belongsTo(Jasa::class, 'jasa_id');
+    }
+
+    public function merchant()
+    {
+        return $this->belongsTo(Merchant::class);
+    }
+
+    public function items()
+    {
+        return $this->hasMany(OrderItem::class);
     }
 }
 

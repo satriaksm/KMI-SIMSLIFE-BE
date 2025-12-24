@@ -18,10 +18,15 @@ return new class extends Migration {
             $table->string('profile_picture_path')->nullable();
             $table->string('nik')->unique()->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
+            $table->enum('computed_status', ['active', 'declining', 'watchlist', 'suspended', 'inactive'])->default('active');
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->rememberToken();
             $table->timestamps();
+
+            $table->index('computed_status');
+            $table->index('status');
+            $table->index(['computed_status', 'status']);
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {

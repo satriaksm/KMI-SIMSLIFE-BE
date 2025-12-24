@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Routing\Controller as Controller;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class AuthController extends Controller
 {
@@ -96,6 +97,14 @@ class AuthController extends Controller
         Auth::login($user);
         $request->session()->regenerate();
 
+        // Setelah login sukses dan $user sudah valid:
+        DB::table('user_login_events')->insert([
+            'user_id' => $user->id,
+            'logged_in_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         return response()->json([
             'message' => 'Login berhasil.',
             'user' => $user,
@@ -105,7 +114,7 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = $request->user()->load([
-            'roles:id,name', // ✅ Only select needed columns
+            'roles:id,name', 
             'merchants' => function ($query) {
                 $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
                     ->where('status', 'approved')

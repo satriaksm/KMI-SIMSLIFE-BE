@@ -934,9 +934,9 @@ class ProductController
         foreach ($groups as $groupData) {
             $groupName = trim($groupData['name']);
 
-            // ✅ EXTRA SAFETY: cek group duplikat di product
+            // ✅ EXTRA SAFETY: cek group duplikat di product (case-insensitive)
             $groupExists = $product->addonGroups()
-                ->whereRaw('LOWER(addon_group_name) = ?', [strtolower($groupName)])
+                ->where(DB::raw('LOWER(addon_group_name)'), strtolower($groupName))
                 ->exists();
 
             if ($groupExists) {
@@ -963,7 +963,7 @@ class ProductController
                 if (in_array($optionName, $usedOptionNames)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'add_on_groups' =>
-                            "Nama opsi '{$optionData['name']}' pada grup '{$groupName}' tidak boleh sama.",
+                        "Nama opsi '{$optionData['name']}' pada grup '{$groupName}' tidak boleh sama.",
                     ]);
                 }
 
@@ -1341,7 +1341,6 @@ class ProductController
                 'variants',
                 'addonGroups.options.addon'
             ]));
-
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -1528,7 +1527,7 @@ class ProductController
                 if (isset($optionNameMap[$optKey])) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'add_on_groups' =>
-                            "Nama opsi '{$optionData['name']}' pada grup '{$groupData['name']}' tidak boleh sama.",
+                        "Nama opsi '{$optionData['name']}' pada grup '{$groupData['name']}' tidak boleh sama.",
                     ]);
                 }
 
@@ -1579,8 +1578,8 @@ class ProductController
 
         while (
             Product::where('slug', $slug)
-                ->where('id', '!=', $currentProductId)
-                ->exists()
+            ->where('id', '!=', $currentProductId)
+            ->exists()
         ) {
             $slug = "{$base}-{$count}";
             $count++;

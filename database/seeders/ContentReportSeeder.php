@@ -20,8 +20,8 @@ class ContentReportSeeder extends Seeder
         $comments = PostComment::all();
         $products = Product::published()->get();
 
-        if ($users->isEmpty() || $posts->isEmpty()) {
-            $this->command->warn('Insufficient data. Run UserSeeder and CommunityPostSeeder first.');
+        if ($users->isEmpty() || $posts->isEmpty() || $products->isEmpty()) {
+            $this->command->warn('Insufficient data. Run UserSeeder, CommunityPostSeeder, and ProductSeeder first.');
             return;
         }
 

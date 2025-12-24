@@ -23,6 +23,10 @@ class ContentReport extends Model
         'reviewed_at',
     ];
 
+    protected $guarded = [
+        'id',
+    ];
+
     protected $casts = [
         'reviewed_at' => 'datetime',
     ];

@@ -71,6 +71,8 @@ class MerchantFactory extends Factory
 
     /**
      * UMKM names related
+     *
+     * Pastikan nama unik di seluruh tabel: jika nama dasar sudah ada, tambahkan angka.
      */
     public function merchantFactory(): static
     {
@@ -92,11 +94,16 @@ class MerchantFactory extends Factory
             'UMKM',
         ];
 
-        $name = $this->faker->randomElement($merchantNames);
+        // pilih nama dasar
+        $baseName = $this->faker->randomElement($merchantNames);
+        $existingCount = Merchant::where('name', 'LIKE', $baseName . '%')->count();
+        $finalName = $existingCount === 0 ? $baseName : $baseName . ' ' . ($existingCount + 1);
+
+        $finalSlug = Str::slug($finalName) . '-' . Str::random(5);
 
         return $this->state(fn (array $attributes) => [
-            'name' => $name,
-            'slug' => Str::slug($name) . '-' . Str::random(5),
+            'name' => $finalName,
+            'slug' => $finalSlug,
         ]);
     }
 }

@@ -18,6 +18,23 @@ use Carbon\Carbon;
 class AdminDashboardController extends Controller
 {
     /**
+     * Get dashboard statistics
+     *
+     * Returns dashboard statistics including overview, products, merchants, recent orders, and recent reports.
+     *
+     * @authenticated
+     *
+     * @queryParam period string Period for statistics (all_time, last_30_days). Example: last_30_days
+     *
+     * @response 200 {
+     *   "overview": { ... },
+     *   "products": { ... },
+     *   "merchants": { ... },
+     *   "recent_orders": [ ... ],
+     *   "recent_reports": [ ... ]
+     * }
+     */
+    /**
      * Get dashboard statistics 
      */
     public function statistics(Request $request)
@@ -368,6 +385,34 @@ class AdminDashboardController extends Controller
 
     /**
      * Get orders & revenue statistics
+     */
+    /**
+     * Get orders & revenue statistics
+     *
+     * Returns orders and revenue statistics for monthly, quarterly, or yearly period.
+     *
+     * @authenticated
+     *
+     * @queryParam period string required Period type (monthly, quarterly, yearly). Example: monthly
+     * @queryParam year integer required Year for statistics. Example: 2025
+     * @queryParam quarter integer Quarter (1-4), required if period=quarterly. Example: 2
+     * @queryParam month integer Month (1-12), required if period=monthly. Example: 5
+     *
+     * @response 200 {
+     *   "success": true,
+     *   "data": {
+     *     "period": "monthly",
+     *     "year": 2025,
+     *     "quarter": null,
+     *     "month": 5,
+     *     "statistics": [ ... ],
+     *     "has_data": true
+     *   }
+     * }
+     * @response 500 {
+     *   "success": false,
+     *   "message": "Failed to load orders/revenue data"
+     * }
      */
     public function ordersRevenue(Request $request)
     {

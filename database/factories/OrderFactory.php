@@ -14,6 +14,7 @@ class OrderFactory extends Factory
     public function definition(): array
     {
         return [
+            'user_id' => null, // to be set in seeder for realistic linkage
             'jasa_id' => Jasa::inRandomOrder()->first()?->id ?? Jasa::factory(),
             'nama' => $this->faker->name(),
             'tel' => $this->faker->phoneNumber(),
@@ -34,7 +35,7 @@ class OrderFactory extends Factory
      */
     public function recent(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'created_at' => $this->faker->dateTimeBetween('-7 days', 'now'),
         ]);
     }
@@ -44,7 +45,7 @@ class OrderFactory extends Factory
      */
     public function old(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'created_at' => $this->faker->dateTimeBetween('-90 days', '-30 days'),
         ]);
     }

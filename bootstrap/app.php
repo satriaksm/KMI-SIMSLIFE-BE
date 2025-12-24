@@ -13,15 +13,24 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Middleware aliases
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
+            'audit' => \App\Http\Middleware\AuditLogMiddleware::class,
+            'sanitize' => \App\Http\Middleware\SanitizeInputMiddleware::class,
         ]);
+
+        // Global API middleware
         $middleware->api(prepend: [
             HandleCors::class,
+            \App\Http\Middleware\SecurityHeadersMiddleware::class,
         ]);
+
+        // Apply sanitization to all routes except file uploads
+        $middleware->append(\App\Http\Middleware\SanitizeInputMiddleware::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
     })->withProviders([
-            App\Providers\AuthServiceProvider::class,
-        ])->create();
+        App\Providers\AuthServiceProvider::class,
+    ])->create();

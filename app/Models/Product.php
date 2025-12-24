@@ -35,6 +35,10 @@ class Product extends Model
         'min_purchase',
     ];
 
+    protected $guarded = [
+        'id',
+    ];
+
     protected $casts = [
         'min_purchase' => 'integer',
     ];
@@ -104,5 +108,4 @@ class Product extends Model
     {
         return $this->morphMany(CartItem::class, 'itemable');
     }
-
 }

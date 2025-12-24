@@ -1,4 +1,5 @@
 <?php
+
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
@@ -16,16 +17,24 @@ class UserSeeder extends Seeder
             'status' => 'active',
         ]);
 
+        $adminRole = Role::where('name', 'admin')->first();
+        if ($adminRole) {
+            $admin->roles()->syncWithoutDetaching([$adminRole->id]);
+        }
+
+
         $this->command->info('Creating sample customers (30)...');
         $customers = User::factory()->count(30)->create([
             'status' => 'active',
         ]);
 
+        // Assign role 'customer' ke semua user (kecuali admin)
         $customerRole = Role::where('name', 'customer')->first();
         if ($customerRole) {
-            foreach ($customers as $user) {
-                $user->roles()->attach($customerRole->id);
-            }
+            // Assign ke semua user yang bukan admin
+            User::where('id', '!=', $admin->id)->each(function ($user) use ($customerRole) {
+                $user->roles()->syncWithoutDetaching([$customerRole->id]);
+            });
         }
 
         $this->command->info('Users seeded successfully!');

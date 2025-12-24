@@ -32,11 +32,8 @@ class ProductSeeder extends Seeder
 
         foreach ($merchants as $merchant) {
             $productCount = rand(3, 10);
-
             $this->command->info("  - Creating {$productCount} products for {$merchant->name}");
-
             for ($i = 0; $i < $productCount; $i++) {
-                // ✅ Create product tanpa category_id
                 $product = Product::factory()
                     ->published()
                     ->productFactory()
@@ -44,9 +41,13 @@ class ProductSeeder extends Seeder
                         'merchant_id' => $merchant->id,
                     ]);
 
-                // ✅ Attach 1-3 random categories
-                $randomCategories = $leafCategories->random(rand(1, 3))->pluck('id');
-                $product->categories()->attach($randomCategories);
+                // Ambil 1-3 kategori random untuk setiap produk
+                $randomCategories = $leafCategories->random(rand(1, min(3, $leafCategories->count())));
+
+                // Attach ke kategori lewat morphToMany (categorizables)
+                foreach ($randomCategories as $category) {
+                    $product->categories()->attach($category->id);
+                }
 
                 // Create product variant
                 ProductVariant::create([
@@ -65,13 +66,12 @@ class ProductSeeder extends Seeder
                         'is_cover' => $j === 0,
                     ]);
                 }
-
                 $totalProducts++;
             }
         }
 
-        $this->command->info("✅ Products seeded successfully!");
-        $this->command->info("   📦 Total products: {$totalProducts}");
-        $this->command->info("   🏷️ Categories used: " . $leafCategories->count());
+        $this->command->info(" Products seeded successfully!");
+        $this->command->info("    Total products: {$totalProducts}");
+        $this->command->info("    Categories used: " . $leafCategories->count());
     }
 }

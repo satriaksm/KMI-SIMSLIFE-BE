@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use Carbon\Carbon;
 use App\Models\Merchant;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -90,7 +89,6 @@ class MerchantController extends Controller
                 ->limit($limit)
                 ->get();
 
-            // ✅ Manual load relations untuk avoid nested eager loading issues
             $merchants->load([
                 'segmentation',
                 'primaryAddress.province',
@@ -130,7 +128,7 @@ class MerchantController extends Controller
             ->where('status', 'approved')
             ->where(function ($q) use ($slugOrId) {
                 $q->where('id', $slugOrId)
-                    ->orWhere('slug', $slugOrId); 
+                    ->orWhere('slug', $slugOrId);
             })
             ->withCount('products')
             ->firstOrFail();
@@ -145,9 +143,8 @@ class MerchantController extends Controller
     {
         $user = $request->user();
 
-        // Wajib punya role "customer"
-        $hasCustomerRole = $user->roles()->whereRaw('LOWER(name) = ?', ['customer'])->exists();
-        if (!$hasCustomerRole) {
+        // Wajib punya role "customer" - Using hasRole helper for safety
+        if (!$user->hasRole('customer')) {
             return response()->json([
                 'message' => 'Akses ditolak. Hanya pengguna dengan role customer yang dapat mendaftar UMKM.',
             ], 403);
@@ -237,154 +234,6 @@ class MerchantController extends Controller
         ], 201);
     }
 
-    // Admin menyetujui pendaftaran -> status approved + beri role "umkm-owner"
-    public function approve(Request $request, Merchant $merchant)
-    {
-        // Validasi role admin
-        $admin = $request->user();
-        $isAdmin = $admin->roles()->whereRaw('LOWER(name) = ?', ['admin'])->exists();
-        if (!$isAdmin) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
 
-        if ($merchant->status === 'approved') {
-            return response()->json(['message' => 'Merchant sudah disetujui.'], 422);
-        }
-        if ($merchant->status === 'rejected') {
-            return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
-        }
 
-        DB::transaction(function () use ($merchant) {
-            // Ensure slug exists (safety check)
-            if (empty($merchant->slug)) {
-                $merchant->slug = Merchant::generateUniqueSlug($merchant->name);
-            }
-
-            $merchant->update([
-                'status' => 'approved',
-                'response_at' => Carbon::now(),
-            ]);
-
-            // Beri role "umkm-owner"
-            $owner = $merchant->user;
-            if ($owner) {
-                $roleId = DB::table('roles')->where('name', 'umkm-owner')->value('id');
-                if (!$roleId) {
-                    $roleId = DB::table('roles')->insertGetId([
-                        'name' => 'umkm-owner',
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
-
-                // Use firstOrCreate untuk avoid duplicate entry
-                DB::table('role_user')->updateOrInsert(
-                    ['user_id' => $owner->id, 'role_id' => $roleId],
-                    ['created_at' => now(), 'updated_at' => now()]
-                );
-            }
-        });
-
-        return response()->json([
-            'message' => 'Merchant disetujui dan slug telah digenerate.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
-    }
-
-    // Admin menolak pendaftaran -> status rejected
-    public function reject(Request $request, Merchant $merchant)
-    {
-        $admin = $request->user();
-        $isAdmin = $admin->roles()->whereRaw('LOWER(name) = ?', ['admin'])->exists();
-        if (!$isAdmin) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
-
-        if ($merchant->status === 'approved') {
-            return response()->json(['message' => 'Merchant sudah disetujui, tidak bisa ditolak.'], 422);
-        }
-        if ($merchant->status === 'rejected') {
-            return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
-        }
-
-        $merchant->update([
-            'status' => 'rejected',
-            'response_at' => Carbon::now(),
-        ]);
-
-        return response()->json([
-            'message' => 'Merchant ditolak.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
-    }
-
-    /**
-     * ADMIN: List all merchants with filters
-     */
-    public function adminIndex(Request $request)
-    {
-        Log::info('[MerchantController] adminIndex called', [
-            'params' => $request->all()
-        ]);
-
-        $query = Merchant::with([
-            'user:id,name,email,phone',
-            'segmentation:id,name',
-            'primaryAddress',
-        ])
-            ->withCount('products');
-
-        // Filter by status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-
-        // Filter by segmentation
-        if ($request->has('segmentation_id')) {
-            $query->where('segmentation_id', $request->segmentation_id);
-        }
-
-        // Search
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhereHas('user', function ($qu) use ($search) {
-                        $qu->where('name', 'like', "%{$search}%")
-                            ->orWhere('email', 'like', "%{$search}%");
-                    });
-            });
-        }
-
-        $merchants = $query->latest()
-            ->paginate($request->input('per_page', 15));
-
-        Log::info('[MerchantController] Returning merchants', [
-            'count' => $merchants->count(),
-            'total' => $merchants->total()
-        ]);
-
-        return response()->json($merchants);
-    }
-
-    /**
-     * ADMIN: Get single merchant detail
-     */
-    public function adminShow($id)
-    {
-        $merchant = Merchant::with([
-            'user.roles',
-            'segmentation',
-            'addresses',
-            'products' => function ($query) {
-                $query->latest()->limit(10);
-            },
-            'vouchers',
-            'events',
-        ])
-            ->withCount(['products', 'vouchers'])
-            ->findOrFail($id);
-
-        return response()->json(['data' => $merchant]);
-    }
 }
