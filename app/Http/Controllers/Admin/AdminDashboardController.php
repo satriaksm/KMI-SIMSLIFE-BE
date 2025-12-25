@@ -9,10 +9,10 @@ use App\Models\Product;
 use App\Models\Order;
 use App\Models\Paguyuban;
 use App\Models\ContentReport;
-use App\Models\Category;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 
 class AdminDashboardController extends Controller
@@ -41,20 +41,24 @@ class AdminDashboardController extends Controller
     {
         try {
             $period = $request->input('period', 'all_time');
+            $cacheKey = "admin_dashboard_stats_v2_{$period}";
 
-            $stats = [
-                'overview' => $this->getOverviewStats($period),
-                'products' => [
-                    'total' => Product::published()->count(),
-                    'by_category' => $this->getProductsByCategory(),
-                ],
-                'merchants' => [
-                    'total' => Merchant::approved()->count(),
-                    'by_segmentation' => $this->getMerchantsBySegmentation(),
-                ],
-                'recent_orders' => $this->getRecentOrders(),
-                'recent_reports' => $this->getRecentReports(),
-            ];
+            // Cache seluruh statistik dashboard selama 30 detik
+            $stats = Cache::remember($cacheKey, 30, function () use ($period) {
+                return [
+                    'overview' => $this->getOverviewStatsCached($period),
+                    'products' => [
+                        'total' => Cache::remember("dashboard_products_total", 30, fn() => Product::where('status', 'published')->count()),
+                        'by_category' => $this->getProductsByCategoryCached(),
+                    ],
+                    'merchants' => [
+                        'total' => Cache::remember("dashboard_merchants_total", 30, fn() => Merchant::where('status', 'approved')->count()),
+                        'by_segmentation' => $this->getMerchantsBySegmentationCached(),
+                    ],
+                    'recent_orders' => $this->getRecentOrdersCached(),
+                    'recent_reports' => $this->getRecentReportsCached(),
+                ];
+            });
 
             return response()->json($stats);
         } catch (\Exception $e) {
@@ -70,6 +74,34 @@ class AdminDashboardController extends Controller
                 'message' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    // --- CACHED VERSIONS ---
+
+    private function getOverviewStatsCached(string $period): array
+    {
+        $cacheKey = "dashboard_overview_{$period}";
+        return Cache::remember($cacheKey, 30, fn() => $this->getOverviewStats($period));
+    }
+
+    private function getProductsByCategoryCached(): array
+    {
+        return Cache::remember('dashboard_products_by_category', 30, fn() => $this->getProductsByCategory());
+    }
+
+    private function getMerchantsBySegmentationCached(): array
+    {
+        return Cache::remember('dashboard_merchants_by_segmentation', 30, fn() => $this->getMerchantsBySegmentation());
+    }
+
+    private function getRecentOrdersCached(): array
+    {
+        return Cache::remember('dashboard_recent_orders', 30, fn() => $this->getRecentOrders());
+    }
+
+    private function getRecentReportsCached(): array
+    {
+        return Cache::remember('dashboard_recent_reports', 30, fn() => $this->getRecentReports());
     }
 
     /**

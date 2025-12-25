@@ -25,7 +25,6 @@ return Application::configure(basePath: dirname(__DIR__))
         // Global API middleware
         $middleware->api(prepend: [
             HandleCors::class,
-            \App\Http\Middleware\SecurityHeadersMiddleware::class,
         ]);
         $middleware->api(prepend: [
             EnsureFrontendRequestsAreStateful::class,
