@@ -136,16 +136,16 @@ class Merchant extends Model
         return $this->belongsTo(Segmentation::class);
     }
 
-    // Banyak alamat 
+    // Banyak alamat
     public function addresses(): MorphMany
     {
-        return $this->morphMany(\App\Models\Adrress::class, 'addressable');
+        return $this->morphMany(Address::class, 'addressable');
     }
 
     // Alamat utama
     public function primaryAddress(): MorphOne
     {
-        return $this->morphOne(\App\Models\Adrress::class, 'addressable')
+        return $this->morphOne(Address::class, 'addressable')
             ->where('label', 'utama')
             ->latest();
     }

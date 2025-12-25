@@ -43,6 +43,8 @@ class ProductController
             'q' => ['nullable', 'string', 'max:255'],
             'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+            'segments' => ['nullable', 'array'],
+            'segments.*' => ['in:UMKM Toko,UMKM Kuliner,UMKM Jasa'],
             'min_price' => ['nullable', 'numeric', 'min:0'],
             'max_price' => ['nullable', 'numeric', 'min:0'],
             'sort' => ['nullable', 'in:newest,price_asc,price_desc,name_asc,name_desc'],
@@ -50,13 +52,24 @@ class ProductController
         ]);
 
         $query = Product::query()
-            ->where('status', 'published')
+            ->select([
+                'products.id',
+                'products.merchant_id',
+                'products.name',
+                'products.slug',
+            ])
+            ->whereHas('variants', function ($q) {
+                $q->where('stock', '>', 0);
+            })->where('products.status', 'published')
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
-                'coverImage',
-                'merchant:id,name,slug',
+                'coverImage:id,imageable_id,imageable_type,image_path',
+                'merchant:id,name,slug,segmentation_id',
+                'merchant.segmentation:id,name',
                 'categories:id,name',
+                'variants:id,product_id,price',
             ]);
+
 
         // Search by name
         if (!empty($data['q'])) {
@@ -72,6 +85,13 @@ class ProductController
         if (!empty($data['category_id'])) {
             $query->whereHas('categories', fn($q) => $q->where('categories.id', $data['category_id']));
         }
+
+        if (!empty($data['segments'])) {
+            $query->whereHas('merchant.segmentation', function ($q) use ($data) {
+                $q->whereIn('name', $data['segments']);
+            });
+        }
+
 
         // Filter by price range (from cheapest variant)
         if (isset($data['min_price']) || isset($data['max_price'])) {
@@ -113,123 +133,43 @@ class ProductController
 
         $perPage = $data['per_page'] ?? 20;
 
-        return response()->json($query->paginate($perPage));
+        return response()->json(
+            $query->paginate($perPage)->through(function ($product) {
+
+                $cover = $product->coverImage
+                    ? route('images.show', ['image' => $product->coverImage->id])
+                    : null;
+
+                return [
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'min_price' => $product->variants->min('price'),
+                    'max_price' => $product->variants->max('price'),
+                    'slug' => $product->slug,
+
+                    'cover_image' => $product->coverImage ? [
+                        'id' => $product->coverImage->id,
+                        'src_url' => $cover,
+                    ] : null,
+
+                    'merchant' => [
+                        'id' => $product->merchant->id,
+                        'name' => $product->merchant->name,
+                        'slug' => $product->merchant->slug,
+                        'segmentation' => [
+                            'name' => $product->merchant->segmentation?->name,
+                        ],
+                    ],
+
+                    'categories' => $product->categories->map(fn($c) => [
+                        'id' => $c->id,
+                        'name' => $c->name,
+                    ])->values(),
+                ];
+            })
+        );
     }
 
-    public function publicIndexToko(Request $request)
-    {
-        $data = $request->validate([
-            'limit' => ['nullable', 'integer', 'min:1', 'max:50'],
-        ]);
-
-        $limit = $data['limit'] ?? 12;
-
-        // Ambil produk dari merchant dengan segmentation_id = 2 (Toko)
-        $products = Product::where('status', 'published')
-            ->whereHas('merchant', function ($q) {
-                $q->where('status', 'approved')
-                    ->where('segmentation_id', 1); // Toko
-            })
-
-            // 🔴 PENTING: HANYA PRODUK YANG MASIH ADA STOK
-            ->whereHas('variants', function ($q) {
-                $q->where('stock', '>', 0);
-            })
-
-            ->with([
-                'coverImage',
-                'merchant:id,name,slug',
-                'categories:id,name',
-            ])
-            ->withCount('variants')
-
-            ->addSelect([
-                'products.*',
-
-                'min_price' => function ($q) {
-                    $q->selectRaw('MIN(price)')
-                        ->from('product_variants')
-                        ->whereColumn('product_id', 'products.id');
-                },
-
-                'max_price' => function ($q) {
-                    $q->selectRaw('MAX(price)')
-                        ->from('product_variants')
-                        ->whereColumn('product_id', 'products.id');
-                },
-
-                'total_stock' => function ($q) {
-                    $q->selectRaw('COALESCE(SUM(stock), 0)')
-                        ->from('product_variants')
-                        ->whereColumn('product_id', 'products.id');
-                },
-            ])
-            ->inRandomOrder()
-            ->limit($limit)
-            ->get();
-
-        return response()->json([
-            'data' => $products,
-            'count' => $products->count(),
-        ]);
-    }
-
-    /**
-     * Public: Get random products for Kuliner homepage
-     * No authentication required
-     */
-    public function publicIndexKuliner(Request $request)
-    {
-        $data = $request->validate([
-            'limit' => ['nullable', 'integer', 'min:1', 'max:50'],
-        ]);
-
-        $limit = $data['limit'] ?? 12;
-
-        // Ambil produk dari merchant dengan segmentation_id = 1 (Kuliner)
-        $products = Product::where('status', 'published')
-            ->whereHas('merchant', function ($q) {
-                $q->where('status', 'approved')
-                    ->where('segmentation_id', 2); // Kuliner
-            })
-            // 🔴 PENTING: HANYA PRODUK YANG MASIH ADA STOK
-            ->whereHas('variants', function ($q) {
-                $q->where('stock', '>', 0);
-            })
-
-            ->with([
-                'coverImage',
-                'merchant:id,name,slug',
-                'categories:id,name',
-            ])
-            ->withCount('variants')
-            ->addSelect([
-                'products.*',
-                'min_price' => function ($q) {
-                    $q->selectRaw('MIN(price)')
-                        ->from('product_variants')
-                        ->whereColumn('product_id', 'products.id');
-                },
-                'max_price' => function ($q) {
-                    $q->selectRaw('MAX(price)')
-                        ->from('product_variants')
-                        ->whereColumn('product_id', 'products.id');
-                },
-                'total_stock' => function ($q) {
-                    $q->selectRaw('COALESCE(SUM(stock), 0)')
-                        ->from('product_variants')
-                        ->whereColumn('product_id', 'products.id');
-                },
-            ])
-            ->inRandomOrder()
-            ->limit($limit)
-            ->get();
-
-        return response()->json([
-            'data' => $products,
-            'count' => $products->count(),
-        ]);
-    }
 
     /**
      * Public: Get product detail by slug (PDP - Product Detail Page)
@@ -1130,7 +1070,7 @@ class ProductController
                 if (in_array($optionName, $usedOptionNames)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'add_on_groups' =>
-                        "Nama opsi '{$optionData['name']}' pada grup '{$groupName}' tidak boleh sama.",
+                            "Nama opsi '{$optionData['name']}' pada grup '{$groupName}' tidak boleh sama.",
                     ]);
                 }
 
@@ -1350,7 +1290,8 @@ class ProductController
         $product = Product::where('slug', $slug)->firstOrFail();
 
         $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error) return $error;
+        if ($error)
+            return $error;
 
         // Validasi (Sama seperti sebelumnya)
         $data = $request->validate([
@@ -1832,7 +1773,7 @@ class ProductController
                 if (isset($optionNameMap[$optionName])) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'add_on_groups' =>
-                        "Nama opsi '{$optionData['name']}' pada grup '{$groupData['name']}' tidak boleh sama.",
+                            "Nama opsi '{$optionData['name']}' pada grup '{$groupData['name']}' tidak boleh sama.",
                     ]);
                 }
 
@@ -1895,8 +1836,8 @@ class ProductController
 
         while (
             Product::where('slug', $slug)
-            ->where('id', '!=', $currentProductId)
-            ->exists()
+                ->where('id', '!=', $currentProductId)
+                ->exists()
         ) {
             $slug = "{$base}-{$count}";
             $count++;
