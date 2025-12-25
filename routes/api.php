@@ -430,7 +430,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 // ============================================================
 // ADMIN ROUTES (Protected)
 // ============================================================
-Route::middleware(['web', 'auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
+Route::middleware(['auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
 
     // ===== DASHBOARD STATISTICS =====
     Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
