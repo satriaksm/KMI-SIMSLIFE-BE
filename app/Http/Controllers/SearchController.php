@@ -79,15 +79,21 @@ class SearchController extends Controller
             'max_price' => ProductVariant::selectRaw('MAX(price)')
                 ->whereColumn('product_id', 'products.id'),
         ]);
-        $query->groupBy('products.id');
 
         if (isset($data['min_price'])) {
-            $query->having('min_price', '>=', $data['min_price']);
+            $query->whereRaw(
+                '(select MIN(price) from product_variants where product_id = products.id) >= ?',
+                [$data['min_price']]
+            );
         }
 
         if (isset($data['max_price'])) {
-            $query->having('max_price', '<=', $data['max_price']);
+            $query->whereRaw(
+                '(select MAX(price) from product_variants where product_id = products.id) <= ?',
+                [$data['max_price']]
+            );
         }
+
 
         $sort = $data['sort'] ?? 'latest';
 
