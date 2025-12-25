@@ -1,22 +1,36 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\Event;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 
-class EventController extends Controller
+class AdminEventController extends Controller
 {
+
     /**
-     * PUBLIC: Get active events
+     * ADMIN: List all events (with filters)
      */
     public function index(Request $request)
     {
         $query = Event::with(['creator:id,name'])
-            ->published();
+            ->withCount(['merchants', 'vouchers']);
 
+        // Filter by status
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // Search
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where('event_name', 'like', "%{$search}%");
+        }
+
+        // Filter active only
         if ($request->boolean('active_only')) {
             $query->active();
         }
@@ -25,6 +39,24 @@ class EventController extends Controller
             ->paginate($request->input('per_page', 10));
 
         return response()->json($events);
+    }
+
+    /**
+     * ADMIN: Get single event detail
+     */
+    public function show($id)
+    {
+        $event = Event::with([
+            'creator:id,name',
+            'merchants.segmentation' => function ($query) {
+                $query->where('event_merchants.status', 'accepted');
+            },
+            'vouchers'
+        ])
+            ->withCount(['merchants', 'vouchers'])
+            ->findOrFail($id);
+
+        return response()->json(['data' => $event]);
     }
 
     /**
