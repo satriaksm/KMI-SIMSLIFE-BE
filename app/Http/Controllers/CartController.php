@@ -129,7 +129,11 @@ class CartController extends Controller
                     $liveUnitPrice = $variant ? (int) $variant?->price : $snapshotUnitPrice;
                     $liveStock = $variant ? (int) $variant?->stock : 0;
 
-                    $isPublic = in_array($item->itemable->status, ['published', 'archived']);
+                    $product = $item->itemable;
+
+                    $isPublic = $product
+                        ? in_array($product->status, ['published', 'archived'])
+                        : false;
 
                     /* =========================
                      * SNAPSHOT IMAGE
@@ -141,43 +145,47 @@ class CartController extends Controller
                      * ========================= */
                     $product = $item->itemable;
 
-                    // cover image
-                    if ($product->coverImage) {
-                        $this->applyImageSrcUrl($product->coverImage, $isPublic);
+                    if ($product) {
+
+                        // cover image
+                        if ($product->coverImage) {
+                            $this->applyImageSrcUrl($product->coverImage, $isPublic);
+                        }
+
+                        // product images
+                        if ($product->images) {
+                            $product->images->transform(
+                                fn($img) => $this->applyImageSrcUrl($img, $isPublic)
+                            );
+                        }
+
+                        // option values images
+                        if ($product->options) {
+                            $product->options->transform(function ($option) use ($isPublic) {
+                                if ($option->values) {
+                                    $option->values->transform(function ($value) use ($isPublic) {
+                                        if (!empty($value->image_path)) {
+                                            $value->src_url = $isPublic
+                                                ? route('images.product-option-value.show', ['optionValue' => $value->id])
+                                                : URL::signedRoute(
+                                                    'images.product-option-value.show',
+                                                    ['optionValue' => $value->id],
+                                                    now()->addMinutes(60)
+                                                );
+                                        } else {
+                                            $value->src_url = null;
+                                        }
+
+                                        $value->makeHidden(['image_path', 'created_at', 'updated_at']);
+                                        return $value;
+                                    });
+                                }
+                                return $option;
+                            });
+                        }
+
                     }
 
-                    // product images (jika dipakai di modal edit)
-                    if ($product->images) {
-                        $product->images->transform(
-                            fn($img) =>
-                            $this->applyImageSrcUrl($img, $isPublic)
-                        );
-                    }
-
-                    // option values images
-                    if ($product->options) {
-                        $product->options->transform(function ($option) use ($isPublic) {
-                            if ($option->values) {
-                                $option->values->transform(function ($value) use ($isPublic) {
-                                    if (!empty($value->image_path)) {
-                                        $value->src_url = $isPublic
-                                            ? route('images.product-option-value.show', ['optionValue' => $value->id])
-                                            : URL::signedRoute(
-                                                'images.product-option-value.show',
-                                                ['optionValue' => $value->id],
-                                                now()->addMinutes(60)
-                                            );
-                                    } else {
-                                        $value->src_url = null;
-                                    }
-
-                                    $value->makeHidden(['image_path', 'created_at', 'updated_at']);
-                                    return $value;
-                                });
-                            }
-                            return $option;
-                        });
-                    }
 
                     $currentStock = $variant?->stock ?? 0;
                     $cartQty = $item->quantity;

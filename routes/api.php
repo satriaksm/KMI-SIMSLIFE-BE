@@ -17,6 +17,7 @@ use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PaguyubanController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\SegmentationController;
@@ -153,7 +154,7 @@ Route::prefix('auth')->group(function () {
         ->middleware(['signed', 'throttle:6,1'])
         ->name('api.verification.verify');
 
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
             ->middleware('throttle:6,1')
@@ -197,6 +198,12 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
+
+        Route::get(
+            'merchants/{merchant}/dashboard',
+            [DashboardController::class, 'merchantDashboard']
+        );
+
 
         // PRODUCT CRUD & NESTED
         Route::prefix('products')->name('products.')->group(function () {
@@ -276,7 +283,6 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
-Route::middleware('web')->group(function () { });
 
 // ============================================================
 // PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
