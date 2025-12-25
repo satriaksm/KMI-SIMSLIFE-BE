@@ -15,52 +15,52 @@ class MerchantController extends Controller
      * ✅ NEW: Public endpoint untuk list merchants
      * Menampilkan merchant yang sudah approved
      */
-    // public function publicIndex(Request $request)
-    // {
-    //     $perPage = $request->input('per_page', 12);
-    //     $search = $request->input('search');
-    //     $segmentationId = $request->input('segmentation_id');
-    //     $cityId = $request->input('city_id');
-    //     $random = $request->boolean('random', false); // Default false
+    public function publicIndex(Request $request)
+    {
+        $perPage = $request->input('per_page', 12);
+        $search = $request->input('search');
+        $segmentationId = $request->input('segmentation_id');
+        $cityId = $request->input('city_id');
+        $random = $request->boolean('random', false); // Default false
 
-    //     $query = Merchant::with([
-    //         'segmentation:id,name',
-    //         'primaryAddress', // ✅ Load full address relation
-    //         'primaryAddress.province:id,name',
-    //         'primaryAddress.city:id,name', // ✅ Ini akan load dari Regency
-    //         'primaryAddress.district:id,name',
-    //     ])
-    //         ->where('status', 'approved')
-    //         ->withCount('products'); // Hitung jumlah produk
+        $query = Merchant::with([
+            'segmentation:id,name',
+            'primaryAddress', // ✅ Load full address relation
+            'primaryAddress.province:id,name',
+            'primaryAddress.city:id,name', // ✅ Ini akan load dari Regency
+            'primaryAddress.district:id,name',
+        ])
+            ->where('status', 'approved')
+            ->withCount('products'); // Hitung jumlah produk
 
-    //     // Filter by search (nama merchant)
-    //     if ($search) {
-    //         $query->where('name', 'like', "%{$search}%");
-    //     }
+        // Filter by search (nama merchant)
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%");
+        }
 
-    //     // Filter by segmentation
-    //     if ($segmentationId) {
-    //         $query->where('segmentation_id', $segmentationId);
-    //     }
+        // Filter by segmentation
+        if ($segmentationId) {
+            $query->where('segmentation_id', $segmentationId);
+        }
 
-    //     // Filter by city
-    //     if ($cityId) {
-    //         $query->whereHas('primaryAddress', function ($q) use ($cityId) {
-    //             $q->where('city_id', $cityId);
-    //         });
-    //     }
+        // Filter by city
+        if ($cityId) {
+            $query->whereHas('primaryAddress', function ($q) use ($cityId) {
+                $q->where('city_id', $cityId);
+            });
+        }
 
-    //     // ✅ Random order jika diminta
-    //     if ($random) {
-    //         $query->inRandomOrder();
-    //     } else {
-    //         $query->latest(); // Default: newest first
-    //     }
+        // ✅ Random order jika diminta
+        if ($random) {
+            $query->inRandomOrder();
+        } else {
+            $query->latest(); // Default: newest first
+        }
 
-    //     $merchants = $query->paginate($perPage);
+        $merchants = $query->paginate($perPage);
 
-    //     return response()->json($merchants);
-    // }
+        return response()->json($merchants);
+    }
 
     /**
      * Public endpoint untuk random merchants

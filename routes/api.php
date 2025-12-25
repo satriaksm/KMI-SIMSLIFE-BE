@@ -25,10 +25,11 @@ use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Product\ProductController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\Auth\EmailVerificationController;
+use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
-use App\Http\Controllers\Admin\AdminDashboardController;
-use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\ProductOptionValueImageController;
 
 // ============================================================
@@ -316,7 +317,7 @@ Route::prefix('orders')->group(function () {
 // ============================================================
 // ADMIN ROUTES (Protected)
 // ============================================================
-Route::middleware(['auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
+Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(function () {
 
     // ===== DASHBOARD STATISTICS =====
     Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
@@ -384,12 +385,12 @@ Route::middleware(['auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->
 
     // ===== EVENT MANAGEMENT =====
     Route::prefix('events')->name('events.')->group(function () {
-        Route::get('/', [EventController::class, 'adminIndex'])->name('index');
-        Route::post('/', [EventController::class, 'store'])->name('store');
-        Route::get('/{id}', [EventController::class, 'adminShow'])->name('show');
-        Route::put('/{id}', [EventController::class, 'update'])->name('update');
-        Route::delete('/{id}', [EventController::class, 'destroy'])->name('destroy');
-        Route::post('/{event}/invite-merchants', [EventController::class, 'inviteMerchants'])->name('invite-merchants');
+        Route::get('/', [AdminEventController::class, 'index'])->name('index');
+        Route::post('/', [AdminEventController::class, 'store'])->name('store');
+        Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
+        Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
+        Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
+        Route::post('/{event}/invite-merchants', [AdminEventController::class, 'inviteMerchants'])->name('invite-merchants');
     });
 
     // ===== VOUCHER MANAGEMENT =====
