@@ -703,6 +703,9 @@ class ProductController
             'min_purchase' => ['nullable', 'integer', 'min:1'],
             'status' => ['nullable', 'in:draft,published,archived'],
 
+            'price' => ['nullable', 'numeric', 'min:0'],
+            'stock' => ['nullable', 'integer', 'min:0'],
+            'sku' => ['nullable', 'string', 'max:100'],
             // ✅ Categories (multiple)
             'category_ids' => ['required', 'array', 'min:1'],
             'category_ids.*' => ['required', 'integer', 'exists:categories,id'],
@@ -767,12 +770,39 @@ class ProductController
         }
 
         // Validasi: jika tidak pakai variants, harus ada price & stock
-        $useVariants = !empty($data['variants']);
-        if (!$useVariants && (!isset($data['price']) || !isset($data['stock']))) {
+        $useVariants =
+            array_key_exists('variants', $data) &&
+            collect($data['variants'] ?? [])
+                ->filter(function ($variant) {
+                    if (empty(trim($variant['name'] ?? ''))) {
+                        return false;
+                    }
+
+                    if (empty($variant['options']) || !is_array($variant['options'])) {
+                        return false;
+                    }
+
+                    $validOptions = collect($variant['options'])
+                        ->filter(fn($opt) => !empty(trim($opt['name'] ?? '')))
+                        ->count();
+
+                    return $validOptions >= 1;
+                })
+                ->count() > 0;
+        if (
+            !$useVariants &&
+            (
+                !array_key_exists('price', $data) ||
+                !array_key_exists('stock', $data) ||
+                $data['price'] === null ||
+                $data['stock'] === null
+            )
+        ) {
             return response()->json([
                 'message' => 'Harga dan stok wajib diisi jika tidak menggunakan variasi.',
             ], 422);
         }
+
         if ($useVariants) {
             $hasVariantWithAtLeastTwoOptions = collect($data['variants'])
                 ->some(function ($variant) {
@@ -1382,7 +1412,13 @@ class ProductController
         }
         // Validasi: jika tidak pakai variants, harus ada price & stock
         $useVariants = !empty($data['variants']);
-        if (!$useVariants && (!isset($data['price']) || !isset($data['stock']))) {
+        if (
+            !$useVariants &&
+            (
+                !array_key_exists('price', $data) ||
+                !array_key_exists('stock', $data)
+            )
+        ) {
             return response()->json([
                 'message' => 'Harga dan stok wajib diisi jika tidak menggunakan variasi.',
             ], 422);
