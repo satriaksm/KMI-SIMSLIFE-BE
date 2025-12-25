@@ -7,6 +7,7 @@ return [
         'login',
         'logout',
         'me',
+        'admin/*',
         'broadcasting/auth',
         'auth/*'
     ],
