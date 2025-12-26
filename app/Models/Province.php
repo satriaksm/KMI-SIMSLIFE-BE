@@ -20,6 +20,6 @@ class Province extends Model
     // ✅ Tambahkan relasi ke addresses
     public function addresses(): HasMany
     {
-        return $this->hasMany(Adrress::class, 'province_id');
+        return $this->hasMany(Address::class, 'province_id');
     }
 }

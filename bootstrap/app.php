@@ -4,7 +4,9 @@ use Illuminate\Foundation\Application;
 use Illuminate\Http\Middleware\HandleCors;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use App\Http\Middleware\AllowOptions;
+use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
+use App\Http\Middleware\AllowOptions; 
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -14,18 +16,29 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Middleware aliases
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
+            'audit' => \App\Http\Middleware\AuditLogMiddleware::class,
+            'sanitize' => \App\Http\Middleware\SanitizeInputMiddleware::class,
         ]);
-        $middleware->append([
-            AllowOptions::class,
+
+        // Global API middleware
+        $middleware->api(prepend: [
             HandleCors::class,
         ]);
-        // $middleware->api(prepend: [
-        // ]);
+        $middleware->api(prepend: [
+            EnsureFrontendRequestsAreStateful::class,
+            VerifyCsrfToken::class
+        ]);
+        $middleware->statefulApi();
+        // 🆕 ADDED from feat/rating-system: Global middleware untuk OPTIONS request
+        $middleware->append([ 
+            AllowOptions::class, 
+        ]); 
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
     })->withProviders([
-            App\Providers\AuthServiceProvider::class,
-        ])->create();
+        App\Providers\AuthServiceProvider::class,
+    ])->create();

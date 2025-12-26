@@ -4,13 +4,17 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use App\Models\Jasa;
+use App\Models\Merchant;
 
 class JasaSeeder extends Seeder
 {
     public function run(): void
     {
+        $merchantId = Merchant::inRandomOrder()->value('id');
+
         Jasa::insert([
             [
+                'merchant_id' => $merchantId,
                 'title' => 'Service AC',
                 'vendor' => 'ArcticFix',
                 'price' => 100000,
@@ -21,6 +25,7 @@ class JasaSeeder extends Seeder
                 'description' => 'Layanan servis dan perawatan AC profesional.',
             ],
             [
+                'merchant_id' => $merchantId,
                 'title' => 'Les Privat',
                 'vendor' => 'TutorKu',
                 'price' => 150000,
@@ -31,6 +36,7 @@ class JasaSeeder extends Seeder
                 'description' => 'Les privat berbagai mata pelajaran dengan tutor berpengalaman.',
             ],
             [
+                'merchant_id' => $merchantId,
                 'title' => 'Laundry',
                 'vendor' => 'CuciBersih',
                 'price' => 50000,

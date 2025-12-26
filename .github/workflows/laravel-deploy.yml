@@ -37,7 +37,7 @@ jobs:
           rsync -av --delete \
             --exclude='.git' \
             --exclude='.github' \
-            --exclude='vendor' \
+            --exclude='/vendor' \
             --exclude='node_modules' \
             --exclude='tests' \
             --exclude='public' \
@@ -75,7 +75,7 @@ jobs:
             **/.git*
             **/.git*/**
             **/node_modules/**
-            **/vendor/**
+            /vendor/**
             **/tests/**
             **/.env
 

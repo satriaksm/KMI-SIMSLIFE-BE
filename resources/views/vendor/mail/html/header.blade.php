@@ -1,11 +1,11 @@
 @props(['url'])
 <tr>
 <td class="header">
-<a href="{{ $url }}" style="display: inline-block;">
+<a href="{{ $url }}" style="display: inline-block;color:#FFA30E">
 @if (trim($slot) === 'SUMILIR')
-<img src="https://laravel.com/img/notification-logo.png" class="logo" alt="Laravel Logo">
+  <span style="color:#FFA30E;font-size:24px;font-weight:bold;letter-spacing:1px;">SUMILIR</span>
 @else
-{!! $slot !!}
+  {!! $slot !!}
 @endif
 </a>
 </td>

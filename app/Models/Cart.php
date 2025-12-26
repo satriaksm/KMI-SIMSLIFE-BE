@@ -1,0 +1,20 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Cart extends Model
+{
+    protected $fillable = ['user_id', 'merchant_id'];
+
+    public function items()
+    {
+        return $this->hasMany(CartItem::class);
+    }
+
+    public function merchant()
+    {
+        return $this->belongsTo(Merchant::class);
+    }
+}

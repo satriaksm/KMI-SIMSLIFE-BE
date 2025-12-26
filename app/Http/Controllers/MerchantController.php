@@ -6,66 +6,66 @@ use Carbon\Carbon;
 use App\Models\Merchant;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
-class MerchantController
+class MerchantController extends Controller
 {
     /**
      * ✅ NEW: Public endpoint untuk list merchants
      * Menampilkan merchant yang sudah approved
      */
-    // public function publicIndex(Request $request)
-    // {
-    //     $perPage = $request->input('per_page', 12);
-    //     $search = $request->input('search');
-    //     $segmentationId = $request->input('segmentation_id');
-    //     $cityId = $request->input('city_id');
-    //     $random = $request->boolean('random', false); // Default false
+    public function publicIndex(Request $request)
+    {
+        $perPage = $request->input('per_page', 12);
+        $search = $request->input('search');
+        $segmentationId = $request->input('segmentation_id');
+        $cityId = $request->input('city_id');
+        $random = $request->boolean('random', false); // Default false
 
-    //     $query = Merchant::with([
-    //         'segmentation:id,name',
-    //         'primaryAddress', // ✅ Load full address relation
-    //         'primaryAddress.province:id,name',
-    //         'primaryAddress.city:id,name', // ✅ Ini akan load dari Regency
-    //         'primaryAddress.district:id,name',
-    //     ])
-    //         ->where('status', 'approved')
-    //         ->withCount('products'); // Hitung jumlah produk
+        $query = Merchant::with([
+            'segmentation:id,name',
+            'primaryAddress', // ✅ Load full address relation
+            'primaryAddress.province:id,name',
+            'primaryAddress.city:id,name', // ✅ Ini akan load dari Regency
+            'primaryAddress.district:id,name',
+        ])
+            ->where('status', 'approved')
+            ->withCount('products'); // Hitung jumlah produk
 
-    //     // Filter by search (nama merchant)
-    //     if ($search) {
-    //         $query->where('name', 'like', "%{$search}%");
-    //     }
+        // Filter by search (nama merchant)
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%");
+        }
 
-    //     // Filter by segmentation
-    //     if ($segmentationId) {
-    //         $query->where('segmentation_id', $segmentationId);
-    //     }
+        // Filter by segmentation
+        if ($segmentationId) {
+            $query->where('segmentation_id', $segmentationId);
+        }
 
-    //     // Filter by city
-    //     if ($cityId) {
-    //         $query->whereHas('primaryAddress', function ($q) use ($cityId) {
-    //             $q->where('city_id', $cityId);
-    //         });
-    //     }
+        // Filter by city
+        if ($cityId) {
+            $query->whereHas('primaryAddress', function ($q) use ($cityId) {
+                $q->where('city_id', $cityId);
+            });
+        }
 
-    //     // ✅ Random order jika diminta
-    //     if ($random) {
-    //         $query->inRandomOrder();
-    //     } else {
-    //         $query->latest(); // Default: newest first
-    //     }
+        // ✅ Random order jika diminta
+        if ($random) {
+            $query->inRandomOrder();
+        } else {
+            $query->latest(); // Default: newest first
+        }
 
-    //     $merchants = $query->paginate($perPage);
+        $merchants = $query->paginate($perPage);
 
-    //     return response()->json($merchants);
-    // }
+        return response()->json($merchants);
+    }
 
     /**
-     * ✅ NEW: Public endpoint untuk random merchants
+     * Public endpoint untuk random merchants
      * Khusus untuk homepage/recommendation
      */
     public function publicRandom(Request $request)
@@ -76,7 +76,6 @@ class MerchantController
         try {
             $query = Merchant::query()
                 ->where('status', 'approved')
-                // ✅ Count only published products
                 ->withCount([
                     'products' => function ($query) {
                         $query->where('status', 'published');
@@ -92,7 +91,6 @@ class MerchantController
                 ->limit($limit)
                 ->get();
 
-            // ✅ Manual load relations untuk avoid nested eager loading issues
             $merchants->load([
                 'segmentation',
                 'primaryAddress.province',
@@ -116,7 +114,7 @@ class MerchantController
     }
 
     /**
-     * ✅ NEW: Public endpoint untuk show single merchant
+     * Public endpoint untuk show single merchant
      */
     public function publicShow(Request $request, $slugOrId)
     {
@@ -132,7 +130,7 @@ class MerchantController
             ->where('status', 'approved')
             ->where(function ($q) use ($slugOrId) {
                 $q->where('id', $slugOrId)
-                    ->orWhere('slug', $slugOrId); // Jika Anda punya kolom slug
+                    ->orWhere('slug', $slugOrId);
             })
             ->withCount('products')
             ->firstOrFail();
@@ -147,15 +145,13 @@ class MerchantController
     {
         $user = $request->user();
 
-        // Wajib punya role "customer"
-        $hasCustomerRole = $user->roles()->whereRaw('LOWER(name) = ?', ['customer'])->exists();
-        if (!$hasCustomerRole) {
+        // Wajib punya role "customer" - Using hasRole helper for safety
+        if (!$user->hasRole('customer')) {
             return response()->json([
                 'message' => 'Akses ditolak. Hanya pengguna dengan role customer yang dapat mendaftar UMKM.',
             ], 403);
         }
 
-        // Optional: cegah multi-pendaftaran saat masih pending/approved
         $already = Merchant::query()
             ->where('user_id', $user->id)
             ->whereIn('status', ['pending'])
@@ -240,13 +236,19 @@ class MerchantController
         ], 201);
     }
 
-    // Admin menyetujui pendaftaran -> status approved + beri role "umkm-owner"
+
+    // 🆕 ADDED from feat/rating-system: Admin menyetujui pendaftaran
+    /**
+     * Admin approves merchant registration
+     * - Sets status to 'approved'
+     * - Generates slug if not exists
+     * - Assigns 'umkm-owner' role to user
+     */
     public function approve(Request $request, Merchant $merchant)
     {
         // Validasi role admin
         $admin = $request->user();
-        $isAdmin = $admin->roles()->whereRaw('LOWER(name) = ?', ['admin'])->exists();
-        if (!$isAdmin) {
+        if (!$admin->hasRole('admin')) {
             return response()->json(['message' => 'Akses ditolak.'], 403);
         }
 
@@ -280,7 +282,7 @@ class MerchantController
                     ]);
                 }
 
-                // ✅ Use firstOrCreate untuk avoid duplicate entry
+                // ✅ Use updateOrInsert untuk avoid duplicate entry
                 DB::table('role_user')->updateOrInsert(
                     ['user_id' => $owner->id, 'role_id' => $roleId],
                     ['created_at' => now(), 'updated_at' => now()]
@@ -294,12 +296,15 @@ class MerchantController
         ]);
     }
 
-    // Admin menolak pendaftaran -> status rejected
+    // 🆕 ADDED from feat/rating-system: Admin menolak pendaftaran
+    /**
+     * Admin rejects merchant registration
+     * - Sets status to 'rejected'
+     */
     public function reject(Request $request, Merchant $merchant)
     {
         $admin = $request->user();
-        $isAdmin = $admin->roles()->whereRaw('LOWER(name) = ?', ['admin'])->exists();
-        if (!$isAdmin) {
+        if (!$admin->hasRole('admin')) {
             return response()->json(['message' => 'Akses ditolak.'], 403);
         }
 
@@ -321,6 +326,11 @@ class MerchantController
         ]);
     }
 
+    // 🆕 ADDED from feat/rating-system: UMKM owner lihat profile sendiri
+    /**
+     * Get merchant profile for authenticated UMKM owner
+     * Only returns merchant if it belongs to authenticated user
+     */
     public function showMyMerchant(Request $request, $id)
     {
         $user = $request->user();
@@ -342,6 +352,11 @@ class MerchantController
         ]);
     }
 
+    // 🆕 ADDED from feat/rating-system: UMKM owner update profile
+    /**
+     * Update merchant profile by UMKM owner
+     * Includes logo & cover image upload
+     */
     public function updateMyMerchant(Request $request, $merchant)
     {
         $validated = $request->validate([
@@ -391,23 +406,28 @@ class MerchantController
              * =============================== */
             $address = $merchant->primaryAddress()->first();
 
-            if (! $address) {
-                $address = new Address([
+            if (!$address) {
+                $address = $merchant->addresses()->create([
                     'label' => 'utama',
+                    'province_id' => $validated['province_id'] ?? null,
+                    'city_id' => $validated['city_id'] ?? null,
+                    'district_id' => $validated['district_id'] ?? null,
+                    'village_id' => $validated['village_id'] ?? null,
+                    'detail' => $validated['address_detail'] ?? null,
+                    'latitude' => $validated['latitude'] ?? null,
+                    'longitude' => $validated['longitude'] ?? null,
                 ]);
-
-                $merchant->primaryAddress()->save($address);
+            } else {
+                $address->update([
+                    'province_id' => $validated['province_id'] ?? null,
+                    'city_id' => $validated['city_id'] ?? null,
+                    'district_id' => $validated['district_id'] ?? null,
+                    'village_id' => $validated['village_id'] ?? null,
+                    'detail' => $validated['address_detail'] ?? null,
+                    'latitude' => $validated['latitude'] ?? null,
+                    'longitude' => $validated['longitude'] ?? null,
+                ]);
             }
-
-            $address->update([
-                'province_id' => $validated['province_id'] ?? null,
-                'city_id' => $validated['city_id'] ?? null,
-                'district_id' => $validated['district_id'] ?? null,
-                'village_id' => $validated['village_id'] ?? null,
-                'detail' => $validated['address_detail'] ?? null,
-                'latitude' => $validated['latitude'] ?? null,
-                'longitude' => $validated['longitude'] ?? null,
-            ]);
 
             /** ===============================
              * Operational Hours
@@ -452,13 +472,16 @@ class MerchantController
 
             return response()->json([
                 'message' => 'Profil UMKM berhasil diperbarui',
+                'data' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
             ]);
         } catch (\Throwable $e) {
             DB::rollBack();
+            
+            Log::error('Error updating merchant profile: ' . $e->getMessage());
 
             return response()->json([
                 'message' => 'Gagal memperbarui profil',
-                'error' => $e->getMessage(),
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
     }

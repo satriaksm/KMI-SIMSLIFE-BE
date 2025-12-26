@@ -10,6 +10,7 @@ return new class extends Migration
     {
         Schema::create('jasas', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('merchant_id')->constrained('merchants')->onDelete('cascade');
             $table->string('title');
             $table->string('vendor')->nullable();
             $table->integer('price')->default(0);

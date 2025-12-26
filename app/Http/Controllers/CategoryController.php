@@ -86,77 +86,111 @@ class CategoryController extends Controller
     /**
      * Get all categories with their children (tree structure)
      */
-    public function getCategoriesTree(): JsonResponse
-    {
-        try {
-            $categories = Category::whereNull('parent_id')
-                ->with('children')
-                ->select('id', 'name', 'slug', 'image_path')
-                ->orderBy('name', 'asc')
-                ->get()
-                ->map(function ($category) {
-                    return [
-                        'value' => $category->id,
-                        'label' => $category->name,
-                        'slug' => $category->slug,
-                        'image_path' => $category->image_path,
-                        'children' => $category->children->map(function ($child) {
-                            return [
-                                'value' => $child->id,
-                                'label' => $child->name,
-                                'slug' => $child->slug,
-                                'image_path' => $child->image_path,
-                            ];
-                        }),
-                    ];
-                });
+    // public function getCategoriesTree(): JsonResponse
+    // {
+    //     try {
+    //         $categories = Category::whereNull('parent_id')
+    //             ->with('children')
+    //             ->select('id', 'name', 'slug', 'image_path')
+    //             ->orderBy('name', 'asc')
+    //             ->get()
+    //             ->map(function ($category) {
+    //                 return [
+    //                     'value' => $category->id,
+    //                     'label' => $category->name,
+    //                     'slug' => $category->slug,
+    //                     'image_path' => $category->image_path,
+    //                     'children' => $category->children->map(function ($child) {
+    //                         return [
+    //                             'value' => $child->id,
+    //                             'label' => $child->name,
+    //                             'slug' => $child->slug,
+    //                             'image_path' => $child->image_path,
+    //                         ];
+    //                     }),
+    //                 ];
+    //             });
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Categories tree retrieved successfully',
-                'data' => $categories,
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve categories tree',
-                'error' => $e->getMessage(),
-            ], 500);
-        }
-    }
+    //         return response()->json([
+    //             'success' => true,
+    //             'message' => 'Categories tree retrieved successfully',
+    //             'data' => $categories,
+    //         ], 200);
+    //     } catch (\Exception $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'Failed to retrieve categories tree',
+    //             'error' => $e->getMessage(),
+    //         ], 500);
+    //     }
+    // }
 
     /**
      * Search categories by name
      */
-    public function searchCategories(Request $request): JsonResponse
+    // public function searchCategories(Request $request): JsonResponse
+    // {
+    //     try {
+    //         $query = $request->input('q', '');
+
+    //         $categories = Category::where('name', 'like', "%{$query}%")
+    //             ->select('id', 'parent_id', 'name', 'slug', 'image_path')
+    //             ->orderBy('name', 'asc')
+    //             ->limit(20)
+    //             ->get()
+    //             ->map(function ($category) {
+    //                 return [
+    //                     'value' => $category->id,
+    //                     'label' => $category->name,
+    //                     'slug' => $category->slug,
+    //                     'parent_id' => $category->parent_id,
+    //                     'image_path' => $category->image_path,
+    //                 ];
+    //             });
+
+    //         return response()->json([
+    //             'success' => true,
+    //             'message' => 'Categories found',
+    //             'data' => $categories,
+    //         ], 200);
+    //     } catch (\Exception $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'Search failed',
+    //             'error' => $e->getMessage(),
+    //         ], 500);
+    //     }
+    // }
+
+    /**
+     * Get products by category slug
+     */
+    public function getProductsByCategory(Request $request, string $slug): JsonResponse
     {
         try {
-            $query = $request->input('q', '');
+            $category = Category::where('slug', $slug)->firstOrFail();
 
-            $categories = Category::where('name', 'like', "%{$query}%")
-                ->select('id', 'parent_id', 'name', 'slug', 'image_path')
-                ->orderBy('name', 'asc')
-                ->limit(20)
-                ->get()
-                ->map(function ($category) {
-                    return [
-                        'value' => $category->id,
-                        'label' => $category->name,
-                        'slug' => $category->slug,
-                        'parent_id' => $category->parent_id,
-                        'image_path' => $category->image_path,
-                    ];
-                });
+            $products = $category->products()
+                ->where('status', 'published')
+                ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
+                ->with(['merchant:id,name,slug', 'coverImage', 'variants'])
+                ->paginate($request->input('per_page', 20));
 
             return response()->json([
                 'success' => true,
-                'message' => 'Categories found',
-                'data' => $categories,
+                'message' => 'Products retrieved successfully',
+                'category' => [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'slug' => $category->slug,
+                    'parent' => $category->parent,
+                ],
+                'data' => $products,
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Search failed',
+                'message' => 'Failed to retrieve products',
                 'error' => $e->getMessage(),
             ], 500);
         }

@@ -153,7 +153,7 @@ img {
 /* Subcopy */
 
 .subcopy {
-    border-top: 1px solid #e8e5ef;
+    border-top: 1px solid #ffa30e !important;
     margin-top: 25px;
     padding-top: 25px;
 }
