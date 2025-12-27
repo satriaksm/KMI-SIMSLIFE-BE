@@ -9,6 +9,7 @@ class Voucher extends Model
     protected $fillable = [
         'merchant_id',
         'event_id',
+        'voucher_name',
         'voucher_code',
         'voucher_status',
         'voucher_type',
