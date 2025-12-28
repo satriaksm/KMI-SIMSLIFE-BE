@@ -18,7 +18,7 @@ class ProductFactory extends Factory
         return [
             'merchant_id' => Merchant::factory(),
             'name' => ucfirst($name),
-            'slug' => Str::slug($name) . '-' . Str::random(5),
+            'slug' => strtolower(Str::slug($name) . '-' . Str::random(5)),
             'description' => $this->faker->paragraph(2),
             'min_purchase' => $this->faker->randomElement([1, 2, 5]),
             'status' => 'published',
@@ -72,7 +72,7 @@ class ProductFactory extends Factory
 
         return $this->state(fn(array $attributes) => [
             'name' => $name,
-            'slug' => Str::slug($name) . '-' . Str::random(5),
+            'slug' => strtolower(Str::slug($name) . '-' . Str::random(5)),
         ]);
     }
 }

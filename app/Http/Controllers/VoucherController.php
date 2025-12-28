@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Voucher;
+use App\Models\Merchant;
 use App\Models\VoucherUsage;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
 
 class VoucherController extends Controller
 {
@@ -262,6 +264,59 @@ class VoucherController extends Controller
         return response()->json([
             'message' => 'Voucher deleted successfully'
         ]);
+    }
+
+    protected function authorizeMerchant(Merchant $merchant)
+    {
+        abort_if($merchant->user_id !== Auth::id(), 403);
+    }
+
+    public function merchantStore(Request $request, Merchant $merchant)
+    {
+        $this->authorizeMerchant($merchant);
+
+        $data = $request->validate([
+            'voucher_name' => 'required|string|max:100',
+            'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
+            'voucher_type' => 'required|in:percent,fixed',
+            'value' => 'required|numeric|min:0',
+            'voucher_start_date' => 'required|date',
+            'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
+        ]);
+
+        return $merchant->vouchers()->create($data);
+    }
+
+    public function merchantIndex(Request $request, Merchant $merchant)
+    {
+        $this->authorizeMerchant($merchant);
+
+        return $merchant->vouchers()
+            ->latest()
+            ->paginate(10);
+    }
+
+    public function merchantUpdate(Request $request, Merchant $merchant, Voucher $voucher)
+    {
+        $this->authorizeMerchant($merchant);
+
+        abort_if($voucher->merchant_id !== $merchant->id, 404);
+
+        $voucher->update($request->validated());
+
+        return $voucher;
+    }
+
+    public function merchantDestroy(Merchant $merchant, Voucher $voucher)
+    {
+        $this->authorizeMerchant($merchant);
+
+        abort_if($voucher->merchant_id !== $merchant->id, 404);
+
+        $voucher->delete();
+
+        return response()->noContent();
+
     }
 
 }

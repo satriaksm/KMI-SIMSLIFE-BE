@@ -54,7 +54,7 @@ Route::prefix('public')->name('public.')->group(function () {
 
         // ✅ Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
-            ->where('slug', '^[a-z0-9-]+$')
+            ->where('slug', '^[A-Za-z0-9-]+$')
             ->name('show');
 
 
@@ -204,6 +204,13 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             'merchants/{merchant}/dashboard',
             [DashboardController::class, 'merchantDashboard']
         );
+
+        Route::prefix('merchant')->group(function () {
+            Route::get('{merchant}/vouchers', [VoucherController::class, 'merchantIndex']);
+            Route::post('{merchant}/vouchers', [VoucherController::class, 'merchantStore']);
+            Route::put('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantUpdate']);
+            Route::delete('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantDestroy']);
+        });
 
 
         // PRODUCT CRUD & NESTED
