@@ -6,6 +6,7 @@ use App\Models\Voucher;
 use App\Models\Merchant;
 use App\Models\VoucherUsage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -278,10 +279,15 @@ class VoucherController extends Controller
         $data = $request->validate([
             'voucher_name' => 'required|string|max:100',
             'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
+            'voucher_description' => 'nullable|string',
             'voucher_type' => 'required|in:percent,fixed',
             'value' => 'required|numeric|min:0',
             'voucher_start_date' => 'required|date',
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
+            'max_discount_amount' => 'nullable|numeric|min:0',
+            'min_purchase_amount' => 'nullable|numeric|min:0',
+            'usage_limit_per_user' => 'required|integer|min:1',
+            'usage_limit' => 'nullable|integer|min:1',
         ]);
 
         return $merchant->vouchers()->create($data);
@@ -291,9 +297,148 @@ class VoucherController extends Controller
     {
         $this->authorizeMerchant($merchant);
 
-        return $merchant->vouchers()
-            ->latest()
-            ->paginate(10);
+        $data = $request->validate([
+            'q' => ['nullable', 'string', 'max:255'],
+            'status' => ['nullable', 'in:active,inactive'],
+            'type' => ['nullable', 'in:percent,fixed'],
+            'is_expired' => ['nullable', 'boolean'],
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+            'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,value_asc,value_desc,usage_asc,usage_desc'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $query = $merchant->vouchers()
+            ->with('event:id,event_name')
+            ->withCount('usages');
+
+        if (!empty($data['q'])) {
+            $q = $data['q'];
+
+            $query->where(function ($sub) use ($q) {
+                $sub->where('voucher_name', 'like', "%{$q}%")
+                    ->orWhere('voucher_code', 'like', "%{$q}%")
+                    ->orWhereHas('event', function ($event) use ($q) {
+                        $event->where('event_name', 'like', "%{$q}%");
+                    });
+            });
+        }
+        if (!empty($data['status'])) {
+            $query->where('voucher_status', $data['status']);
+        }
+
+        if (!empty($data['type'])) {
+            $query->where('voucher_type', $data['type']);
+        }
+        if (array_key_exists('is_expired', $data)) {
+            if ($data['is_expired']) {
+                $query->whereDate('voucher_end_date', '<', now());
+            } else {
+                $query->whereDate('voucher_end_date', '>=', now());
+            }
+        }
+        if (!empty($data['start_date'])) {
+            $query->whereDate('voucher_start_date', '>=', $data['start_date']);
+        }
+
+        if (!empty($data['end_date'])) {
+            $query->whereDate('voucher_end_date', '<=', $data['end_date']);
+        }
+
+        $sortBy = $data['sort_by'] ?? 'newest';
+
+        switch ($sortBy) {
+            case 'oldest':
+                $query->orderBy('voucher_start_date', 'asc');
+                break;
+
+            case 'name_asc':
+                $query->orderBy('voucher_name', 'asc');
+                break;
+
+            case 'name_desc':
+                $query->orderBy('voucher_name', 'desc');
+                break;
+
+            case 'value_asc':
+                $query->orderBy('value', 'asc');
+                break;
+
+            case 'value_desc':
+                $query->orderBy('value', 'desc');
+                break;
+
+            case 'usage_asc':
+                // usages_count dari withCount()
+                $query->orderBy('usages_count', 'asc');
+                break;
+
+            case 'usage_desc':
+                $query->orderBy('usages_count', 'desc');
+                break;
+
+            case 'newest':
+            default:
+                $query->orderBy('voucher_start_date', 'desc');
+                break;
+        }
+
+        $vouchers = $query
+            ->orderByDesc('id')
+            ->paginate($data['per_page'] ?? 10);
+
+        $vouchers->getCollection()->transform(function ($voucher) {
+            $voucher->usage = "{$voucher->usages_count} / {$voucher->usage_limit}";
+            $voucher->is_expired = $voucher->voucher_end_date->isPast();
+
+            $voucher->makeHidden([
+                'created_at',
+                'updated_at',
+                'usage_limit',
+                'max_discount_amount',
+                'min_purchase_amount',
+                'usage_limit_per_user',
+                'voucher_description',
+                'event_id',
+            ]);
+
+            return $voucher;
+        });
+
+        return response()->json([
+            'data' => $vouchers->items(),
+            'meta' => [
+                'total' => $vouchers->total(),
+                'per_page' => $vouchers->perPage(),
+                'current_page' => $vouchers->currentPage(),
+                'last_page' => $vouchers->lastPage(),
+            ],
+        ]);
+    }
+
+    public function merchantShow(Merchant $merchant, Voucher $voucher)
+    {
+        $this->authorizeMerchant($merchant);
+
+        abort_if($voucher->merchant_id !== $merchant->id, 404);
+
+        // Load relasi event dan count usages
+        $voucher->load(['event:id,event_name']);
+        $voucher->loadCount('usages');
+
+        // Pastikan usages_count selalu integer (default 0)
+        $usagesCount = $voucher->usages_count ?? 0;
+        $voucher->usage = "{$usagesCount} / {$voucher->usage_limit}";
+        $voucher->is_expired = $voucher->voucher_end_date->isPast();
+
+        $voucher->makeHidden([
+            'created_at',
+            'updated_at',
+            'event_id',
+            'usages_count'
+        ]);
+
+        return response()->json(['data' => $voucher]);
     }
 
     public function merchantUpdate(Request $request, Merchant $merchant, Voucher $voucher)
@@ -302,7 +447,29 @@ class VoucherController extends Controller
 
         abort_if($voucher->merchant_id !== $merchant->id, 404);
 
-        $voucher->update($request->validated());
+        $validated = $request->validate([
+            'voucher_name' => 'required|string|max:255',
+            'voucher_code' => 'required|string|max:255',
+            'voucher_description' => 'required|string',
+            'voucher_type' => 'required|in:percent,fixed',
+            'value' => 'required|numeric|min:1',
+            'voucher_start_date' => 'required|date',
+            'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
+            'min_purchase_amount' => 'required|numeric|min:0',
+            'max_discount_amount' => 'nullable|numeric|min:0|required_if:voucher_type,percent',
+            'usage_limit_per_user' => 'required|integer|min:1',
+            'usage_limit' => 'required|integer|min:0',
+        ]);
+
+        // Jika tidak dikirim, set null
+        if (
+            $validated['max_discount_amount'] === 0
+        ) {
+            $validated['max_discount_amount'] = null;
+        }
+
+
+        $voucher->update($validated);
 
         return $voucher;
     }
@@ -313,10 +480,173 @@ class VoucherController extends Controller
 
         abort_if($voucher->merchant_id !== $merchant->id, 404);
 
+
         $voucher->delete();
 
         return response()->noContent();
 
     }
+
+    public function updateStatus(
+        Request $request,
+        Merchant $merchant,
+        Voucher $voucher
+    ) {
+        $this->authorizeMerchant($merchant);
+
+        $data = $request->validate([
+            'voucher_status' => ['required', 'in:active,inactive'],
+        ]);
+
+        $voucher->update([
+            'voucher_status' => $data['voucher_status'],
+        ]);
+
+        return response()->json([
+            'message' => 'Status voucher berhasil diperbarui.',
+            'voucher' => $voucher->fresh(),
+        ]);
+    }
+
+
+    public function bulkDelete(Request $request, Merchant $merchant)
+    {
+        $this->authorizeMerchant($merchant);
+
+        $data = $request->validate([
+            'voucher_ids' => ['required', 'array', 'min:1'],
+            'voucher_ids.*' => ['required', 'integer'],
+        ]);
+
+        $vouchers = Voucher::whereIn('id', $data['voucher_ids'])
+            ->where('merchant_id', $merchant->id)
+            ->get();
+
+        if ($vouchers->isEmpty()) {
+            return response()->json([
+                'message' => 'Voucher tidak ditemukan',
+            ], 404);
+        }
+
+        DB::transaction(function () use ($vouchers) {
+            foreach ($vouchers as $voucher) {
+                $voucher->delete();
+            }
+        });
+
+        return response()->json([
+            'message' => "Berhasil menghapus {$vouchers->count()} voucher",
+            'deleted_count' => $vouchers->count(),
+        ]);
+    }
+
+
+    public function bulkUpdateStatus(Request $request, Merchant $merchant)
+    {
+        $this->authorizeMerchant($merchant);
+
+        $data = $request->validate([
+            'voucher_ids' => ['required', 'array', 'min:1'],
+            'voucher_ids.*' => ['required', 'integer'],
+            'voucher_status' => ['required', 'in:active,inactive'],
+        ]);
+
+        $updated = Voucher::whereIn('id', $data['voucher_ids'])
+            ->where('merchant_id', $merchant->id)
+            ->update([
+                'voucher_status' => $data['voucher_status'],
+            ]);
+
+        return response()->json([
+            'message' => "Berhasil mengubah status {$updated} voucher",
+            'updated_count' => $updated,
+            'new_status' => $data['voucher_status'],
+        ]);
+    }
+
+    public function customerVouchersByMerchant(Request $request, Merchant $merchant)
+    {
+        $userId = $request->user()->id;
+
+        $vouchers = Voucher::query()
+            ->where('merchant_id', $merchant->id)
+            ->active()
+
+            // ⬅️ hitung total pemakaian
+            ->withCount('usages')
+
+            // ⬅️ hitung pemakaian user ini
+            ->withCount([
+                'usages as user_usages_count' => function ($q) use ($userId) {
+                    $q->where('user_id', $userId);
+                }
+            ])
+
+            ->get([
+                'id',
+                'voucher_name',
+                'voucher_code',
+                'voucher_type',
+                'voucher_description',
+                'voucher_end_date',
+                'value',
+                'max_discount_amount',
+                'min_purchase_amount',
+                'usage_limit_per_user',
+                'usage_limit',
+                'voucher_end_date',
+            ]);
+
+        // =============================
+        // FILTER + FORMAT (MANUAL)
+        // =============================
+        $vouchers = $vouchers->filter(function ($voucher) {
+            $totalUsed = $voucher->usages_count ?? 0;
+            $userUsed = $voucher->user_usages_count ?? 0;
+
+            // total limit
+            if (
+                $voucher->usage_limit !== null &&
+                $totalUsed >= $voucher->usage_limit
+            ) {
+                return false;
+            }
+
+            // per user limit
+            if (
+                $voucher->usage_limit_per_user !== null &&
+                $userUsed >= $voucher->usage_limit_per_user
+            ) {
+                return false;
+            }
+
+            return true;
+        })->values();
+
+        // =============================
+        // TRANSFORM RESPONSE
+        // =============================
+        $vouchers->each(function ($voucher) {
+            $voucher->usage = ($voucher->usages_count ?? 0) . ' / ' . $voucher->usage_limit;
+            $voucher->is_expired = $voucher->voucher_end_date
+                ? $voucher->voucher_end_date->isPast()
+                : false;
+
+            $voucher->makeHidden([
+                'created_at',
+                'updated_at',
+                'usages_count',
+                'user_usages_count',
+                'voucher_end_date',
+            ]);
+        });
+
+        return response()->json([
+            'data' => $vouchers,
+        ]);
+    }
+
+
+
 
 }

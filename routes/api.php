@@ -197,6 +197,8 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
     });
 
+    Route::get('checkout/{merchant}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
 
@@ -207,9 +209,17 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
         Route::prefix('merchant')->group(function () {
             Route::get('{merchant}/vouchers', [VoucherController::class, 'merchantIndex']);
+            Route::get('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantShow']);
             Route::post('{merchant}/vouchers', [VoucherController::class, 'merchantStore']);
             Route::put('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantUpdate']);
             Route::delete('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantDestroy']);
+
+            Route::post('{merchant}/vouchers/bulk-delete', [VoucherController::class, 'bulkDelete'])->name('merchant.bulk-delete');
+            Route::post('{merchant}/vouchers/bulk-update-status', [VoucherController::class, 'bulkUpdateStatus'])->name('merchant.bulk-update-status');
+
+
+            Route::patch('{merchant}/vouchers/{voucher}/status', [VoucherController::class, 'updateStatus'])
+                ->name('merchant.update-status');
         });
 
 

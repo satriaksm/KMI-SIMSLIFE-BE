@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Database\Eloquent\Model;
 
 class Voucher extends Model
@@ -45,11 +46,27 @@ class Voucher extends Model
     {
         return $this->hasMany(VoucherUsage::class);
     }
+    protected $appends = ['usage', 'is_expired'];
+
+    public function getUsageAttribute()
+    {
+        if ($this->usage_limit === null) {
+            return "{$this->usages_count} / ∞";
+        }
+
+        return "{$this->usages_count} / {$this->usage_limit}";
+    }
 
     public function scopeActive($query)
     {
         return $query->where('voucher_status', 'active')
             ->where('voucher_start_date', '<=', now())
             ->where('voucher_end_date', '>=', now());
+    }
+
+
+    public function getIsExpiredAttribute(): bool
+    {
+        return Carbon::parse($this->voucher_end_date)->isPast();
     }
 }
