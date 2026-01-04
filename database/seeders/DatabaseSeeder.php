@@ -16,6 +16,7 @@ class DatabaseSeeder extends Seeder
             SegmentationSeeder::class,
             PaguyubanSeeder::class,
             MerchantSeeder::class,
+            VoucherSeeder::class,
             JasaSeeder::class,
             PromoSeeder::class,
             ProductSeeder::class,
