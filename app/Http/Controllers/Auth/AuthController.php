@@ -23,7 +23,7 @@ class AuthController extends Controller
                 'name' => ['required', 'string', 'max:255'],
                 'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
                 'phone' => ['nullable', 'string', 'max:13'],
-                'nik' => ['required', 'string', 'size:16', 'unique:users,nik'],
+                'nik' => ['required', 'string', 'size:16'],
                 'password' => [
                     'required',
                     'confirmed',
@@ -52,6 +52,36 @@ class AuthController extends Controller
         }
 
         $data = $validator->validated();
+
+        // Cek manual NIK
+        $existingUser = User::where('nik', $data['nik'])->first();
+        if ($existingUser) {
+            if ($existingUser->hasVerifiedEmail()) {
+                return response()->json([
+                    'message' => 'NIK sudah terdaftar.',
+                    'errors' => ['nik' => ['NIK sudah terdaftar.']],
+                ], 422);
+            } else {
+                // Update existing user yang belum verifikasi
+                $existingUser->update([
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'phone' => $data['phone'] ?? null,
+                    'password' => Hash::make($data['password']),
+                    'status' => 'active',
+                ]);
+
+                // Tetapkan role default 'customer'
+                $role = Role::firstOrCreate(['name' => 'customer']);
+                $existingUser->roles()->syncWithoutDetaching([$role->id]);
+
+                event(new Registered($existingUser)); // kirim email verifikasi
+
+                return response()->json([
+                    'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',
+                ], 201);
+            }
+        }
 
         $user = User::create([
             'name' => $data['name'],
@@ -114,7 +144,7 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = $request->user()->load([
-            'roles:id,name', 
+            'roles:id,name',
             'merchants' => function ($query) {
                 $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
                     ->where('status', 'approved')

@@ -11,6 +11,8 @@ use App\Models\AddonGroupOption;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class CartController extends Controller
 {
@@ -32,6 +34,28 @@ class CartController extends Controller
         ]);
 
         return $image;
+    }
+
+    private function snapshotCoverImage(Product $product, CartItem $cartItem): ?string
+    {
+        $cover = $product->coverImage;
+        if (!$cover || empty($cover->image_path)) {
+            return null;
+        }
+
+        $disk = Storage::disk('public');
+        $sourcePath = $cover->image_path;
+
+        if (!$disk->exists($sourcePath)) {
+            return null;
+        }
+
+        $extension = pathinfo($sourcePath, PATHINFO_EXTENSION) ?: 'jpg';
+        $snapshotPath = 'cart_snapshots/' . $cartItem->id . '_' . Str::random(8) . '.' . $extension;
+
+        $disk->copy($sourcePath, $snapshotPath);
+
+        return $snapshotPath;
     }
 
     public function index()
@@ -136,9 +160,14 @@ class CartController extends Controller
                         : false;
 
                     /* =========================
-                     * SNAPSHOT IMAGE
+                     * SNAPSHOT IMAGE (DARI STORAGE)
                      * ========================= */
-                    $image = $this->applyImageSrcUrl($item->imageSnapshot, $isPublic);
+                    $image = null;
+                    if ($item->image_snapshot_path) {
+                        $image = (object) [
+                            'src_url' => asset('storage/' . $item->image_snapshot_path),
+                        ];
+                    }
 
                     /* =========================
                      * PRODUCT DETAIL IMAGES
@@ -253,7 +282,7 @@ class CartController extends Controller
                 fn($q) =>
                 $q->where('user_id', Auth::id())
             )
-            ->with(['variant', 'itemable'])
+            ->with(['variant', 'itemable', 'cart'])
             ->firstOrFail();
 
         $request->validate([
@@ -264,10 +293,22 @@ class CartController extends Controller
             ? $cartItem->variant->stock
             : ($cartItem->itemable->stock ?? 0);
 
-        if ($request->quantity > $availableStock) {
+        // ✅ Hitung total quantity dari SEMUA cart items dengan variant yang sama
+        $otherItemsQty = $cartItem->cart->items()
+            ->where('id', '!=', $cartItem->id) // exclude current item
+            ->where('itemable_id', $cartItem->itemable_id)
+            ->where('itemable_type', $cartItem->itemable_type)
+            ->where('product_variant_id', $cartItem->product_variant_id)
+            ->sum('quantity');
+
+        $totalAfterUpdate = $otherItemsQty + $request->quantity;
+
+        if ($totalAfterUpdate > $availableStock) {
             return response()->json([
-                'message' => 'Stock tidak mencukupi',
+                'message' => 'Stok tidak mencukupi. Total di keranjang akan melebihi stok tersedia.',
                 'available_stock' => $availableStock,
+                'current_other_items_qty' => $otherItemsQty,
+                'requested' => $request->quantity,
             ], 422);
         }
 
@@ -297,6 +338,11 @@ class CartController extends Controller
 
         return DB::transaction(function () use ($cartItem) {
             $cart = $cartItem->cart;
+
+            // Delete snapshot image from storage
+            if ($cartItem->image_snapshot_path) {
+                Storage::disk('public')->delete($cartItem->image_snapshot_path);
+            }
 
             $cartItem->delete();
 
@@ -444,6 +490,12 @@ class CartController extends Controller
                 'quantity' => $request->quantity,
             ]);
 
+            // Snapshot cover image to storage (if available)
+            $snapshotPath = $this->snapshotCoverImage($product, $cartItem);
+            if ($snapshotPath) {
+                $cartItem->update(['image_snapshot_path' => $snapshotPath]);
+            }
+
             /** ===============================
              * 7. SIMPAN ADDON SNAPSHOT
              * =============================== */
@@ -534,6 +586,12 @@ class CartController extends Controller
             if ($duplicateItem) {
                 $duplicateItem->increment('quantity', $cartItem->quantity);
                 $cartItem->addons()->delete();
+
+                // Delete snapshot image from storage before deleting cart item
+                if ($cartItem->image_snapshot_path) {
+                    Storage::disk('public')->delete($cartItem->image_snapshot_path);
+                }
+
                 $cartItem->delete();
 
                 return response()->json([
@@ -585,6 +643,13 @@ class CartController extends Controller
             ->firstOrFail();
 
         DB::transaction(function () use ($cart) {
+            // Delete all snapshot images from storage
+            foreach ($cart->items as $item) {
+                if ($item->image_snapshot_path) {
+                    Storage::disk('public')->delete($item->image_snapshot_path);
+                }
+            }
+
             $cart->items()->delete();
             $cart->delete();
         });

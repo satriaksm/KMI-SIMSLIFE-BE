@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\Category;
 use App\Models\Merchant;
+use App\Models\Voucher;
+use App\Models\VoucherUsage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -60,6 +62,25 @@ class DashboardController extends Controller
 
         /**
          * =========================
+         * STAT VOUCHER
+         * =========================
+         */
+        $totalVouchers = Voucher::where('merchant_id', $merchantId)->count();
+        $activeVouchers = Voucher::where('merchant_id', $merchantId)->active()->count();
+        $inactiveVouchers = Voucher::where('merchant_id', $merchantId)
+            ->where('voucher_status', 'inactive')
+            ->count();
+        $expiredVouchers = Voucher::where('merchant_id', $merchantId)
+            ->whereDate('voucher_end_date', '<', now())
+            ->count();
+
+        $voucherUsedCount = DB::table('voucher_usages')
+            ->join('vouchers', 'vouchers.id', '=', 'voucher_usages.voucher_id')
+            ->where('vouchers.merchant_id', $merchantId)
+            ->count();
+
+        /**
+         * =========================
          * CHART KATEGORI
          * =========================
          */
@@ -106,6 +127,13 @@ class DashboardController extends Controller
                 'archived' => $archived,
                 'low_stock' => $lowStock,
                 'out_of_stock' => $outOfStock,
+            ],
+            'voucher_stats' => [
+                'total' => $totalVouchers,
+                'active' => $activeVouchers,
+                'inactive' => $inactiveVouchers,
+                'expired' => $expiredVouchers,
+                'used' => $voucherUsedCount,
             ],
             'charts' => [
                 'status' => [

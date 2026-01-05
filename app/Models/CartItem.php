@@ -20,6 +20,9 @@ class CartItem extends Model
         'product_variant_id',
         'product_variant_name_snapshot',
 
+        // 🔒 SNAPSHOT COVER IMAGE
+        'image_snapshot_path',
+
     ];
     public function itemable()
     {
