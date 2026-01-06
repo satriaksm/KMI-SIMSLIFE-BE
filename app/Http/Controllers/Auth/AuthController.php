@@ -21,7 +21,7 @@ class AuthController extends Controller
             $request->all(),
             [
                 'name' => ['required', 'string', 'max:255'],
-                'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+                'email' => ['required', 'string', 'email', 'max:255'],
                 'phone' => ['nullable', 'string', 'max:13'],
                 'nik' => ['required', 'string', 'size:16'],
                 'password' => [
@@ -35,7 +35,6 @@ class AuthController extends Controller
                 'name.required' => 'Nama wajib diisi.',
                 'email.required' => 'Email wajib diisi.',
                 'email.email' => 'Format email tidak valid.',
-                'email.unique' => 'Email sudah terdaftar.',
                 'password.required' => 'Password wajib diisi.',
                 'password.confirmed' => 'Konfirmasi password tidak cocok.',
                 'password.min' => 'Password minimal 8 karakter.',
@@ -53,17 +52,47 @@ class AuthController extends Controller
 
         $data = $validator->validated();
 
+        // Cek manual email
+        $existingUserByEmail = User::where('email', $data['email'])->first();
+        if ($existingUserByEmail) {
+            if ($existingUserByEmail->hasVerifiedEmail()) {
+                return response()->json([
+                    'message' => 'Email sudah terdaftar.',
+                    'errors' => ['email' => ['Email sudah terdaftar.']],
+                ], 422);
+            } else {
+                // Update existing user yang belum verifikasi
+                $existingUserByEmail->update([
+                    'name' => $data['name'],
+                    'phone' => $data['phone'] ?? null,
+                    'nik' => $data['nik'],
+                    'password' => Hash::make($data['password']),
+                    'status' => 'active',
+                ]);
+
+                // Tetapkan role default 'customer'
+                $role = Role::firstOrCreate(['name' => 'customer']);
+                $existingUserByEmail->roles()->syncWithoutDetaching([$role->id]);
+
+                event(new Registered($existingUserByEmail)); // kirim email verifikasi
+
+                return response()->json([
+                    'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',
+                ], 201);
+            }
+        }
+
         // Cek manual NIK
-        $existingUser = User::where('nik', $data['nik'])->first();
-        if ($existingUser) {
-            if ($existingUser->hasVerifiedEmail()) {
+        $existingUserByNIK = User::where('nik', $data['nik'])->first();
+        if ($existingUserByNIK) {
+            if ($existingUserByNIK->hasVerifiedEmail()) {
                 return response()->json([
                     'message' => 'NIK sudah terdaftar.',
                     'errors' => ['nik' => ['NIK sudah terdaftar.']],
                 ], 422);
             } else {
                 // Update existing user yang belum verifikasi
-                $existingUser->update([
+                $existingUserByNIK->update([
                     'name' => $data['name'],
                     'email' => $data['email'],
                     'phone' => $data['phone'] ?? null,
@@ -73,9 +102,9 @@ class AuthController extends Controller
 
                 // Tetapkan role default 'customer'
                 $role = Role::firstOrCreate(['name' => 'customer']);
-                $existingUser->roles()->syncWithoutDetaching([$role->id]);
+                $existingUserByNIK->roles()->syncWithoutDetaching([$role->id]);
 
-                event(new Registered($existingUser)); // kirim email verifikasi
+                event(new Registered($existingUserByNIK)); // kirim email verifikasi
 
                 return response()->json([
                     'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',

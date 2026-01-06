@@ -135,7 +135,7 @@ Route::prefix('orders')->group(function () {
 Route::prefix('auth')->group(function () {
     // Public auth endpoints with rate limiting for security
     Route::post('register', [AuthController::class, 'register'])
-        ->middleware('throttle:5,60')
+        ->middleware('throttle:50,60')
         ->name('register');
 
     Route::post('login', [AuthController::class, 'login'])
@@ -152,13 +152,19 @@ Route::prefix('auth')->group(function () {
 
     // Email verification
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-        ->middleware(['signed', 'throttle:6,1'])
+        ->withoutMiddleware([
+            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+            \Illuminate\Session\Middleware\StartSession::class,
+            \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
+            \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
+        ])
+        ->middleware(['throttle:60,1'])
         ->name('api.verification.verify');
 
     Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
-            ->middleware('throttle:6,1')
+            ->middleware('throttle:60,1')
             ->name('api.verification.send');
     });
 });
