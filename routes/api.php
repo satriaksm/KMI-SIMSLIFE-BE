@@ -29,6 +29,7 @@ use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\ProductOptionValueImageController;
 
 // ============================================================
@@ -389,9 +390,10 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
 
     // ===== VOUCHER MANAGEMENT =====
     Route::prefix('vouchers')->name('vouchers.')->group(function () {
-        Route::get('/', [VoucherController::class, 'adminIndex'])->name('index');
-        Route::get('/{id}', [VoucherController::class, 'adminShow'])->name('show');
-        Route::delete('/{id}', [VoucherController::class, 'destroy'])->name('destroy');
+        Route::get('/', [AdminVoucherController::class, 'index']);
+        Route::post('/', [AdminVoucherController::class, 'store']);
+        Route::get('/{id}', [AdminVoucherController::class, 'show']);
+        Route::post('/{voucher}/assign-merchants', [AdminVoucherController::class, 'assignMerchants']);
     });
 
     // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
