@@ -21,9 +21,9 @@ class AuthController extends Controller
             $request->all(),
             [
                 'name' => ['required', 'string', 'max:255'],
-                'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+                'email' => ['required', 'string', 'email', 'max:255'],
                 'phone' => ['nullable', 'string', 'max:13'],
-                'nik' => ['required', 'string', 'size:16', 'unique:users,nik'],
+                'nik' => ['required', 'string', 'size:16'],
                 'password' => [
                     'required',
                     'confirmed',
@@ -35,7 +35,6 @@ class AuthController extends Controller
                 'name.required' => 'Nama wajib diisi.',
                 'email.required' => 'Email wajib diisi.',
                 'email.email' => 'Format email tidak valid.',
-                'email.unique' => 'Email sudah terdaftar.',
                 'password.required' => 'Password wajib diisi.',
                 'password.confirmed' => 'Konfirmasi password tidak cocok.',
                 'password.min' => 'Password minimal 8 karakter.',
@@ -52,6 +51,66 @@ class AuthController extends Controller
         }
 
         $data = $validator->validated();
+
+        // Cek manual email
+        $existingUserByEmail = User::where('email', $data['email'])->first();
+        if ($existingUserByEmail) {
+            if ($existingUserByEmail->hasVerifiedEmail()) {
+                return response()->json([
+                    'message' => 'Email sudah terdaftar.',
+                    'errors' => ['email' => ['Email sudah terdaftar.']],
+                ], 422);
+            } else {
+                // Update existing user yang belum verifikasi
+                $existingUserByEmail->update([
+                    'name' => $data['name'],
+                    'phone' => $data['phone'] ?? null,
+                    'nik' => $data['nik'],
+                    'password' => Hash::make($data['password']),
+                    'status' => 'active',
+                ]);
+
+                // Tetapkan role default 'customer'
+                $role = Role::firstOrCreate(['name' => 'customer']);
+                $existingUserByEmail->roles()->syncWithoutDetaching([$role->id]);
+
+                event(new Registered($existingUserByEmail)); // kirim email verifikasi
+
+                return response()->json([
+                    'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',
+                ], 201);
+            }
+        }
+
+        // Cek manual NIK
+        $existingUserByNIK = User::where('nik', $data['nik'])->first();
+        if ($existingUserByNIK) {
+            if ($existingUserByNIK->hasVerifiedEmail()) {
+                return response()->json([
+                    'message' => 'NIK sudah terdaftar.',
+                    'errors' => ['nik' => ['NIK sudah terdaftar.']],
+                ], 422);
+            } else {
+                // Update existing user yang belum verifikasi
+                $existingUserByNIK->update([
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'phone' => $data['phone'] ?? null,
+                    'password' => Hash::make($data['password']),
+                    'status' => 'active',
+                ]);
+
+                // Tetapkan role default 'customer'
+                $role = Role::firstOrCreate(['name' => 'customer']);
+                $existingUserByNIK->roles()->syncWithoutDetaching([$role->id]);
+
+                event(new Registered($existingUserByNIK)); // kirim email verifikasi
+
+                return response()->json([
+                    'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',
+                ], 201);
+            }
+        }
 
         $user = User::create([
             'name' => $data['name'],
@@ -114,7 +173,7 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = $request->user()->load([
-            'roles:id,name', 
+            'roles:id,name',
             'merchants' => function ($query) {
                 $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
                     ->where('status', 'approved')

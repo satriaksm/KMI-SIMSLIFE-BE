@@ -108,9 +108,24 @@ class SearchController extends Controller
         $perPage = $data['per_page'] ?? 12;
 
         $result = $query->paginate($perPage);
+        $items = collect($result->items())
+            ->map(function ($product) {
+                if ($product->coverImage) {
+                    $product->cover_image = route(
+                        'images.show',
+                        ['image' => $product->coverImage->id]
+                    );
+                } else {
+                    $product->cover_image = null;
+                }
+
+                unset($product->coverImage);
+                return $product;
+            })
+            ->values();
 
         return response()->json([
-            'data' => $result->items(),
+            'data' => $items,
             'meta' => [
                 'current_page' => $result->currentPage(),
                 'last_page' => $result->lastPage(),

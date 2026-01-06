@@ -27,6 +27,7 @@ return new class extends Migration {
             // 🔒 SNAPSHOT
             $table->string('itemable_name_snapshot');
             $table->string('product_variant_name_snapshot')->nullable();
+            $table->string('image_snapshot_path')->nullable();
 
             $table->integer('price_snapshot');
             $table->unsignedInteger('quantity')->default(1);
