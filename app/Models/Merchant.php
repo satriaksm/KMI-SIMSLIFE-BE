@@ -25,8 +25,10 @@ class Merchant extends Model
         'phone',
         'description',
         'logo_path',
+        'cover_path',
         'status',
         'response_at',
+        'operational_hours',
     ];
 
     protected $guarded = [
@@ -35,6 +37,7 @@ class Merchant extends Model
 
     protected $casts = [
         'response_at' => 'datetime',
+        'operational_hours' => 'array',
     ];
 
     protected $appends = ['logo_url'];

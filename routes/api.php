@@ -31,6 +31,8 @@ use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\ProductOptionValueImageController;
+// 🆕 ADDED FROM feat/rating-system: Profile Controller
+use App\Http\Controllers\ProfileController;
 
 // ============================================================
 // HEALTH CHECK
@@ -204,6 +206,13 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     // CUSTOMER ONLY: Register Merchant
     Route::middleware('role:customer')->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
+
+        // 🆕 ADDED FROM feat/rating-system: Profile Management
+        Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+            Route::get('/', 'show')->name('profile.show');
+            Route::post('/update', 'update')->name('profile.update');
+            Route::post('/change-password', 'changePassword')->name('profile.change-password');
+        });
     });
 
     Route::get('checkout/{merchant}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
@@ -266,6 +275,12 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             // Variant combination counter
             Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
                 ->where('slug', '^[a-z0-9-]+$');
+        });
+
+        // MERCHANTS
+        Route::prefix('merchants')->name('merchants.')->group(function () {
+            Route::get('/{id}/profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
+            Route::post('/{merchant}/update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
         });
     });
 
