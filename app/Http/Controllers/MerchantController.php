@@ -66,6 +66,7 @@ class MerchantController
     /**
      * ✅ NEW: Public endpoint untuk random merchants
      * Khusus untuk homepage/recommendation
+     * 
      */
     public function publicRandom(Request $request)
     {
@@ -319,4 +320,31 @@ class MerchantController
             'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
         ]);
     }
+    public function index()
+    {
+        $merchants = Merchant::with('addresses')->get();
+
+        return response()->json($merchants);
+    }
+    public function search(Request $request)
+    {
+        $keyword = $request->q;
+
+        $search = $request->input('search');
+
+        $merchants = Merchant::with(['products.category'])
+            ->when($search, function ($query) use ($search) {
+                $query->where('name', 'LIKE', "%$search%")
+                    ->orWhereHas('products', function ($q) use ($search) {
+                        $q->where('name', 'LIKE', "%$search%");
+                    })
+                    ->orWhereHas('products.category', function ($q) use ($search) {
+                        $q->where('name', 'LIKE', "%$search%");
+                    });
+            })
+            ->get();
+
+        return response()->json($merchants);
+        }
+
 }

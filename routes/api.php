@@ -29,6 +29,9 @@ Route::get('/', fn() => response()->json(['status' => 'API is running']));
 // ============================================================
 // PUBLIC ROUTES (No Auth Required)
 // ============================================================
+Route::get('/merchants', [MerchantController::class, 'index']);
+Route::get('/merchants/search', [MerchantController::class, 'search']);
+
 Route::prefix('public')->name('public.')->group(function () {
 
     // Public Products

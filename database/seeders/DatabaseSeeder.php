@@ -25,8 +25,11 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             RoleUserSeeder::class,
             SegmentationSeeder::class,
-            CommunityPostSeeder::class,
-            PostCommentSeeder::class,
+           // CommunityPostSeeder::class,
+            //PostCommentSeeder::class,
+            PaguyubanSeeder::class,
+            MerchantSeeder::class,
+            AddressSeeder::class,
         ]);
     }
 }
