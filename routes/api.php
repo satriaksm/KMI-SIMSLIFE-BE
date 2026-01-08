@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 // Controllers lama (Jasa / Promo / Orders)
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
-
+use App\Http\Controllers\PublicImageController;
 // Controllers baru
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
@@ -39,7 +39,7 @@ use App\Http\Controllers\ProfileController;
 // ============================================================
 Route::get('/', fn() => response()->json(['status' => 'API is running']));
 
-
+Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->where('path', '.*');
 // ============================================================
 // PUBLIC ROUTES (No Auth Required)
 // ============================================================
@@ -51,7 +51,7 @@ Route::prefix('public')->name('public.')->group(function () {
     Route::get('search', [SearchController::class, 'searchProducts'])->name('search');
     Route::get('search-merchants', [SearchController::class, 'searchMerchants'])->name('search.merchants');
 
-
+    Route::get('/jasas', [JasaController::class, 'index']);
     // Public Products
     Route::prefix('products')->name('products.')->group(function () {
         Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
