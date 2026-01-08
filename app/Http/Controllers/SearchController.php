@@ -79,15 +79,21 @@ class SearchController extends Controller
             'max_price' => ProductVariant::selectRaw('MAX(price)')
                 ->whereColumn('product_id', 'products.id'),
         ]);
-        $query->groupBy('products.id');
 
         if (isset($data['min_price'])) {
-            $query->having('min_price', '>=', $data['min_price']);
+            $query->whereRaw(
+                '(select MIN(price) from product_variants where product_id = products.id) >= ?',
+                [$data['min_price']]
+            );
         }
 
         if (isset($data['max_price'])) {
-            $query->having('max_price', '<=', $data['max_price']);
+            $query->whereRaw(
+                '(select MAX(price) from product_variants where product_id = products.id) <= ?',
+                [$data['max_price']]
+            );
         }
+
 
         $sort = $data['sort'] ?? 'latest';
 
@@ -102,9 +108,24 @@ class SearchController extends Controller
         $perPage = $data['per_page'] ?? 12;
 
         $result = $query->paginate($perPage);
+        $items = collect($result->items())
+            ->map(function ($product) {
+                if ($product->coverImage) {
+                    $product->cover_image = route(
+                        'images.show',
+                        ['image' => $product->coverImage->id]
+                    );
+                } else {
+                    $product->cover_image = null;
+                }
+
+                unset($product->coverImage);
+                return $product;
+            })
+            ->values();
 
         return response()->json([
-            'data' => $result->items(),
+            'data' => $items,
             'meta' => [
                 'current_page' => $result->currentPage(),
                 'last_page' => $result->lastPage(),

@@ -14,21 +14,26 @@ class EmailVerificationController extends Controller
     {
         $frontend = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
 
+        $redirect = function (string $url) {
+            // Jangan pakai helper redirect() di route API karena bisa butuh session middleware.
+            return response('', 302)->header('Location', $url);
+        };
+
         // Validasi signature dari email
         if (!URL::hasValidSignature($request)) {
-            return redirect()->away($frontend . '/verify-email?status=invalid');
+            return $redirect($frontend . '/verify-email?status=invalid');
         }
 
         $user = User::findOrFail($id);
 
         // Cek hash email
         if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
-            return redirect()->away($frontend . '/verify-email?status=invalid');
+            return $redirect($frontend . '/verify-email?status=invalid');
         }
 
         // Jika sudah pernah terverifikasi
         if ($user->hasVerifiedEmail()) {
-            return redirect()->away($frontend . '/verify-email?status=already_verified&email=' . urlencode($user->email));
+            return $redirect($frontend . '/verify-email?status=already_verified&email=' . urlencode($user->email));
         }
 
         // Tandai sebagai terverifikasi
@@ -36,7 +41,7 @@ class EmailVerificationController extends Controller
             event(new Verified($user));
         }
 
-        return redirect()->away($frontend . '/verify-email?status=verified&email=' . urlencode($user->email));
+        return $redirect($frontend . '/verify-email?status=verified&email=' . urlencode($user->email));
     }
 
     public function send(Request $request)

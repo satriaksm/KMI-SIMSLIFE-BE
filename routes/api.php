@@ -17,6 +17,7 @@ use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PaguyubanController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\SegmentationController;
@@ -24,10 +25,11 @@ use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Product\ProductController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\Auth\EmailVerificationController;
+use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
-use App\Http\Controllers\Admin\AdminDashboardController;
-use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\ProductOptionValueImageController;
 
 // ============================================================
@@ -55,7 +57,7 @@ Route::prefix('public')->name('public.')->group(function () {
 
         // ✅ Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
-            ->where('slug', '^[a-z0-9-]+$')
+            ->where('slug', '^[A-Za-z0-9-]+$')
             ->name('show');
 
 
@@ -136,7 +138,7 @@ Route::prefix('orders')->group(function () {
 Route::prefix('auth')->group(function () {
     // Public auth endpoints with rate limiting for security
     Route::post('register', [AuthController::class, 'register'])
-        ->middleware('throttle:5,60')
+        ->middleware('throttle:50,60')
         ->name('register');
 
     Route::post('login', [AuthController::class, 'login'])
@@ -153,13 +155,19 @@ Route::prefix('auth')->group(function () {
 
     // Email verification
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-        ->middleware(['signed', 'throttle:6,1'])
+        ->withoutMiddleware([
+            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+            \Illuminate\Session\Middleware\StartSession::class,
+            \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
+            \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
+        ])
+        ->middleware(['throttle:60,1'])
         ->name('api.verification.verify');
 
-    Route::middleware(['web', 'auth:sanctum'])->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
-            ->middleware('throttle:6,1')
+            ->middleware('throttle:60,1')
             ->name('api.verification.send');
     });
 });
@@ -198,8 +206,31 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
     });
 
+    Route::get('checkout/{merchant}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
+
+        Route::get(
+            'merchants/{merchant}/dashboard',
+            [DashboardController::class, 'merchantDashboard']
+        );
+
+        Route::prefix('merchant')->group(function () {
+            Route::get('{merchant}/vouchers', [VoucherController::class, 'merchantIndex']);
+            Route::get('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantShow']);
+            Route::post('{merchant}/vouchers', [VoucherController::class, 'merchantStore']);
+            Route::put('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantUpdate']);
+            Route::delete('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantDestroy']);
+
+            Route::post('{merchant}/vouchers/bulk-delete', [VoucherController::class, 'bulkDelete'])->name('merchant.bulk-delete');
+            Route::post('{merchant}/vouchers/bulk-update-status', [VoucherController::class, 'bulkUpdateStatus'])->name('merchant.bulk-update-status');
+
+
+            Route::patch('{merchant}/vouchers/{voucher}/status', [VoucherController::class, 'updateStatus'])
+                ->name('merchant.update-status');
+        });
+
 
         // PRODUCT CRUD & NESTED
         Route::prefix('products')->name('products.')->group(function () {
@@ -279,7 +310,6 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
-Route::middleware('web')->group(function () { });
 
 // ============================================================
 // PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
@@ -313,7 +343,7 @@ Route::prefix('orders')->group(function () {
 // ============================================================
 // ADMIN ROUTES (Protected)
 // ============================================================
-Route::middleware(['auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
+Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(function () {
 
     // ===== DASHBOARD STATISTICS =====
     Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
@@ -381,12 +411,12 @@ Route::middleware(['auth:sanctum', 'verified', 'role:admin'])->prefix('admin')->
 
     // ===== EVENT MANAGEMENT =====
     Route::prefix('events')->name('events.')->group(function () {
-        Route::get('/', [EventController::class, 'adminIndex'])->name('index');
-        Route::post('/', [EventController::class, 'store'])->name('store');
-        Route::get('/{id}', [EventController::class, 'adminShow'])->name('show');
-        Route::put('/{id}', [EventController::class, 'update'])->name('update');
-        Route::delete('/{id}', [EventController::class, 'destroy'])->name('destroy');
-        Route::post('/{event}/invite-merchants', [EventController::class, 'inviteMerchants'])->name('invite-merchants');
+        Route::get('/', [AdminEventController::class, 'index'])->name('index');
+        Route::post('/', [AdminEventController::class, 'store'])->name('store');
+        Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
+        Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
+        Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
+        Route::post('/{event}/invite-merchants', [AdminEventController::class, 'inviteMerchants'])->name('invite-merchants');
     });
 
     // ===== VOUCHER MANAGEMENT =====
