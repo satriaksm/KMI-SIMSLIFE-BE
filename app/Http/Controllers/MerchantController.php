@@ -65,6 +65,7 @@ class MerchantController extends Controller
     /**
      * Public endpoint untuk random merchants
      * Khusus untuk homepage/recommendation
+     * 
      */
     public function publicRandom(Request $request)
     {
