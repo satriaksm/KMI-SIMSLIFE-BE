@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CartItem;
 use App\Models\Image;
 use App\Models\Product;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 
 class ImageController extends Controller
@@ -42,6 +45,21 @@ class ImageController extends Controller
         return response()->json(['message' => 'Forbidden'], 403);
     }
 
+    public function cartSnapshot(Request $request, CartItem $cartItem)
+    {
+        if ($request->hasValidSignature()) {
+            return $this->streamCartSnapshot($cartItem);
+        }
+
+        $userId = $request->user()?->id ?? Auth::id();
+        abort_if(!$userId, 401, 'Unauthenticated');
+
+        $cartItem->loadMissing('cart:id,user_id');
+        abort_if((int) $cartItem->cart?->user_id !== (int) $userId, 403, 'Forbidden');
+
+        return $this->streamCartSnapshot($cartItem);
+    }
+
     private function stream(Image $image)
     {
         $disk = config('filesystems.product_disk', 'private'); // Pastikan disk sesuai config
@@ -57,6 +75,26 @@ class ImageController extends Controller
         }, 200, [
             'Content-Type' => $image->mime_type ?? 'image/jpeg',
             'Cache-Control' => 'public, max-age=31536000',
+        ]);
+    }
+
+    private function streamCartSnapshot(CartItem $cartItem)
+    {
+        $path = $cartItem->image_snapshot_path;
+        abort_if(empty($path), 404);
+
+        /** @var FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+        abort_if(!$disk->exists($path), 404);
+
+        $stream = $disk->readStream($path);
+        $mime = $disk->mimeType($path) ?: 'image/jpeg';
+
+        return response()->stream(function () use ($stream) {
+            fpassthru($stream);
+        }, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'private, max-age=31536000',
         ]);
     }
 }

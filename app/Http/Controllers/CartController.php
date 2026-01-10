@@ -165,7 +165,12 @@ class CartController extends Controller
                     $image = null;
                     if ($item->image_snapshot_path) {
                         $image = (object) [
-                            'src_url' => asset('storage/' . $item->image_snapshot_path),
+                            'src_url' => URL::signedRoute(
+                                'cart-snapshots.show',
+                                ['cartItem' => $item->id],
+                                now()->addMinutes(60),
+                                false
+                            ),
                         ];
                     }
 
