@@ -423,7 +423,7 @@ class VoucherController extends Controller
     {
         $this->authorizeMerchant($merchant);
 
-        abort_if($voucher->merchant_id !== $merchant->id, 404);
+        abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
         // Load relasi event dan count usages
         $voucher->load(['event:id,event_name']);
@@ -448,7 +448,7 @@ class VoucherController extends Controller
     {
         $this->authorizeMerchant($merchant);
 
-        abort_if($voucher->merchant_id !== $merchant->id, 404);
+        abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
         $validated = $request->validate([
             'voucher_name' => 'required|string|max:255',
@@ -481,7 +481,7 @@ class VoucherController extends Controller
     {
         $this->authorizeMerchant($merchant);
 
-        abort_if($voucher->merchant_id !== $merchant->id, 404);
+        abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
 
         $voucher->delete();
