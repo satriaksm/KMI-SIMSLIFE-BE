@@ -84,7 +84,8 @@ class MerchantSeeder extends Seeder
         $this->command->info('- Creating pending merchants (5)...');
         foreach ($customers->random(min(5, $customers->count())) as $user) {
             // Skip if user already has merchant
-            if ($user->merchants()->exists()) continue;
+            if ($user->merchants()->exists())
+                continue;
 
             $merchant = Merchant::factory()
                 ->pending()

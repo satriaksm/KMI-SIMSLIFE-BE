@@ -6,6 +6,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
+use App\Http\Middleware\AllowOptions;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -21,9 +22,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'audit' => \App\Http\Middleware\AuditLogMiddleware::class,
             'sanitize' => \App\Http\Middleware\SanitizeInputMiddleware::class,
         ]);
-
-        // Global API middleware
-        $middleware->api(prepend: [
+        $middleware->append([
+            AllowOptions::class,
             HandleCors::class,
         ]);
         $middleware->api(prepend: [
@@ -35,5 +35,5 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         //
     })->withProviders([
-        App\Providers\AuthServiceProvider::class,
-    ])->create();
+            App\Providers\AuthServiceProvider::class,
+        ])->create();

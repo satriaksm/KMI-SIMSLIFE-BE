@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 // Controllers lama (Jasa / Promo / Orders)
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
-
+use App\Http\Controllers\PublicImageController;
 // Controllers baru
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
@@ -31,22 +31,27 @@ use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\ProductOptionValueImageController;
+// 🆕 ADDED FROM feat/rating-system: Profile Controller
+use App\Http\Controllers\ProfileController;
 
 // ============================================================
 // HEALTH CHECK
 // ============================================================
 Route::get('/', fn() => response()->json(['status' => 'API is running']));
 
-
+Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->where('path', '.*');
 // ============================================================
 // PUBLIC ROUTES (No Auth Required)
 // ============================================================
+Route::get('/merchants', [MerchantController::class, 'index']);
+Route::get('/merchants/search', [MerchantController::class, 'search']);
+
 Route::prefix('public')->name('public.')->group(function () {
 
     Route::get('search', [SearchController::class, 'searchProducts'])->name('search');
     Route::get('search-merchants', [SearchController::class, 'searchMerchants'])->name('search.merchants');
 
-
+    Route::get('/jasas', [JasaController::class, 'index']);
     // Public Products
     Route::prefix('products')->name('products.')->group(function () {
         Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
@@ -201,6 +206,13 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     // CUSTOMER ONLY: Register Merchant
     Route::middleware('role:customer')->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
+
+        // 🆕 ADDED FROM feat/rating-system: Profile Management
+        Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+            Route::get('/', 'show')->name('profile.show');
+            Route::post('/update', 'update')->name('profile.update');
+            Route::post('/change-password', 'changePassword')->name('profile.change-password');
+        });
     });
 
     Route::get('checkout/{merchant}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
@@ -263,6 +275,12 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             // Variant combination counter
             Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
                 ->where('slug', '^[a-z0-9-]+$');
+        });
+
+        // MERCHANTS
+        Route::prefix('merchants')->name('merchants.')->group(function () {
+            Route::get('/{id}/profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
+            Route::post('/{merchant}/update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
         });
     });
 
