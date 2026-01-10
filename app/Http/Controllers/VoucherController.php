@@ -267,9 +267,12 @@ class VoucherController extends Controller
         ]);
     }
 
-    protected function authorizeMerchant(Merchant $merchant)
+    protected function authorizeMerchant(Merchant $merchant): void
     {
-        abort_if($merchant->user_id !== Auth::id(), 403);
+        $userId = request()->user()?->id ?? Auth::id();
+
+        abort_if(!$userId, 401, 'Unauthenticated');
+        abort_if((int) $merchant->user_id !== (int) $userId, 403, 'Forbidden');
     }
 
     public function merchantStore(Request $request, Merchant $merchant)
