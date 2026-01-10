@@ -169,7 +169,7 @@ class CartController extends Controller
                                 'cart-snapshots.show',
                                 ['cartItem' => $item->id],
                                 now()->addMinutes(60),
-                                false
+                                true
                             ),
                         ];
                     }
