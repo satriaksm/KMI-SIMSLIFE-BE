@@ -152,11 +152,23 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Login user menggunakan session (Sanctum SPA)
+        if ($user->isBlocked()) {
+            $message = match($user->status) {
+                'suspended' => 'Akun Anda telah di-suspend. Hubungi admin untuk informasi lebih lanjut.',
+                'inactive' => 'Akun Anda tidak aktif. Hubungi admin untuk mengaktifkan kembali.',
+                default => 'Akses ditolak',
+            };
+            
+            return response()->json([
+                'message' => $message,
+                'status' => $user->status,
+            ], 403);
+        }
+
         Auth::login($user);
         $request->session()->regenerate();
 
-        // Setelah login sukses dan $user sudah valid:
+        // Log login event
         DB::table('user_login_events')->insert([
             'user_id' => $user->id,
             'logged_in_at' => now(),

@@ -371,13 +371,6 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::post('/{id}/unsuspend', [AdminUserController::class, 'unsuspend'])->name('unsuspend');
         Route::patch('/{id}/status', [AdminUserController::class, 'changeStatus'])->name('change-status');
         Route::post('/{id}/notify', [AdminUserController::class, 'notify'])->name('notify');
-
-        // Merchant Approval (nested under users)
-        Route::prefix('merchants')->name('merchants.')->group(function () {
-            Route::get('/{merchantId}', [AdminUserController::class, 'showMerchant'])->name('show');
-            Route::patch('/{merchantId}/approve', [AdminUserController::class, 'approveMerchant'])->name('approve');
-            Route::patch('/{merchantId}/reject', [AdminUserController::class, 'rejectMerchant'])->name('reject');
-        });
     });
 
     // ===== MERCHANT MANAGEMENT =====
