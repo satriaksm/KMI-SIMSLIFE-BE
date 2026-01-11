@@ -267,9 +267,12 @@ class VoucherController extends Controller
         ]);
     }
 
-    protected function authorizeMerchant(Merchant $merchant)
+    protected function authorizeMerchant(Merchant $merchant): void
     {
-        abort_if($merchant->user_id !== Auth::id(), 403);
+        $userId = request()->user()?->id ?? Auth::id();
+
+        abort_if(!$userId, 401, 'Unauthenticated');
+        abort_if((int) $merchant->user_id !== (int) $userId, 403, 'Forbidden');
     }
 
     public function merchantStore(Request $request, Merchant $merchant)
@@ -420,7 +423,7 @@ class VoucherController extends Controller
     {
         $this->authorizeMerchant($merchant);
 
-        abort_if($voucher->merchant_id !== $merchant->id, 404);
+        abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
         // Load relasi event dan count usages
         $voucher->load(['event:id,event_name']);
@@ -445,7 +448,7 @@ class VoucherController extends Controller
     {
         $this->authorizeMerchant($merchant);
 
-        abort_if($voucher->merchant_id !== $merchant->id, 404);
+        abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
         $validated = $request->validate([
             'voucher_name' => 'required|string|max:255',
@@ -478,7 +481,7 @@ class VoucherController extends Controller
     {
         $this->authorizeMerchant($merchant);
 
-        abort_if($voucher->merchant_id !== $merchant->id, 404);
+        abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
 
         $voucher->delete();

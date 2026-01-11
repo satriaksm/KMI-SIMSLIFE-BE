@@ -195,7 +195,7 @@ class ProductController
                 'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
 
                 // Merchant & categories
-                'merchant:id,name,slug,phone',
+                'merchant.addresses.district.city.province',
                 'categories:id,name,slug',
 
                 // Options
@@ -341,16 +341,25 @@ class ProductController
         // Minimal pembelian
         $minPurchase = (int) ($product->min_purchase ?? 1);
 
-        // Alamat Merchant
-        $addr = $product->merchant?->primaryAddress;
-        $merchantAddress = $addr?->full_address
-            ?? implode(', ', array_filter([
-                $addr?->detail,
-                $addr?->village?->name,
-                $addr?->district?->name,
-                $addr?->city?->name,
-                $addr?->province?->name,
-            ]));
+        // ✅ Format Alamat Merchant dan tambahkan ke merchant object
+        if ($product->merchant && $product->merchant->addresses) {
+            $address = $product->merchant->addresses->first();
+            if ($address) {
+                $parts = array_filter([
+                    $address->detail,
+                    $address->district?->name,
+                    $address->city?->name,
+                    $address->province?->name
+                ]);
+                $product->merchant->address = implode(', ', $parts);
+            } else {
+                $product->merchant->address = null;
+            }
+        } else {
+            if ($product->merchant) {
+                $product->merchant->address = null;
+            }
+        }
 
         // ✅ Ambil 5 produk lain dari merchant yang sama, acak, exclude produk ini
         $relatedProducts = Product::where('merchant_id', $product->merchant_id)
@@ -413,7 +422,6 @@ class ProductController
                 'option2' => $option2 ? $option2->option_name : null,
             ],
             'min_purchase' => $minPurchase,
-            'merchant_address' => $merchantAddress,
             'related_products' => $relatedProducts,
         ]);
     }
