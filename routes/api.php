@@ -180,7 +180,7 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-Route::middleware(['auth:sanctum'])->get('/me', [AuthController::class, 'me'])->name('me');
+
 
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
@@ -213,12 +213,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     Route::middleware('role:customer')->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
         
-    // 🆕 ADDED FROM feat/rating-system: Profile Management
-    Route::prefix('profile')->controller(ProfileController::class)->group(function () {
-        Route::get('/', 'show')->name('profile.show');
-        Route::post('/update', 'update')->name('profile.update');
-        Route::post('/change-password', 'changePassword')->name('profile.change-password');
-        });
 
     });
 

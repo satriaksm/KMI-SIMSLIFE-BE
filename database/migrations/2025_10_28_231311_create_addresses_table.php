@@ -11,30 +11,32 @@ return new class extends Migration {
     public function up(): void
     {
         // gunakan nama tabel yang benar: addresses
-        Schema::create('addresses', function (Blueprint $table) {
-            $table->id();
+        if (!Schema::hasTable('addresses')) {
+            Schema::create('addresses', function (Blueprint $table) {
+                $table->id();
 
-            // relasi polimorfik: addressable_id & addressable_type + index
-            $table->morphs('addressable');
+                // relasi polimorfik: addressable_id & addressable_type + index
+                $table->morphs('addressable');
 
-            // ID wilayah (tanpa FK, sesuaikan jika punya master table)
-            $table->foreignId('province_id')->constrained('provinces')->cascadeOnUpdate()->restrictOnDelete();
-            $table->foreignId('city_id')->constrained('cities')->cascadeOnUpdate()->restrictOnDelete();
-            $table->foreignId('district_id')->constrained('districts')->cascadeOnUpdate()->restrictOnDelete();
-            $table->foreignId('village_id')->constrained('villages')->cascadeOnUpdate()->restrictOnDelete();
+                // ID wilayah (tanpa FK, sesuaikan jika punya master table)
+                $table->foreignId('province_id')->constrained('provinces')->cascadeOnUpdate()->restrictOnDelete();
+                $table->foreignId('city_id')->constrained('cities')->cascadeOnUpdate()->restrictOnDelete();
+                $table->foreignId('district_id')->constrained('districts')->cascadeOnUpdate()->restrictOnDelete();
+                $table->foreignId('village_id')->constrained('villages')->cascadeOnUpdate()->restrictOnDelete();
 
-            // koordinat
-            $table->decimal('latitude', 10, 7)->nullable();
-            $table->decimal('longitude', 10, 7)->nullable();
+                // koordinat
+                $table->decimal('latitude', 10, 7)->nullable();
+                $table->decimal('longitude', 10, 7)->nullable();
 
-            // detail alamat
-            $table->text('detail')->nullable();
-            $table->string('label', 50)->nullable();
+                // detail alamat
+                $table->text('detail')->nullable();
+                $table->string('label', 50)->nullable();
 
-            $table->timestamps();
+                $table->timestamps();
 
-            $table->index(['province_id', 'city_id', 'district_id', 'village_id']);
-        });
+                $table->index(['province_id', 'city_id', 'district_id', 'village_id']);
+            });
+        }
     }
 
     /**
