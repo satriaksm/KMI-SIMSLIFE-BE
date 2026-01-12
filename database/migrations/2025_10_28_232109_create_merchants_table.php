@@ -19,7 +19,9 @@ return new class extends Migration {
             $table->string('slug')->unique()->index();
             $table->text('description')->nullable();
             $table->string('logo_path')->nullable();
+            $table->string('cover_path')->nullable();
             $table->string('phone')->nullable();
+            $table->json('operational_hours')->nullable();
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');
             $table->text('rejection_reason')->nullable();
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->onDelete('set null');

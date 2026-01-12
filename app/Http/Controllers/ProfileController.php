@@ -28,7 +28,7 @@ class ProfileController
             'nik' => 'sometimes|string|max:20',
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'profile_picture' => 'sometimes|image|mimes:jpeg,png,jpg,gif,svg|max:5048',
-            'full_address' => 'sometimes|string',
+            // 'full_address' => 'sometimes|string',
         ]);
 
         if ($request->hasFile('profile_picture')) {
@@ -46,7 +46,7 @@ class ProfileController
         $user->phone = $validatedData['phone'] ?? $user->phone;
         $user->nik = $validatedData['nik'] ?? $user->nik;
         $user->email = $validatedData['email'] ?? $user->email;
-        $user->full_address = $validatedData['full_address'] ?? $user->full_address;
+        // $user->full_address = $validatedData['full_address'] ?? $user->full_address;
 
         // Do NOT create/update related `addresses` from this endpoint. The user's full address
         // is stored on `users.full_address` (plain text). If you need address relations, use
