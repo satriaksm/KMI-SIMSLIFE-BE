@@ -65,7 +65,7 @@ class MerchantSeeder extends Seeder
                     'district_id' => 1, // Banjarsari
                     'village_id' => 1, // Banyuanyar
                     'detail' => fake()->streetAddress(),
-                    'label' => 'Kantor',
+                    'label' => 'utama',
                     'latitude' => -7.5568 + (rand(-100, 100) / 10000),
                     'longitude' => 110.8282 + (rand(-100, 100) / 10000),
                 ]);
@@ -102,7 +102,7 @@ class MerchantSeeder extends Seeder
                 'district_id' => 1,
                 'village_id' => 1,
                 'detail' => fake()->streetAddress(),
-                'label' => 'Kantor',
+                'label' => 'utama',
             ]);
 
             $merchantCount++;

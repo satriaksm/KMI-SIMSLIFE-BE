@@ -40,7 +40,7 @@ class Merchant extends Model
         'operational_hours' => 'array',
     ];
 
-    protected $appends = ['logo_url'];
+    protected $appends = ['logo_url', 'banner_url'];
 
     protected static function boot()
     {
@@ -156,13 +156,21 @@ class Merchant extends Model
     // Accessor untuk Logo URL
     public function getLogoUrlAttribute()
     {
-        if ($this->logo_path) {
-            if (str_starts_with($this->logo_path, 'http')) {
-                return $this->logo_path;
-            }
-            return url('storage/' . $this->logo_path);
+        if (empty($this->logo_path)) {
+            return null;
         }
-        return null;
+
+        return url('api/merchant-profile-pictures/' . $this->id);
+    }
+
+    // Accessor untuk Banner/Cover URL
+    public function getBannerUrlAttribute()
+    {
+        if (empty($this->cover_path)) {
+            return null;
+        }
+
+        return url('api/merchant-banner/' . $this->id);
     }
 
     /**

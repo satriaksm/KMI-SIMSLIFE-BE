@@ -9,7 +9,9 @@ return [
         'me',
         'admin/*',
         'broadcasting/auth',
-        'auth/*'
+        'auth/*',
+        'profile',
+        'profile/*'
     ],
 
     'allowed_methods' => ['*'],

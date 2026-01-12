@@ -7,9 +7,12 @@ use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\URL;
 
 class User extends Authenticatable implements MustVerifyEmail
 {
@@ -38,6 +41,12 @@ class User extends Authenticatable implements MustVerifyEmail
         'remember_token',
     ];
 
+    protected $appends = [
+        'profile_picture',
+        'full_address',
+        'address',
+    ];
+
     protected function casts(): array
     {
         return [
@@ -56,6 +65,20 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasMany(Merchant::class);
     }
 
+    // Banyak alamat (polimorfik)
+    public function addresses(): MorphMany
+    {
+        return $this->morphMany(Address::class, 'addressable');
+    }
+
+    // Alamat utama
+    public function primaryAddress(): MorphOne
+    {
+        return $this->morphOne(Address::class, 'addressable')
+            ->where('label', 'utama')
+            ->latest();
+    }
+
     public function hasRole(string $role): bool
     {
         return $this->roles->contains(fn($r) => strcasecmp($r->name, $role) === 0);
@@ -72,7 +95,25 @@ class User extends Authenticatable implements MustVerifyEmail
         if (empty($this->profile_picture_path)) {
             return url('storage/profilepics/profilepicdefault.png');
         }
-        return url('storage/' . ltrim($this->profile_picture_path, '/'));
+
+        return URL::signedRoute('profile-pictures.show', ['user' => $this->id]);
+    }
+
+    public function getFullAddressAttribute(): string
+    {
+        $address = $this->relationLoaded('primaryAddress')
+            ? $this->primaryAddress
+            : $this->primaryAddress()
+                ->with(['province', 'city', 'district', 'village'])
+                ->first();
+
+        return $address?->full_address ?? '';
+    }
+
+    // Backward compatible alias (some clients use `address`)
+    public function getAddressAttribute(): string
+    {
+        return $this->full_address;
     }
 
     public function createdEvents()

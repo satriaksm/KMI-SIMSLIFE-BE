@@ -31,6 +31,10 @@ return Application::configure(basePath: dirname(__DIR__))
             VerifyCsrfToken::class
         ]);
         $middleware->statefulApi();
+        // 🆕 ADDED from feat/rating-system: Global middleware untuk OPTIONS request
+        $middleware->append([
+            AllowOptions::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
