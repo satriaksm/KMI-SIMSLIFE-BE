@@ -359,6 +359,14 @@ class MerchantController extends Controller
      */
     public function updateMyMerchant(Request $request, $merchant)
     {
+        $user = $request->user();
+        Log::info('Merchant update request:', [
+            'merchant_id' => $merchant,
+            'user_id' => $user->id,
+            'input' => $request->all(),
+            'files' => array_keys($request->allFiles())
+        ]);
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:20'],
