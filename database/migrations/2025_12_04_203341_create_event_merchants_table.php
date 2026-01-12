@@ -14,7 +14,10 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('merchant_id')->constrained()->onDelete('cascade');
             $table->foreignId('event_id');
-            $table->enum('status', ['pending', 'accepted', 'rejected'])->default('pending');
+            $table->enum('status', ['pending', 'accepted', 'cancelled', 'rejected', 'removed'])->default('pending');
+            $table->text('removal_reason')->nullable(); 
+            $table->foreignId('removed_by')->nullable()->constrained('users')->onDelete('set null'); 
+            $table->timestamp('removed_at')->nullable(); 
             $table->timestamp('responded_at')->nullable();
             $table->timestamps();
 

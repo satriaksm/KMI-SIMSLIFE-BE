@@ -411,6 +411,12 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
         Route::post('/{event}/invite-merchants', [AdminEventController::class, 'inviteMerchants'])->name('invite-merchants');
+        Route::post('/{event}/vouchers/attach', [AdminEventController::class, 'attachVoucher']);
+        Route::delete('/{event}/vouchers/{voucher}', [AdminEventController::class, 'detachVoucher']);
+        Route::get('/vouchers/available', [AdminEventController::class, 'availableVouchers']);
+        Route::delete('/{event}/merchants/{merchant}', [AdminEventController::class, 'removeMerchant']);
+        Route::post('/{event}/merchants/{merchant}/restore', [AdminEventController::class, 'restoreMerchant']);
+        Route::get('/{event}/merchants/removed', [AdminEventController::class, 'removedMerchants']);
     });
 
     // ===== VOUCHER MANAGEMENT =====
@@ -419,6 +425,8 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::post('/', [AdminVoucherController::class, 'store']);
         Route::get('/{id}', [AdminVoucherController::class, 'show']);
         Route::post('/{voucher}/assign-merchants', [AdminVoucherController::class, 'assignMerchants']);
+        Route::post('/{id}/activate', [AdminVoucherController::class, 'activate'])->name('activate');
+        Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
     });
 
     // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====

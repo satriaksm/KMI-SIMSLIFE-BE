@@ -44,6 +44,14 @@ class Voucher extends Model
         return $this->belongsTo(Event::class);
     }
 
+    public function merchantsVoucher()
+    {
+        return $this->belongsToMany(Merchant::class, 'voucher_merchants')
+            ->withPivot('status', 'voucher_type', 'discount_value', 'activated_at')
+            ->withTimestamps();
+    }
+
+
     public function usages()
     {
         return $this->hasMany(VoucherUsage::class);

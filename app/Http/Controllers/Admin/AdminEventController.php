@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Event;
+use App\Models\Merchant;
+use App\Models\Voucher;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class AdminEventController extends Controller
 {
@@ -48,12 +51,28 @@ class AdminEventController extends Controller
     {
         $event = Event::with([
             'creator:id,name',
-            'merchants.segmentation' => function ($query) {
-                $query->where('event_merchants.status', 'accepted');
+            'merchants' => function ($query) {
+                $query->withPivot([
+                    'status',
+                    'removal_reason',
+                    'removed_by',
+                    'removed_at',
+                    'responded_at'
+                ]);
             },
+            'merchants.segmentation',
+            'merchants.paguyuban',
             'vouchers'
         ])
-            ->withCount(['merchants', 'vouchers'])
+            ->withCount([
+                'merchants as active_merchants_count' => function ($query) {
+                    $query->where('event_merchants.status', 'accepted');
+                },
+                'merchants as removed_merchants_count' => function ($query) {
+                    $query->where('event_merchants.status', 'removed');
+                },
+                'vouchers'
+            ])
             ->findOrFail($id);
 
         return response()->json(['data' => $event]);
@@ -164,5 +183,291 @@ class AdminEventController extends Controller
         return response()->json([
             'message' => 'Merchants invited successfully',
         ]);
+    }
+
+    /**
+     * ADMIN: Attach multiple vouchers to event and all participating merchants
+     */
+    public function attachVoucher(Request $request, Event $event)
+    {
+        $validated = $request->validate([
+            'voucher_ids' => 'required|array|min:1',
+            'voucher_ids.*' => 'required|exists:vouchers,id',
+        ]);
+
+        try {
+            $attachedCount = 0;
+            $errors = [];
+
+            DB::transaction(function () use ($event, $validated, &$attachedCount, &$errors) {
+                foreach ($validated['voucher_ids'] as $voucherId) {
+                    try {
+                        $voucher = Voucher::findOrFail($voucherId);
+
+                        // Check if voucher already attached to this event
+                        if ($voucher->event_id === $event->id) {
+                            $errors[] = "Voucher {$voucher->voucher_code} sudah terhubung dengan event ini";
+                            continue;
+                        }
+
+                        // Check if voucher attached to other event
+                        if ($voucher->event_id !== null) {
+                            $errors[] = "Voucher {$voucher->voucher_code} sudah terhubung dengan event lain";
+                            continue;
+                        }
+
+                        // Update voucher to link with event
+                        $voucher->update([
+                            'event_id' => $event->id,
+                        ]);
+
+                        // Get all accepted merchants in this event
+                        $acceptedMerchants = $event->merchants()
+                            ->wherePivot('status', 'accepted')
+                            ->pluck('merchants.id');
+
+                        // Attach voucher to all participating merchants
+                        foreach ($acceptedMerchants as $merchantId) {
+                            $voucher->merchantsVoucher()->syncWithoutDetaching([
+                                $merchantId => [
+                                    'status' => 'inactive',
+                                    'voucher_type' => null,
+                                    'discount_value' => null,
+                                    'activated_at' => null,
+                                ]
+                            ]);
+                        }
+
+                        $attachedCount++;
+                    } catch (\Exception $e) {
+                        $errors[] = "Gagal menambahkan voucher ID {$voucherId}: {$e->getMessage()}";
+                    }
+                }
+            });
+
+            $message = $attachedCount > 0 
+                ? "{$attachedCount} voucher berhasil ditambahkan ke event"
+                : "Tidak ada voucher yang ditambahkan";
+
+            return response()->json([
+                'message' => $message,
+                'attached_count' => $attachedCount,
+                'errors' => $errors,
+            ], $attachedCount > 0 ? 200 : 400);
+
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Attach voucher failed', [
+                'event_id' => $event->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal menambahkan voucher',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * ADMIN: Detach voucher from event
+     */
+    public function detachVoucher(Request $request, Event $event, Voucher $voucher)
+    {
+        try {
+            DB::transaction(function () use ($voucher) {
+                // Remove event_id from voucher
+                $voucher->update([
+                    'event_id' => null,
+                ]);
+
+                // Detach from all merchants
+                $voucher->merchantsVoucher()->detach();
+            });
+
+            return response()->json([
+                'message' => 'Voucher berhasil dilepas dari event',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Detach voucher failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal melepas voucher dari event',
+            ], 400);
+        }
+    }
+
+    /**
+     * ADMIN: Get available vouchers (not attached to any event)
+     * Hanya voucher yang belum terhubung dengan event manapun
+     */
+    public function availableVouchers(Request $request)
+    {
+        try {
+            $vouchers = Voucher::whereNull('event_id')
+                ->where('voucher_status', 'active') 
+                ->with(['usages'])
+                ->withCount('usages')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            $vouchers->transform(function ($voucher) {
+                $voucher->is_available = true;
+                $voucher->can_be_attached = true;
+                return $voucher;
+            });
+
+            Log::info('[AdminEvent] Available vouchers fetched', [
+                'count' => $vouchers->count(),
+                'vouchers' => $vouchers->pluck('voucher_code')->toArray(),
+            ]);
+
+            return response()->json([
+                'data' => $vouchers,
+                'count' => $vouchers->count(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Get available vouchers failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal memuat daftar voucher',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * ADMIN: Remove merchant from event
+     */
+    public function removeMerchant(Request $request, Event $event, Merchant $merchant)
+    {
+        $validated = $request->validate([
+            'removal_reason' => 'required|string|max:500',
+        ]);
+
+        try {
+            DB::transaction(function () use ($event, $merchant, $validated, $request) {
+                // Update pivot status to 'removed'
+                $event->merchants()->updateExistingPivot($merchant->id, [
+                    'status' => 'removed',
+                    'removal_reason' => $validated['removal_reason'],
+                    'removed_by' => $request->user()->id,
+                    'removed_at' => now(),
+                ]);
+
+                // Optional: Detach vouchers from this merchant
+                // (jika voucher event tidak boleh digunakan lagi)
+                $eventVouchers = $event->vouchers;
+                foreach ($eventVouchers as $voucher) {
+                    $voucher->merchantsVoucher()->detach($merchant->id);
+                }
+
+                Log::info('[AdminEvent] Merchant removed from event', [
+                    'event_id' => $event->id,
+                    'merchant_id' => $merchant->id,
+                    'reason' => $validated['removal_reason'],
+                    'removed_by' => $request->user()->id,
+                ]);
+            });
+
+            return response()->json([
+                'message' => 'Merchant berhasil dikeluarkan dari event',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Remove merchant failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal mengeluarkan merchant dari event',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * ADMIN: Restore removed merchant
+     */
+    public function restoreMerchant(Request $request, Event $event, Merchant $merchant)
+    {
+        try {
+            $event->merchants()->updateExistingPivot($merchant->id, [
+                'status' => 'accepted',
+                'removal_reason' => null,
+                'removed_by' => null,
+                'removed_at' => null,
+            ]);
+
+            Log::info('[AdminEvent] Merchant restored to event', [
+                'event_id' => $event->id,
+                'merchant_id' => $merchant->id,
+                'restored_by' => $request->user()->id,
+            ]);
+
+            return response()->json([
+                'message' => 'Merchant berhasil dikembalikan ke event',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Restore merchant failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal mengembalikan merchant',
+            ], 500);
+        }
+    }
+
+    /**
+     * ADMIN: Get removed merchants history
+     */
+    public function removedMerchants(Event $event)
+    {
+        try {
+            $removedMerchants = $event->merchants()
+                ->wherePivot('status', 'removed')
+                ->withPivot([
+                    'status',
+                    'removal_reason',
+                    'removed_by',
+                    'removed_at',
+                    'responded_at'
+                ])
+                ->with([
+                    'segmentation',
+                    'paguyuban',
+                ])
+                ->get()
+                ->map(function ($merchant) {
+                    return [
+                        'id' => $merchant->id,
+                        'name' => $merchant->name,
+                        'slug' => $merchant->slug,
+                        'logo_url' => $merchant->logo_url,
+                        'segmentation' => $merchant->segmentation,
+                        'removal_info' => [
+                            'reason' => $merchant->pivot->removal_reason,
+                            'removed_by' => $merchant->pivot->removed_by,
+                            'removed_at' => $merchant->pivot->removed_at,
+                        ],
+                    ];
+                });
+
+            return response()->json([
+                'data' => $removedMerchants,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Get removed merchants failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal memuat riwayat merchant yang dikeluarkan',
+            ], 500);
+        }
     }
 }

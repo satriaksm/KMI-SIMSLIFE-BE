@@ -117,23 +117,43 @@ class AdminVoucherController extends Controller
         }
     }
 
-    // Delete voucher
-    public function destroy($id)
+    // Activate voucher
+    public function activate($id)
     {
         try {
             $voucher = Voucher::findOrFail($id);
-            if ($voucher->usages()->count() > 0) {
-                return response()->json([
-                    'message' => 'Voucher sudah digunakan, tidak dapat dihapus'
-                ], 400);
-            }
-            $voucher->delete();
-            return response()->json(['message' => 'Voucher berhasil dihapus']);
+            $voucher->update(['voucher_status' => 'active']);
+            
+            return response()->json([
+                'message' => 'Voucher berhasil diaktifkan',
+                'data' => $voucher
+            ]);
         } catch (ModelNotFoundException $e) {
             return response()->json(['message' => 'Voucher tidak ditemukan'], 404);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Gagal menghapus voucher',
+                'message' => 'Gagal mengaktifkan voucher',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    // Deactivate voucher
+    public function deactivate($id)
+    {
+        try {
+            $voucher = Voucher::findOrFail($id);
+            $voucher->update(['voucher_status' => 'inactive']);
+            
+            return response()->json([
+                'message' => 'Voucher berhasil dinonaktifkan',
+                'data' => $voucher
+            ]);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['message' => 'Voucher tidak ditemukan'], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Gagal menonaktifkan voucher',
                 'error' => $e->getMessage(),
             ], 500);
         }
