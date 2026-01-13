@@ -106,6 +106,9 @@ Route::prefix('community')->name('community.')->group(function () {
 // ============================================================
 Route::get('images/{image}', [ImageController::class, 'show'])
     ->name('images.show');
+// Cart item snapshot images (served via API - avoids direct /storage access)
+Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot'])
+    ->name('cart-snapshots.show');
 Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
     ->name('images.product-option-value.show');
 
