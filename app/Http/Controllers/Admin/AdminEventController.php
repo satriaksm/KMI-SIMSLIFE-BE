@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class AdminEventController extends Controller
 {
@@ -467,6 +468,88 @@ class AdminEventController extends Controller
 
             return response()->json([
                 'message' => 'Gagal memuat riwayat merchant yang dikeluarkan',
+            ], 500);
+        }
+    }
+
+    /**
+     * Export Events to PDF (Admin)
+     *
+     * Export list of events to PDF with filters.
+     *
+     * @authenticated
+     *
+     * @queryParam status string Filter by status. Example: published
+     * @queryParam search string Search query. Example: Festival
+     *
+     * @response 200 application/pdf
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $admin = $request->user();
+
+            // Build query with same filters as index
+            $query = Event::with(['creator:id,name'])
+                ->withCount(['merchants', 'vouchers']);
+
+            // Apply filters
+            if ($request->filled('status')) {
+                $query->where('status', $request->status);
+            }
+
+            if ($search = $request->input('search')) {
+                $query->where('event_name', 'like', "%{$search}%");
+            }
+
+            $events = $query->latest('event_start_date')->limit(500)->get();
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'total_events' => $events->count(),
+                'filters' => [
+                    'status' => $request->input('status') ?: 'Semua',
+                    'search' => $request->input('search') ?: '-',
+                ],
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-event', [
+                'events' => $events,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'events-report-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Export PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
             ], 500);
         }
     }

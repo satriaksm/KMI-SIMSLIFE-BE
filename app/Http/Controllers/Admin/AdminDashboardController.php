@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class AdminDashboardController extends Controller
 {
@@ -588,5 +589,85 @@ class AdminDashboardController extends Controller
         $revenueGrowth = $previous['revenue'] > 0 ? round((($latest['revenue'] - $previous['revenue']) / $previous['revenue']) * 100, 1) : 0;
 
         return ['orders_growth' => $ordersGrowth, 'revenue_growth' => $revenueGrowth];
+    }
+
+    /**
+     * Export dashboard statistics to PDF
+     *
+     * @authenticated
+     *
+     * @queryParam period string Period for statistics (all_time, last_30_days). Example: last_30_days
+     *
+     * @response 200 application/pdf
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $period = $request->input('period', 'last_30_days');
+            $user = $request->user();
+
+            // Collect all dashboard data
+            $data = [
+                'overview' => $this->getOverviewStats($period),
+                'products' => [
+                    'total' => Product::where('status', 'published')->count(),
+                    'by_category' => $this->getProductsByCategory(),
+                ],
+                'merchants' => [
+                    'total' => Merchant::where('status', 'approved')->count(),
+                    'by_segmentation' => $this->getMerchantsBySegmentation(),
+                ],
+                'recent_orders' => $this->getRecentOrders(),
+                'recent_reports' => $this->getRecentReports(),
+            ];
+
+            // Add metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $user->name ?? 'Admin',
+                'generated_by_email' => $user->email ?? '-',
+                'period' => $period === 'last_30_days' ? '30 Hari Terakhir' : 'Semua Waktu',
+                'period_start' => $period === 'last_30_days' ? Carbon::now()->subDays(30)->format('d F Y') : '-',
+                'period_end' => now()->format('d F Y'),
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            } else {
+                Log::warning('[AdminDashboard] Logo file not found at: ' . $logoPath);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-dashboard', [
+                'data' => $data,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'portrait')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'dashboard-report-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminDashboard] Export PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
     }
 }

@@ -8,6 +8,7 @@ use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\OrderItem;
 use Illuminate\Http\Request;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 
@@ -472,5 +473,103 @@ class AdminMerchantController extends Controller
             'orders' => $orders,
             'product_orders' => $productOrders,
         ]);
+    }
+
+    /**
+     * Export Merchants to PDF (Admin)
+     *
+     * Export list of merchants to PDF with filters.
+     *
+     * @authenticated
+     *
+     * @queryParam status string Filter by status. Example: approved
+     * @queryParam segmentation_id integer Filter by segmentation. Example: 1
+     * @queryParam search string Search query. Example: Toko
+     *
+     * @response 200 application/pdf
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $admin = $request->user();
+
+            // Build query with same filters as index
+            $query = Merchant::with([
+                'user:id,name,email,phone',
+                'segmentation:id,name',
+                'primaryAddress',
+            ])->withCount('products');
+
+            // Apply filters
+            if ($request->filled('status')) {
+                $query->where('status', $request->status);
+            }
+
+            if ($request->filled('segmentation_id')) {
+                $query->where('segmentation_id', $request->segmentation_id);
+            }
+
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhereHas('user', function ($qu) use ($search) {
+                            $qu->where('name', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                        });
+                });
+            }
+
+            $merchants = $query->latest()->limit(500)->get();
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'total_merchants' => $merchants->count(),
+                'filters' => [
+                    'status' => $request->input('status') ?: 'Semua',
+                    'segmentation' => $request->input('segmentation_id') ?: 'Semua',
+                    'search' => $request->input('search') ?: '-',
+                ],
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-merchant', [
+                'merchants' => $merchants,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'merchants-report-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminMerchant] Export PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
     }
 }

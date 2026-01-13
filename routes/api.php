@@ -349,8 +349,9 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     // ===== DASHBOARD STATISTICS =====
     Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
     Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']);
+    Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']); // ✅ NEW
 
-    // ===== DASHBOARD USER MANAGEMENT (NEW) =====
+    // ===== DASHBOARD USER MANA0GEMENT (NEW) =====
     Route::get('/dashboard', [AdminUserController::class, 'dashboard'])->name('dashboard');
 
     // ===== USER MANAGEMENT =====
@@ -360,6 +361,7 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/roles', [AdminUserController::class, 'getRoles'])->name('roles');
         Route::get('/{id}/login-trend', [AdminUserController::class, 'loginTrend'])->name('login-trend');
         Route::get('/overview-stats', [AdminUserController::class, 'overviewStats'])->name('overview-stats');
+        Route::get('/export-pdf', [AdminUserController::class, 'exportPdf'])->name('export-pdf'); // ✅ NEW
         Route::get('/{id}', [AdminUserController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminUserController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminUserController::class, 'destroy'])->name('destroy');
@@ -377,6 +379,7 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     Route::prefix('merchants')->name('merchants.')->group(function () {
         Route::get('/', [AdminMerchantController::class, 'index'])->name('index');
         Route::post('/', [AdminMerchantController::class, 'store'])->name('store');
+        Route::get('/export-pdf', [AdminMerchantController::class, 'exportPdf'])->name('export-pdf'); // ✅ NEW
         Route::get('/{id}', [AdminMerchantController::class, 'show'])->name('show');
         Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
         Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
@@ -407,6 +410,7 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     Route::prefix('events')->name('events.')->group(function () {
         Route::get('/', [AdminEventController::class, 'index'])->name('index');
         Route::post('/', [AdminEventController::class, 'store'])->name('store');
+        Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf'); 
         Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');

@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class AdminUserController extends Controller
 {
@@ -1430,5 +1431,108 @@ class AdminUserController extends Controller
                 'series' => $series,
             ],
         ]);
+    }
+
+    /**
+     * Export Customers to PDF (Admin)
+     *
+     * Export list of customers to PDF with filters.
+     *
+     * @authenticated
+     *
+     * @queryParam status string Filter by status. Example: active
+     * @queryParam role string Filter by role. Example: customer
+     * @queryParam search string Search query. Example: John
+     *
+     * @response 200 application/pdf
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $admin = $request->user();
+
+            // Build query with same filters as index
+            $query = User::with(['roles', 'merchants.segmentation']);
+
+            // Apply filters
+            if ($search = $request->input('search')) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('nik', 'like', "%{$search}%");
+                });
+            }
+
+            if ($status = $request->input('status')) {
+                $query->where('status', $status);
+            }
+
+            if ($request->filled('role')) {
+                if ($request->role === 'customer') {
+                    $query->whereHas('roles', function ($q) {
+                        $q->where('name', 'customer');
+                    })
+                    ->whereDoesntHave('roles', function ($q) {
+                        $q->where('name', '!=', 'customer');
+                    });
+                } else {
+                    $query->whereHas('roles', function ($q) use ($request) {
+                        $q->where('name', $request->role);
+                    });
+                }
+            }
+
+            $users = $query->latest()->limit(500)->get();
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'total_users' => $users->count(),
+                'filters' => [
+                    'status' => $request->input('status') ?: 'Semua',
+                    'role' => $request->input('role') ?: 'Semua',
+                    'search' => $request->input('search') ?: '-',
+                ],
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-customer', [
+                'users' => $users,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'customers-report-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminUser] Export PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
     }
 }
