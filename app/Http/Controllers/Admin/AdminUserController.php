@@ -1535,4 +1535,100 @@ class AdminUserController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Export User Detail to PDF (Admin)
+     *
+     * Export single user detail to PDF.
+     *
+     * @authenticated
+     *
+     * @urlParam id integer required The ID of the user. Example: 1
+     *
+     * @response 200 application/pdf
+     */
+    public function exportUserDetailPdf(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+            
+            // Get user with full details
+            $user = User::with([
+                'roles',
+                'merchants.segmentation',
+                'merchants.products',
+                'activityMetric',
+            ])
+                ->withCount(['merchants', 'communityPosts', 'postComments'])
+                ->findOrFail($id);
+
+            // Get login trend (last 30 days)
+            $loginTrend = [];
+            try {
+                $response = DB::table('user_login_events')
+                    ->selectRaw('DATE(logged_in_at) as date, COUNT(*) as total')
+                    ->where('user_id', $id)
+                    ->where('logged_in_at', '>=', now()->subDays(30))
+                    ->groupByRaw('DATE(logged_in_at)')
+                    ->orderBy('date')
+                    ->get();
+
+                $map = $response->keyBy('date');
+                
+                for ($i = 29; $i >= 0; $i--) {
+                    $date = now()->subDays($i)->toDateString();
+                    $loginTrend[] = [
+                        'date' => $date,
+                        'total' => (int) ($map[$date]->total ?? 0),
+                    ];
+                }
+            } catch (\Exception $e) {
+                Log::warning('[AdminUser] Login trend query failed: ' . $e->getMessage());
+            }
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+            ];
+
+            // Load logo
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-user-detail', [
+                'user' => $user,
+                'loginTrend' => $loginTrend,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'portrait')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'user-detail-' . $user->id . '-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminUser] Export user detail PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
+    }
 }

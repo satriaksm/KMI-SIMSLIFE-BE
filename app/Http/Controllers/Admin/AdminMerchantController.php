@@ -275,21 +275,49 @@ class AdminMerchantController extends Controller
             $merchant = Merchant::with([
                 'user.roles',
                 'segmentation',
-                'addresses',
+                'paguyuban',
+                'addresses.province',
+                'addresses.city',
+                'addresses.district',
+                'addresses.village',
                 'products' => function ($query) {
-                    $query->latest()->limit(10);
+                    $query->with('categories')->latest()->limit(20);
                 },
-                'vouchers',
-                'events',
+                'products.categories',
+                'vouchers' => function ($query) {
+                    $query->with('usages')->latest()->limit(10);
+                },
+                'events' => function ($query) {
+                    $query->wherePivot('status', 'accepted')->latest();
+                },
             ])
-                ->withCount(['products', 'vouchers'])
+                ->withCount(['products', 'vouchers', 'events'])
                 ->findOrFail($id);
 
-            return response()->json(['data' => $merchant]);
+            // Additional aggregated data
+            $aggregatedData = [
+                'total_active_vouchers' => $merchant->vouchers()->where('voucher_status', 'active')->count(),
+                'total_expired_vouchers' => $merchant->vouchers()->where('voucher_status', 'expired')->count(),
+                'total_published_products' => $merchant->products()->where('status', 'published')->count(),
+                'total_draft_products' => $merchant->products()->where('status', 'draft')->count(),
+                'total_active_events' => $merchant->events()->wherePivot('status', 'accepted')->count(),
+            ];
+
+            return response()->json([
+                'data' => array_merge(
+                    $merchant->toArray(),
+                    ['aggregated' => $aggregatedData]
+                )
+            ]);
         } catch (\Throwable $e) {
+            Log::error('[AdminMerchant] Show detail failed', [
+                'error' => $e->getMessage(),
+                'id' => $id,
+            ]);
+
             return response()->json([
                 'message' => 'Failed to fetch merchant detail',
-                'error' => $e->getMessage(),
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
     }
@@ -561,6 +589,88 @@ class AdminMerchantController extends Controller
             return $pdf->download($filename);
         } catch (\Exception $e) {
             Log::error('[AdminMerchant] Export PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
+    }
+
+    /**
+     * Export Merchant Detail to PDF (Admin)
+     *
+     * Export single merchant detail to PDF.
+     *
+     * @authenticated
+     *
+     * @urlParam id integer required The ID of the merchant. Example: 1
+     *
+     * @response 200 application/pdf
+     */
+    public function exportMerchantDetailPdf(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+            
+            // ✅ Get merchant with FULL details including categories relationship
+            $merchant = Merchant::with([
+                'user.roles',
+                'segmentation',
+                'addresses.province',
+                'addresses.city',
+                'addresses.district',
+                'addresses.village',
+                'products' => function ($query) {
+                    $query->with('categories')->latest()->limit(20);
+                },
+                'vouchers' => function ($query) {
+                    $query->with('usages')->latest();
+                },
+                'events' => function ($query) {
+                    $query->latest();
+                },
+            ])
+                ->withCount(['products', 'vouchers'])
+                ->findOrFail($id);
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-merchant-detail', [
+                'merchant' => $merchant,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'portrait')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'merchant-detail-' . $merchant->id . '-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminMerchant] Export merchant detail PDF failed', [
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
