@@ -25,6 +25,7 @@ class DatabaseSeeder extends Seeder
             PostCommentSeeder::class,
             ReportReasonSeeder::class,
             ContentReportSeeder::class,
+            AddressSeeder::class,
             EventSeeder::class,
         ]);
     }
