@@ -16,6 +16,16 @@ class MerchantSeeder extends Seeder
     {
         $this->command->info('Creating merchants...');
 
+        $operationalHours = [
+            'monday' => ['is_open' => true, 'open' => '09:00', 'close' => '20:07'],
+            'tuesday' => ['is_open' => true, 'open' => '06:02', 'close' => '22:00'],
+            'wednesday' => ['is_open' => true, 'open' => '06:02', 'close' => '23:02'],
+            'thursday' => ['is_open' => true, 'open' => '06:00', 'close' => '22:00'],
+            'friday' => ['is_open' => false],
+            'saturday' => ['is_open' => true, 'open' => '06:01', 'close' => '23:00'],
+            'sunday' => ['is_open' => true, 'open' => '06:00', 'close' => '18:00'],
+        ];
+
         // Get users with customer role
         $customers = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))
             ->get();
@@ -56,6 +66,7 @@ class MerchantSeeder extends Seeder
                         'segmentation_id' => $segmentations->random()->id,
                         'paguyuban_id' => $paguyubans->random()?->id,
                         'reviewed_by' => $adminUser?->id,
+                        'operational_hours' => $operationalHours,
                     ]);
 
                 // Create address for merchant
@@ -65,7 +76,7 @@ class MerchantSeeder extends Seeder
                     'district_id' => 1, // Banjarsari
                     'village_id' => 1, // Banyuanyar
                     'detail' => fake()->streetAddress(),
-                    'label' => 'Kantor',
+                    'label' => 'utama',
                     'latitude' => -7.5568 + (rand(-100, 100) / 10000),
                     'longitude' => 110.8282 + (rand(-100, 100) / 10000),
                 ]);
@@ -94,6 +105,7 @@ class MerchantSeeder extends Seeder
                     'user_id' => $user->id,
                     'segmentation_id' => $segmentations->random()->id,
                     'paguyuban_id' => $paguyubans->random()?->id,
+                    'operational_hours' => $operationalHours,
                 ]);
 
             $merchant->addresses()->create([
@@ -102,7 +114,7 @@ class MerchantSeeder extends Seeder
                 'district_id' => 1,
                 'village_id' => 1,
                 'detail' => fake()->streetAddress(),
-                'label' => 'Kantor',
+                'label' => 'utama',
             ]);
 
             $merchantCount++;

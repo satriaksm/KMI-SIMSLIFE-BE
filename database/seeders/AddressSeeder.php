@@ -44,8 +44,8 @@ class AddressSeeder extends Seeder
                 'city_id' => 1,
                 'district_id' => 1,
                 'village_id' => 1,
-                'latitude' => $locations[$index]['latitude'],
-                'longitude' => $locations[$index]['longitude'],
+                'latitude' => $locations[$index % count($locations)]['latitude'],
+                'longitude' => $locations[$index % count($locations)]['longitude'],
                 'detail' => '',
                 'label' => 'Lokasi UMKM',
             ]);

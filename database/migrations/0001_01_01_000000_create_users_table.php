@@ -17,7 +17,6 @@ return new class extends Migration {
             $table->string('phone')->nullable();
             $table->string('profile_picture_path')->nullable();
             $table->string('nik')->unique()->nullable();
-            $table->text('full_address')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->enum('computed_status', ['active', 'declining', 'watchlist', 'suspended', 'inactive'])->default('active');
             $table->timestamp('email_verified_at')->nullable();

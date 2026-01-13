@@ -43,8 +43,7 @@ Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->w
 // ============================================================
 // PUBLIC ROUTES (No Auth Required)
 // ============================================================
-Route::get('/merchants', [MerchantController::class, 'index']);
-Route::get('/merchants/search', [MerchantController::class, 'search']);
+
 
 Route::prefix('public')->name('public.')->group(function () {
 
@@ -57,11 +56,22 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
         // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
 
+        // 🆕 FROM feat/rating-system: Featured products endpoint
+        Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
+
+        // 🆕 FROM feat/rating-system: Toko & Kuliner specific endpoints
+        Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
+        Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
+
         // ✅ Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
             ->where('slug', '^[A-Za-z0-9-]+$')
             ->name('show');
 
+        // 🆕 FROM feat/rating-system: Get variant by option values
+        Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
+            ->where('slug', '^[a-z0-9-]+$')
+            ->name('variant');
 
     });
 
@@ -72,6 +82,9 @@ Route::prefix('public')->name('public.')->group(function () {
 
         // Random merchants for homepage
         Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
+
+        Route::get('/map', [MerchantController::class, 'mapIndex'])->name('map.index');
+        // Route::get('/map/search', [MerchantController::class, 'mapSearch'])->name('map.search');
 
         // Show single merchant
         Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');
@@ -87,6 +100,9 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/{parentId}/sub-categories', [CategoryController::class, 'getSubCategories']);
         // Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
         // Route::get('/search', [CategoryController::class, 'searchCategories']);
+        // 🆕 FROM feat/rating-system: Category tree & search
+        Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
+        Route::get('/search', [CategoryController::class, 'searchCategories']);
     });
 });
 Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
@@ -111,6 +127,20 @@ Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot']
     ->name('cart-snapshots.show');
 Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
     ->name('images.product-option-value.show');
+
+Route::get('profile-pictures/{user}', [ProfileController::class, 'profilePictureShow'])
+    ->name('profile-pictures.show');
+
+// Backward/alternate naming (underscore) for clients that expect it
+Route::get('profile_pictures/{user}', [ProfileController::class, 'profilePictureShow'])
+    ->name('profile_pictures.show');
+
+// Merchant media (logo & banner) served via API
+Route::get('merchant-profile-pictures/{merchant}', [MerchantController::class, 'merchantProfilePictureShow'])
+    ->name('merchant_profile_pictures.show');
+Route::get('merchant-banner/{merchant}', [MerchantController::class, 'merchantBannerShow'])
+    ->name('merchant_banner.show');
+
 
 // ---------- JASA ----------
 Route::prefix('jasa')->group(function () {
@@ -177,7 +207,7 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-Route::middleware(['auth:sanctum'])->get('/me', [AuthController::class, 'me'])->name('me');
+
 
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
@@ -185,6 +215,7 @@ Route::middleware(['auth:sanctum'])->get('/me', [AuthController::class, 'me'])->
 // Wrap protected routes with 'web' so session/cookie middlewares are available,
 // then apply 'auth:sanctum' and other guards.
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
+
 
     // Locations
     Route::prefix('locations')->controller(LocationController::class)->group(function () {
@@ -204,17 +235,25 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
         Route::delete('/{cart}', [CartController::class, 'clearCart']);
     });
-
+    Route::middleware(['auth:sanctum'])->get('/me', [AuthController::class, 'me'])->name('me');
 
     // CUSTOMER ONLY: Register Merchant
     Route::middleware('role:customer')->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
+        // Current user's merchant (for Profile page "Akses Toko" button)
+        Route::get('/my-merchants', [MerchantController::class, 'myMerchants'])->name('merchant.my-many');
 
         // 🆕 ADDED FROM feat/rating-system: Profile Management
         Route::prefix('profile')->controller(ProfileController::class)->group(function () {
             Route::get('/', 'show')->name('profile.show');
             Route::post('/update', 'update')->name('profile.update');
             Route::post('/change-password', 'changePassword')->name('profile.change-password');
+        });
+
+        // Customer profile address (primary / "utama")
+        Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+            Route::get('/address', 'addressShow')->name('profile.address.show');
+            Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
         });
     });
 
@@ -278,9 +317,12 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             // Variant combination counter
             Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
                 ->where('slug', '^[a-z0-9-]+$');
+            // 🆕 FROM feat/rating-system: Upload product images
+            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
+                ->where('slug', '^[a-z0-9-]+$');
         });
 
-        // MERCHANTS
+        // 🆕 FROM feat/rating-system: Merchant Profile Management
         Route::prefix('merchants')->name('merchants.')->group(function () {
             Route::get('/{id}/profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
             Route::post('/{merchant}/update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
