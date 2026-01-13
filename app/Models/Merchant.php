@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Addon;
 use App\Models\Product;
+use Carbon\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -40,7 +41,7 @@ class Merchant extends Model
         'operational_hours' => 'array',
     ];
 
-    protected $appends = ['logo_url', 'banner_url'];
+    protected $appends = ['logo_url', 'banner_url', 'is_open_now'];
 
     protected static function boot()
     {
@@ -171,6 +172,47 @@ class Merchant extends Model
         }
 
         return url('api/merchant-banner/' . $this->id);
+    }
+
+    public function getIsOpenNowAttribute(): bool
+    {
+        $operationalHours = $this->operational_hours;
+        if (!is_array($operationalHours) || empty($operationalHours)) {
+            return false;
+        }
+
+        $timezone = config('app.timezone') ?: 'UTC';
+        $now = Carbon::now($timezone);
+        $dayKey = strtolower($now->format('l')); // monday..sunday
+
+        $today = $operationalHours[$dayKey] ?? null;
+        if (!is_array($today)) {
+            return false;
+        }
+
+        if (empty($today['is_open'])) {
+            return false;
+        }
+
+        $open = $today['open'] ?? null;
+        $close = $today['close'] ?? null;
+        if (!is_string($open) || !is_string($close) || $open === '' || $close === '') {
+            return false;
+        }
+
+        try {
+            $start = Carbon::parse($now->toDateString() . ' ' . $open, $timezone);
+            $end = Carbon::parse($now->toDateString() . ' ' . $close, $timezone);
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        // Handle overnight schedules (e.g., 20:00 - 02:00)
+        if ($end->lessThan($start)) {
+            $end->addDay();
+        }
+
+        return $now->betweenIncluded($start, $end);
     }
 
     /**

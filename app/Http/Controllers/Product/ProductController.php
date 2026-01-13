@@ -361,6 +361,16 @@ class ProductController
             }
         }
 
+        // ✅ Logo merchant: expose sebagai URL API (hindari akses langsung /storage)
+        if ($product->merchant) {
+            $product->merchant->logo_url = !empty($product->merchant->logo_path)
+                ? route('merchant_profile_pictures.show', ['merchant' => $product->merchant->id])
+                : null;
+
+            // Optional: sembunyikan path mentah agar FE konsisten pakai logo_url
+            $product->merchant->makeHidden(['logo_path']);
+        }
+
         // ✅ Ambil 5 produk lain dari merchant yang sama, acak, exclude produk ini
         $relatedProducts = Product::where('merchant_id', $product->merchant_id)
             ->where('id', '!=', $product->id)

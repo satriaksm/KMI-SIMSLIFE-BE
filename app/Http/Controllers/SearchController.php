@@ -158,13 +158,17 @@ class SearchController extends Controller
                 'merchants.name',
                 'merchants.slug',
                 'merchants.segmentation_id',
+                'merchants.logo_path',
+                'merchants.operational_hours',
                 'merchants.status',
                 'merchants.created_at',
             ])
             ->approved()
             ->with([
                 'segmentation:id,name',
-                'primaryAddress:id,addressable_id,detail,city_id,province_id,latitude,longitude',
+                'primaryAddress:id,addressable_id,detail,village_id,district_id,city_id,province_id,latitude,longitude',
+                'primaryAddress.village:id,name',
+                'primaryAddress.district:id,name',
                 'primaryAddress.city:id,name',
                 'primaryAddress.province:id,name',
             ])
@@ -201,8 +205,23 @@ class SearchController extends Controller
         $perPage = $data['per_page'] ?? 10;
         $result = $query->paginate($perPage);
 
+        $items = collect($result->items())
+            ->map(function (Merchant $merchant) {
+                $payload = $merchant->toArray();
+
+                $payload['logo_url'] = !empty($merchant->logo_path)
+                    ? route('merchant_profile_pictures.show', ['merchant' => $merchant->id])
+                    : null;
+
+                unset($payload['logo_path']);
+                unset($payload['operational_hours']);
+
+                return $payload;
+            })
+            ->values();
+
         return response()->json([
-            'data' => $result->items(),
+            'data' => $items,
             'meta' => [
                 'current_page' => $result->currentPage(),
                 'last_page' => $result->lastPage(),
