@@ -43,8 +43,7 @@ Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->w
 // ============================================================
 // PUBLIC ROUTES (No Auth Required)
 // ============================================================
-Route::get('/merchants', [MerchantController::class, 'index']);
-Route::get('/merchants/search', [MerchantController::class, 'search']);
+
 
 Route::prefix('public')->name('public.')->group(function () {
 
@@ -83,6 +82,9 @@ Route::prefix('public')->name('public.')->group(function () {
 
         // Random merchants for homepage
         Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
+
+        Route::get('/map', [MerchantController::class, 'mapIndex'])->name('map.index');
+        // Route::get('/map/search', [MerchantController::class, 'mapSearch'])->name('map.search');
 
         // Show single merchant
         Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');

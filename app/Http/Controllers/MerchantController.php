@@ -108,6 +108,59 @@ class MerchantController extends Controller
         return response()->json($merchants);
     }
 
+    public function mapIndex()
+    {
+        $merchants = Merchant::query()
+            ->where('status', 'approved')
+            ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
+            ->with([
+                'segmentation:id,name',
+                'primaryAddress:id,addressable_id,addressable_type,latitude,longitude,label',
+                'addresses:id,addressable_id,addressable_type,latitude,longitude,label',
+            ])
+            ->get();
+
+        $data = $merchants->map(function (Merchant $merchant) {
+            $addr = $merchant->primaryAddress ?: $merchant->addresses->first();
+
+            return [
+                'id' => $merchant->id,
+                'name' => $merchant->name,
+                'slug' => $merchant->slug,
+                'logo_url' => $merchant->logo_path
+                    ? route('merchant_profile_pictures.show', ['merchant' => $merchant->id])
+                    : null,
+                'latitude' => $addr?->latitude,
+                'longitude' => $addr?->longitude,
+                'segmentation' => $merchant->segmentation
+                    ? ['id' => $merchant->segmentation->id, 'name' => $merchant->segmentation->name]
+                    : null,
+            ];
+        });
+
+        return response()->json($data);
+    }
+    // public function mapSearch(Request $request)
+    // {
+    //     $keyword = $request->q;
+
+    //     $search = $request->input('search');
+
+    //     $merchants = Merchant::with(['products.category'])
+    //         ->when($search, function ($query) use ($search) {
+    //             $query->where('name', 'LIKE', "%$search%")
+    //                 ->orWhereHas('products', function ($q) use ($search) {
+    //                     $q->where('name', 'LIKE', "%$search%");
+    //                 })
+    //                 ->orWhereHas('products.category', function ($q) use ($search) {
+    //                     $q->where('name', 'LIKE', "%$search%");
+    //                 });
+    //         })
+    //         ->get();
+
+    //     return response()->json($merchants);
+    // }
+
     /**
      * Public endpoint untuk random merchants
      * Khusus untuk homepage/recommendation
@@ -268,6 +321,16 @@ class MerchantController extends Controller
         $validated = $validator->validated();
 
         $merchant = DB::transaction(function () use ($validated, $user) {
+            $operationalHours = [
+                'monday' => ['is_open' => true, 'open' => '09:00', 'close' => '20:07'],
+                'tuesday' => ['is_open' => true, 'open' => '06:02', 'close' => '22:00'],
+                'wednesday' => ['is_open' => true, 'open' => '06:02', 'close' => '23:02'],
+                'thursday' => ['is_open' => true, 'open' => '06:00', 'close' => '22:00'],
+                'friday' => ['is_open' => false],
+                'saturday' => ['is_open' => true, 'open' => '06:01', 'close' => '23:00'],
+                'sunday' => ['is_open' => true, 'open' => '06:00', 'close' => '18:00'],
+            ];
+
             $merchant = Merchant::create([
                 'user_id' => $user->id,
                 'paguyuban_id' => null,
@@ -276,6 +339,7 @@ class MerchantController extends Controller
                 'description' => $validated['description'] ?? null,
                 'phone' => $validated['phone'],
                 'logo_path' => null,
+                'operational_hours' => $operationalHours,
                 // 'status' default 'pending' dari migration
             ]);
 
@@ -485,7 +549,7 @@ class MerchantController extends Controller
             /** ===============================
              * Update merchant basic info
              * =============================== */
-            $merchant = Merchant::find($merchant);
+            $merchant = Merchant::findOrFail($merchant);
             $merchant->update([
                 'name' => $validated['name'],
                 'phone' => $validated['phone'] ?? null,
@@ -495,29 +559,46 @@ class MerchantController extends Controller
             /** ===============================
              * Address (primary address)
              * =============================== */
+            // Prefer primary address (label 'utama').
+            // If legacy data doesn't have label 'utama', fallback to the latest address instead of creating a new row.
             $address = $merchant->primaryAddress;
+            if (!$address) {
+                $address = $merchant->addresses()->latest('id')->first();
+            }
+
+            $addressPayload = [];
+            if (array_key_exists('province_id', $validated)) {
+                $addressPayload['province_id'] = $validated['province_id'];
+            }
+            if (array_key_exists('city_id', $validated)) {
+                $addressPayload['city_id'] = $validated['city_id'];
+            }
+            if (array_key_exists('district_id', $validated)) {
+                $addressPayload['district_id'] = $validated['district_id'];
+            }
+            if (array_key_exists('village_id', $validated)) {
+                $addressPayload['village_id'] = $validated['village_id'];
+            }
+            if (array_key_exists('address_detail', $validated)) {
+                $addressPayload['detail'] = $validated['address_detail'];
+            }
+            if (array_key_exists('latitude', $validated)) {
+                $addressPayload['latitude'] = $validated['latitude'];
+            }
+            if (array_key_exists('longitude', $validated)) {
+                $addressPayload['longitude'] = $validated['longitude'];
+            }
 
             if (!$address) {
-                $address = $merchant->addresses()->create([
+                $merchant->addresses()->create(array_merge([
                     'label' => 'utama',
-                    'province_id' => $validated['province_id'] ?? null,
-                    'city_id' => $validated['city_id'] ?? null,
-                    'district_id' => $validated['district_id'] ?? null,
-                    'village_id' => $validated['village_id'] ?? null,
-                    'detail' => $validated['address_detail'] ?? null,
-                    'latitude' => $validated['latitude'] ?? null,
-                    'longitude' => $validated['longitude'] ?? null,
-                ]);
+                ], $addressPayload));
             } else {
-                $address->update([
-                    'province_id' => $validated['province_id'] ?? null,
-                    'city_id' => $validated['city_id'] ?? null,
-                    'district_id' => $validated['district_id'] ?? null,
-                    'village_id' => $validated['village_id'] ?? null,
-                    'detail' => $validated['address_detail'] ?? null,
-                    'latitude' => $validated['latitude'] ?? null,
-                    'longitude' => $validated['longitude'] ?? null,
-                ]);
+                // Ensure it becomes primary going forward
+                if (empty($address->label)) {
+                    $addressPayload['label'] = 'utama';
+                }
+                $address->update($addressPayload);
             }
 
             /** ===============================
