@@ -260,12 +260,16 @@
         }
 
         .footer {
-            margin-top: 20px;
-            padding-top: 10px;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 10px 15px;
             border-top: 2px solid #e0e0e0;
             text-align: center;
             font-size: 8px;
             color: #999;
+            background: white;
         }
 
         .footer p {

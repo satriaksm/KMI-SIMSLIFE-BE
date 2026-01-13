@@ -2,13 +2,14 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Laporan Data Events</title>
+    <title>Laporan Dashboard Admin</title>
     <style>
         body {
             font-family: DejaVu Sans, sans-serif;
             font-size: 11px;
             margin: 0;
             padding: 15px;
+            padding-bottom: 50px; /* ✅ Space for fixed footer */
             color: #333;
         }
 
@@ -69,47 +70,21 @@
             font-size: 10px;
         }
 
-        .summary-section {
-            background-color: #f0f9fa;
-            padding: 10px;
-            margin-bottom: 15px;
+        .summary {
+            background: #e0f7fa;
+            border: 1px solid #058895;
             border-radius: 4px;
-            border: 1px solid #b8e6ea;
-        }
-        
-        .summary-grid {
-            display: table;
-            width: 100%;
-        }
-        
-        .summary-item {
-            display: table-cell;
-            width: 25%;
+            padding: 8px 10px;
+            margin-bottom: 15px;
             text-align: center;
-            padding: 5px;
         }
-        
-        .summary-number {
-            font-size: 16px;
-            font-weight: bold;
+
+        .summary h3 {
+            margin: 0 0 5px 0;
             color: #058895;
-            display: block;
-            margin-bottom: 3px;
+            font-size: 12px;
         }
-        
-        .summary-label {
-            font-size: 8px;
-            color: #666;
-            text-transform: uppercase;
-        }
-        
-        .event-desc {
-            max-width: 200px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -146,19 +121,29 @@
             text-transform: uppercase;
         }
 
-        .badge-published {
+        .badge-active {
             background: #d1fae5;
             color: #065f46;
         }
 
-        .badge-draft {
-            background: #fef3c7;
-            color: #92400e;
+        .badge-inactive {
+            background: #e5e7eb;
+            color: #4b5563;
         }
 
-        .badge-archived {
+        .badge-expired {
             background: #fee2e2;
             color: #991b1b;
+        }
+
+        .badge-percent {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-fixed {
+            background: #fef3c7;
+            color: #92400e;
         }
 
         .footer {
@@ -172,7 +157,6 @@
             font-size: 8px;
             color: #999;
             background: white;
-        
         }
 
         .footer p {
@@ -190,14 +174,8 @@
             text-align: center;
         }
 
-        .event-desc {
-            max-width: 250px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            font-size: 8px;
+        .text-right {
+            text-align: right;
         }
     </style>
 </head>
@@ -209,8 +187,8 @@
                 <img src="{{ $logoBase64 }}" alt="Logo Sumilir">
             </div>
         @endif
-        <h1>Laporan Data Events</h1>
-        <p>Daftar Events - Platform Marketplace SUMILIR</p>
+        <h1>Laporan Data Voucher</h1>
+        <p>Daftar Voucher - Platform Marketplace SUMILIR</p>
     </div>
 
     <!-- Metadata -->
@@ -227,6 +205,10 @@
             <div class="metadata-label">Filter Status:</div>
             <div class="metadata-value">{{ $metadata['filters']['status'] }}</div>
         </div>
+        <div class="metadata-row">
+            <div class="metadata-label">Filter Tipe:</div>
+            <div class="metadata-value">{{ $metadata['filters']['type'] }}</div>
+        </div>
         @if($metadata['filters']['search'] !== '-')
         <div class="metadata-row">
             <div class="metadata-label">Pencarian:</div>
@@ -235,80 +217,79 @@
         @endif
     </div>
 
-    <!-- Summary Statistics -->
-    <div class="summary-section">
-        <div class="summary-grid">
-            <div class="summary-item">
-                <span class="summary-number">{{ $events->count() }}</span>
-                <span class="summary-label">Total Events</span>
-            </div>
-            <div class="summary-item">
-                <span class="summary-number">{{ $events->where('status', 'published')->count() }}</span>
-                <span class="summary-label">Published</span>
-            </div>
-            <div class="summary-item">
-                <span class="summary-number">{{ $events->where('status', 'draft')->count() }}</span>
-                <span class="summary-label">Draft</span>
-            </div>
-            <div class="summary-item">
-                <span class="summary-number">{{ $events->sum('merchants_count') }}</span>
-                <span class="summary-label">Total Merchants</span>
-            </div>
-        </div>
+    <!-- Summary -->
+    <div class="summary">
+        <h3>Total Voucher: {{ $metadata['total_vouchers'] }}</h3>
     </div>
 
-    <!-- Events Table -->
-    @if(count($events) > 0)
+    <!-- Vouchers Table -->
+    @if(count($vouchers) > 0)
         <table>
             <thead>
                 <tr>
                     <th style="width: 3%;">No</th>
-                    <th style="width: 18%;">Nama Event</th>
-                    <th style="width: 25%;">Deskripsi</th>
-                    <th style="width: 12%;">Tanggal Mulai</th>
-                    <th style="width: 12%;">Tanggal Selesai</th>
-                    <th style="width: 8%;">Pembuat</th>
-                    <th style="width: 7%;">Merchants</th>
-                    <th style="width: 7%;">Vouchers</th>
+                    <th style="width: 12%;">Kode</th>
+                    <th style="width: 20%;">Deskripsi</th>
+                    <th style="width: 8%;">Tipe</th>
+                    <th style="width: 8%;">Nilai</th>
+                    <th style="width: 10%;">Min. Beli</th>
+                    <th style="width: 8%;">Limit</th>
+                    <th style="width: 8%;">Digunakan</th>
+                    <th style="width: 15%;">Event</th>
                     <th style="width: 8%;">Status</th>
                 </tr>
             </thead>
             <tbody>
-                @foreach($events as $index => $event)
+                @foreach($vouchers as $index => $voucher)
                     <tr>
                         <td class="text-center">{{ $index + 1 }}</td>
-                        <td>{{ $event->event_name }}</td>
-                        <td>
-                            <div class="event-desc">
-                                {{ $event->event_description ?: '-' }}
-                            </div>
-                        </td>
-                        <td class="text-center">
-                            {{ \Carbon\Carbon::parse($event->event_start_date)->format('d/m/Y') }}
-                        </td>
-                        <td class="text-center">
-                            {{ \Carbon\Carbon::parse($event->event_end_date)->format('d/m/Y') }}
-                        </td>
-                        <td>{{ $event->creator->name ?? '-' }}</td>
-                        <td class="text-center">{{ $event->merchants_count ?? 0 }}</td>
-                        <td class="text-center">{{ $event->vouchers_count ?? 0 }}</td>
+                        <td><strong>{{ $voucher->voucher_code }}</strong></td>
+                        <td>{{ $voucher->voucher_description ?? '-' }}</td>
                         <td>
                             @php
-                                $badgeClass = match($event->status) {
-                                    'published' => 'badge-published',
-                                    'draft' => 'badge-draft',
-                                    'archived' => 'badge-archived',
-                                    default => 'badge-draft'
+                                $typeBadgeClass = $voucher->voucher_type === 'percent' ? 'badge-percent' : 'badge-fixed';
+                            @endphp
+                            <span class="badge {{ $typeBadgeClass }}">
+                                {{ $voucher->voucher_type === 'percent' ? 'Persentase' : 'Nominal' }}
+                            </span>
+                        </td>
+                        <td class="text-right">
+                            <strong>
+                                {{ $voucher->voucher_type === 'percent' 
+                                    ? $voucher->value . '%' 
+                                    : 'Rp ' . number_format($voucher->value, 0, ',', '.') 
+                                }}
+                            </strong>
+                        </td>
+                        <td class="text-right">Rp {{ number_format($voucher->min_purchase_amount ?? 0, 0, ',', '.') }}</td>
+                        <td class="text-center">{{ $voucher->usage_limit ?? '∞' }}</td>
+                        <td class="text-center">{{ $voucher->usages_count ?? 0 }}</td>
+                        <td>
+                            @if($voucher->event)
+                                <span style="font-size: 8px;">{{ $voucher->event->event_name }}</span>
+                            @else
+                                -
+                            @endif
+                        </td>
+                        <td>
+                            @php
+                                $statusBadgeClass = match(strtolower($voucher->voucher_status ?? 'active')) {
+                                    'active' => 'badge-active',
+                                    'inactive' => 'badge-inactive',
+                                    'expired' => 'badge-expired',
+                                    default => 'badge-inactive'
                                 };
                             @endphp
-                            <span class="badge {{ $badgeClass }}">{{ ucfirst($event->status) }}</span>
+                            <span class="badge {{ $statusBadgeClass }}">
+                                {{ ucfirst($voucher->voucher_status ?? 'active') }}
+                            </span>
                         </td>
                     </tr>
                 @endforeach
             </tbody>
         </table>
     @else
-        <div class="no-data">Tidak ada data event yang ditemukan</div>
+        <div class="no-data">Tidak ada data voucher yang ditemukan</div>
     @endif
 
     <!-- Footer -->

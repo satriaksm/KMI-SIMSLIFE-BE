@@ -9,6 +9,8 @@ use App\Models\Event;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\Log;
 
 class AdminVoucherController extends Controller
 {
@@ -155,6 +157,94 @@ class AdminVoucherController extends Controller
             return response()->json([
                 'message' => 'Gagal menonaktifkan voucher',
                 'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Export Vouchers to PDF (Admin)
+     *
+     * Export list of vouchers to PDF with filters.
+     *
+     * @authenticated
+     *
+     * @queryParam voucher_status string Filter by status. Example: active
+     * @queryParam voucher_type string Filter by type. Example: percent
+     * @queryParam search string Search query. Example: PROMO
+     *
+     * @response 200 application/pdf
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $admin = $request->user();
+
+            // Build query with same filters as index
+            $query = Voucher::with(['merchant', 'event'])
+                ->when($request->voucher_status, fn($q) => $q->where('voucher_status', $request->voucher_status))
+                ->when($request->voucher_type, fn($q) => $q->where('voucher_type', $request->voucher_type))
+                ->when($request->search, function ($q) use ($request) {
+                    $q->where(function ($sub) use ($request) {
+                        $sub->where('voucher_code', 'like', '%' . $request->search . '%')
+                            ->orWhere('voucher_description', 'like', '%' . $request->search . '%');
+                    });
+                });
+
+            $vouchers = $query->latest('voucher_start_date')->limit(500)->get();
+
+            // Add usages count
+            $vouchers->transform(function ($voucher) {
+                $voucher->usages_count = $voucher->usages()->count() ?? 0;
+                return $voucher;
+            });
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'total_vouchers' => $vouchers->count(),
+                'filters' => [
+                    'status' => $request->input('voucher_status') ?: 'Semua',
+                    'type' => $request->input('voucher_type') ?: 'Semua',
+                    'search' => $request->input('search') ?: '-',
+                ],
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-voucher', [
+                'vouchers' => $vouchers,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'vouchers-report-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminVoucher] Export PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
             ], 500);
         }
     }

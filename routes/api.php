@@ -427,6 +427,7 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     Route::prefix('vouchers')->name('vouchers.')->group(function () {
         Route::get('/', [AdminVoucherController::class, 'index']);
         Route::post('/', [AdminVoucherController::class, 'store']);
+        Route::get('/export-pdf', [AdminVoucherController::class, 'exportPdf'])->name('export-pdf'); // ✅ NEW
         Route::get('/{id}', [AdminVoucherController::class, 'show']);
         Route::post('/{voucher}/assign-merchants', [AdminVoucherController::class, 'assignMerchants']);
         Route::post('/{id}/activate', [AdminVoucherController::class, 'activate'])->name('activate');
