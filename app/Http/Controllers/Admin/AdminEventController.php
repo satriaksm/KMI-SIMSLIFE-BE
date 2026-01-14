@@ -16,6 +16,56 @@ class AdminEventController extends Controller
 {
 
     /**
+     * Stream event banner image
+     */
+    public function showBanner(Request $request, Event $event)
+    {
+        // Support signed URL for secure access
+        if ($request->hasValidSignature()) {
+            return $this->streamEventBanner($event);
+        }
+
+        // Public access for now (you can add auth checks later)
+        return $this->streamEventBanner($event);
+    }
+
+    /**
+     * Private method to stream banner image
+     */
+    private function streamEventBanner(Event $event)
+    {
+        if (empty($event->banner_img_path)) {
+            abort(404);
+        }
+
+        $disk = 'public';
+        $path = ltrim($event->banner_img_path, '/');
+
+        if (!Storage::disk($disk)->exists($path)) {
+            abort(404);
+        }
+
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'svg' => 'image/svg+xml',
+            'webp' => 'image/webp',
+            'jpg', 'jpeg' => 'image/jpeg',
+            default => 'application/octet-stream',
+        };
+
+        $stream = Storage::disk($disk)->readStream($path);
+
+        return response()->stream(function () use ($stream) {
+            fpassthru($stream);
+        }, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=31536000',
+        ]);
+    }
+
+    /**
      * ADMIN: List all events (with filters)
      */
     public function index(Request $request)

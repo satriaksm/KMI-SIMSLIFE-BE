@@ -474,6 +474,7 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/', [AdminEventController::class, 'index'])->name('index');
         Route::post('/', [AdminEventController::class, 'store'])->name('store');
         Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf'); 
+        Route::get('/{id}/export-pdf', [AdminMerchantController::class, 'exportMerchantDetailPdf'])->name('exportMerchantDetailPdf'); 
         Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
@@ -523,3 +524,11 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
     });
 });
+
+// Event banner images (served via API)
+Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
+    ->name('event-banners.show');
+
+// Alternate naming with underscore
+Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
+    ->name('event_banners.show');
