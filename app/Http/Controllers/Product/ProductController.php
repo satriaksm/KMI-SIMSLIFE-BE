@@ -440,63 +440,63 @@ class ProductController
      * Public: Get variant by selected option values
      * Real-time availability check when user selects options
      */
-    public function publicGetVariant(Request $request, string $slug)
-    {
-        $product = Product::where('slug', $slug)
-            ->whereIn('status', ['published', 'archived']) // boleh cek varian walau produk di-archive
-            ->firstOrFail();
+    // public function publicGetVariant(Request $request, string $slug)
+    // {
+    //     $product = Product::where('slug', $slug)
+    //         ->whereIn('status', ['published', 'archived']) // boleh cek varian walau produk di-archive
+    //         ->firstOrFail();
 
-        $data = $request->validate([
-            'option_value_ids' => ['required', 'array', 'min:1'],
-            'option_value_ids.*' => ['integer', 'exists:product_option_values,id'],
-        ]);
+    //     $data = $request->validate([
+    //         'option_value_ids' => ['required', 'array', 'min:1'],
+    //         'option_value_ids.*' => ['integer', 'exists:product_option_values,id'],
+    //     ]);
 
-        $optionValueIds = $data['option_value_ids'];
-        sort($optionValueIds);
+    //     $optionValueIds = $data['option_value_ids'];
+    //     sort($optionValueIds);
 
-        // Find exact combination
-        $variant = $product->variants()
-            ->select('product_variants.*')
-            ->join('product_variant_option_values as pvov', 'product_variants.id', '=', 'pvov.product_variant_id')
-            ->whereIn('pvov.product_option_value_id', $optionValueIds)
-            ->groupBy('product_variants.id')
-            ->havingRaw('COUNT(DISTINCT pvov.product_option_value_id) = ?', [count($optionValueIds)])
-            ->with('optionValues:id,option_value,image_path')
-            ->first();
+    //     // Find exact combination
+    //     $variant = $product->variants()
+    //         ->select('product_variants.*')
+    //         ->join('product_variant_option_values as pvov', 'product_variants.id', '=', 'pvov.product_variant_id')
+    //         ->whereIn('pvov.product_option_value_id', $optionValueIds)
+    //         ->groupBy('product_variants.id')
+    //         ->havingRaw('COUNT(DISTINCT pvov.product_option_value_id) = ?', [count($optionValueIds)])
+    //         ->with('optionValues:id,option_value,image_path')
+    //         ->first();
 
-        // always include product-level min_purchase so frontend knows the rule
-        $minPurchase = (int) ($product->min_purchase ?? 1);
+    //     // always include product-level min_purchase so frontend knows the rule
+    //     $minPurchase = (int) ($product->min_purchase ?? 1);
 
-        if (!$variant) {
-            return response()->json([
-                'message' => 'Variant dengan kombinasi ini tidak tersedia.',
-                'available' => false,
-                'min_purchase' => $minPurchase,
-            ], 404);
-        }
+    //     if (!$variant) {
+    //         return response()->json([
+    //             'message' => 'Variant dengan kombinasi ini tidak tersedia.',
+    //             'available' => false,
+    //             'min_purchase' => $minPurchase,
+    //         ], 404);
+    //     }
 
-        if ($variant->stock <= 0) {
-            return response()->json([
-                'message' => 'Variant ini sedang habis.',
-                'available' => false,
-                'variant' => $variant->only(['id', 'price', 'stock', 'sku']),
-                'min_purchase' => $minPurchase,
-            ], 200);
-        }
+    //     if ($variant->stock <= 0) {
+    //         return response()->json([
+    //             'message' => 'Variant ini sedang habis.',
+    //             'available' => false,
+    //             'variant' => $variant->only(['id', 'price', 'stock', 'sku']),
+    //             'min_purchase' => $minPurchase,
+    //         ], 200);
+    //     }
 
-        return response()->json([
-            'available' => true,
-            'variant' => [
-                'id' => $variant->id,
-                'price' => $variant->price,
-                'stock' => $variant->stock,
-                'sku' => $variant->sku,
-                'option_values' => $variant->optionValues,
-            ],
-            // sertakan min_purchase di response utama
-            'min_purchase' => $minPurchase,
-        ]);
-    }
+    //     return response()->json([
+    //         'available' => true,
+    //         'variant' => [
+    //             'id' => $variant->id,
+    //             'price' => $variant->price,
+    //             'stock' => $variant->stock,
+    //             'sku' => $variant->sku,
+    //             'option_values' => $variant->optionValues,
+    //         ],
+    //         // sertakan min_purchase di response utama
+    //         'min_purchase' => $minPurchase,
+    //     ]);
+    // }
 
 
     /**
@@ -560,17 +560,17 @@ class ProductController
     /**
      * Public: Get featured products (for homepage)
      */
-    public function publicFeatured()
-    {
-        $products = Product::whereIn('status', ['published', 'archived'])
-            ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
-            ->with(['coverImage', 'merchant:id,name'])
-            ->inRandomOrder()
-            ->limit(12)
-            ->get();
+    // public function publicFeatured()
+    // {
+    //     $products = Product::whereIn('status', ['published', 'archived'])
+    //         ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
+    //         ->with(['coverImage', 'merchant:id,name'])
+    //         ->inRandomOrder()
+    //         ->limit(12)
+    //         ->get();
 
-        return response()->json($products);
-    }
+    //     return response()->json($products);
+    // }
 
     // ============================================================
     // PROTECTED ENDPOINTS (Auth Required - Merchant Owner)

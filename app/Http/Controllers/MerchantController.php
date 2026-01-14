@@ -164,57 +164,57 @@ class MerchantController extends Controller
     /**
      * Public endpoint untuk random merchants
      * Khusus untuk homepage/recommendation
-     * 
+     *
      */
-    public function publicRandom(Request $request)
-    {
-        $limit = $request->input('limit', 8);
-        $segmentationId = $request->input('segmentation_id');
+    // public function publicRandom(Request $request)
+    // {
+    //     $limit = $request->input('limit', 8);
+    //     $segmentationId = $request->input('segmentation_id');
 
-        try {
-            $query = Merchant::query()
-                ->where('status', 'approved')
-                ->withCount([
-                    'products' => function ($query) {
-                        $query->where('status', 'published');
-                    }
-                ]);
+    //     try {
+    //         $query = Merchant::query()
+    //             ->where('status', 'approved')
+    //             ->withCount([
+    //                 'products' => function ($query) {
+    //                     $query->where('status', 'published');
+    //                 }
+    //             ]);
 
-            // Filter by segmentation jika ada
-            if ($segmentationId) {
-                $query->where('segmentation_id', $segmentationId);
-            }
+    //         // Filter by segmentation jika ada
+    //         if ($segmentationId) {
+    //             $query->where('segmentation_id', $segmentationId);
+    //         }
 
-            $merchants = $query->inRandomOrder()
-                ->limit($limit)
-                ->get();
+    //         $merchants = $query->inRandomOrder()
+    //             ->limit($limit)
+    //             ->get();
 
-            $merchants->load([
-                'segmentation',
-                'primaryAddress.province',
-                'primaryAddress.city',
-                'primaryAddress.district',
-            ]);
+    //         $merchants->load([
+    //             'segmentation',
+    //             'primaryAddress.province',
+    //             'primaryAddress.city',
+    //             'primaryAddress.district',
+    //         ]);
 
-            return response()->json([
-                'data' => $merchants,
-                'total' => $merchants->count(),
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Error in publicRandom: ' . $e->getMessage());
-            Log::error($e->getTraceAsString());
+    //         return response()->json([
+    //             'data' => $merchants,
+    //             'total' => $merchants->count(),
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         Log::error('Error in publicRandom: ' . $e->getMessage());
+    //         Log::error($e->getTraceAsString());
 
-            return response()->json([
-                'message' => 'Failed to fetch merchants',
-                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
-            ], 500);
-        }
-    }
+    //         return response()->json([
+    //             'message' => 'Failed to fetch merchants',
+    //             'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+    //         ], 500);
+    //     }
+    // }
 
     /**
      * Public endpoint untuk show single merchant
      */
-    public function publicShow(Request $request, $slugOrId)
+    public function publicShow(Request $request, $merchantSlug)
     {
         // Cari berdasarkan slug atau id
         $merchant = Merchant::with([
@@ -226,9 +226,9 @@ class MerchantController extends Controller
             'primaryAddress.village:id,name',
         ])
             ->where('status', 'approved')
-            ->where(function ($q) use ($slugOrId) {
-                $q->where('id', $slugOrId)
-                    ->orWhere('slug', $slugOrId);
+            ->where(function ($q) use ($merchantSlug) {
+                $q->where('id', $merchantSlug)
+                    ->orWhere('slug', $merchantSlug);
             })
             ->withCount('products')
             ->firstOrFail();
@@ -372,87 +372,87 @@ class MerchantController extends Controller
      * - Generates slug if not exists
      * - Assigns 'umkm-owner' role to user
      */
-    public function approve(Request $request, Merchant $merchant)
-    {
-        // Validasi role admin
-        $admin = $request->user();
-        if (!$admin->hasRole('admin')) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
+    // public function approve(Request $request, Merchant $merchant)
+    // {
+    //     // Validasi role admin
+    //     $admin = $request->user();
+    //     if (!$admin->hasRole('admin')) {
+    //         return response()->json(['message' => 'Akses ditolak.'], 403);
+    //     }
 
-        if ($merchant->status === 'approved') {
-            return response()->json(['message' => 'Merchant sudah disetujui.'], 422);
-        }
-        if ($merchant->status === 'rejected') {
-            return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
-        }
+    //     if ($merchant->status === 'approved') {
+    //         return response()->json(['message' => 'Merchant sudah disetujui.'], 422);
+    //     }
+    //     if ($merchant->status === 'rejected') {
+    //         return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
+    //     }
 
-        DB::transaction(function () use ($merchant) {
-            // ✅ Ensure slug exists (safety check)
-            if (empty($merchant->slug)) {
-                $merchant->slug = Merchant::generateUniqueSlug($merchant->name);
-            }
+    //     DB::transaction(function () use ($merchant) {
+    //         // ✅ Ensure slug exists (safety check)
+    //         if (empty($merchant->slug)) {
+    //             $merchant->slug = Merchant::generateUniqueSlug($merchant->name);
+    //         }
 
-            $merchant->update([
-                'status' => 'approved',
-                'response_at' => Carbon::now(),
-            ]);
+    //         $merchant->update([
+    //             'status' => 'approved',
+    //             'response_at' => Carbon::now(),
+    //         ]);
 
-            // Beri role "umkm-owner"
-            $owner = $merchant->user;
-            if ($owner) {
-                $roleId = DB::table('roles')->where('name', 'umkm-owner')->value('id');
-                if (!$roleId) {
-                    $roleId = DB::table('roles')->insertGetId([
-                        'name' => 'umkm-owner',
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
+    //         // Beri role "umkm-owner"
+    //         $owner = $merchant->user;
+    //         if ($owner) {
+    //             $roleId = DB::table('roles')->where('name', 'umkm-owner')->value('id');
+    //             if (!$roleId) {
+    //                 $roleId = DB::table('roles')->insertGetId([
+    //                     'name' => 'umkm-owner',
+    //                     'created_at' => now(),
+    //                     'updated_at' => now(),
+    //                 ]);
+    //             }
 
-                // ✅ Use updateOrInsert untuk avoid duplicate entry
-                DB::table('role_user')->updateOrInsert(
-                    ['user_id' => $owner->id, 'role_id' => $roleId],
-                    ['created_at' => now(), 'updated_at' => now()]
-                );
-            }
-        });
+    //             // ✅ Use updateOrInsert untuk avoid duplicate entry
+    //             DB::table('role_user')->updateOrInsert(
+    //                 ['user_id' => $owner->id, 'role_id' => $roleId],
+    //                 ['created_at' => now(), 'updated_at' => now()]
+    //             );
+    //         }
+    //     });
 
-        return response()->json([
-            'message' => 'Merchant disetujui dan slug telah digenerate.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
-    }
+    //     return response()->json([
+    //         'message' => 'Merchant disetujui dan slug telah digenerate.',
+    //         'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+    //     ]);
+    // }
 
-    // 🆕 ADDED from feat/rating-system: Admin menolak pendaftaran
-    /**
-     * Admin rejects merchant registration
-     * - Sets status to 'rejected'
-     */
-    public function reject(Request $request, Merchant $merchant)
-    {
-        $admin = $request->user();
-        if (!$admin->hasRole('admin')) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
+    // // 🆕 ADDED from feat/rating-system: Admin menolak pendaftaran
+    // /**
+    //  * Admin rejects merchant registration
+    //  * - Sets status to 'rejected'
+    //  */
+    // public function reject(Request $request, Merchant $merchant)
+    // {
+    //     $admin = $request->user();
+    //     if (!$admin->hasRole('admin')) {
+    //         return response()->json(['message' => 'Akses ditolak.'], 403);
+    //     }
 
-        if ($merchant->status === 'approved') {
-            return response()->json(['message' => 'Merchant sudah disetujui, tidak bisa ditolak.'], 422);
-        }
-        if ($merchant->status === 'rejected') {
-            return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
-        }
+    //     if ($merchant->status === 'approved') {
+    //         return response()->json(['message' => 'Merchant sudah disetujui, tidak bisa ditolak.'], 422);
+    //     }
+    //     if ($merchant->status === 'rejected') {
+    //         return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
+    //     }
 
-        $merchant->update([
-            'status' => 'rejected',
-            'response_at' => Carbon::now(),
-        ]);
+    //     $merchant->update([
+    //         'status' => 'rejected',
+    //         'response_at' => Carbon::now(),
+    //     ]);
 
-        return response()->json([
-            'message' => 'Merchant ditolak.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
-    }
+    //     return response()->json([
+    //         'message' => 'Merchant ditolak.',
+    //         'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+    //     ]);
+    // }
 
     // 🆕 ADDED from feat/rating-system: UMKM owner lihat profile sendiri
     /**

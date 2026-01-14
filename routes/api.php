@@ -40,11 +40,11 @@ use App\Http\Controllers\ProfileController;
 Route::get('/', fn() => response()->json(['status' => 'API is running']));
 
 Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->where('path', '.*');
+
+
 // ============================================================
 // PUBLIC ROUTES (No Auth Required)
 // ============================================================
-
-
 Route::prefix('public')->name('public.')->group(function () {
 
     Route::get('search', [SearchController::class, 'searchProducts'])->name('search');
@@ -57,11 +57,11 @@ Route::prefix('public')->name('public.')->group(function () {
         // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
 
         // 🆕 FROM feat/rating-system: Featured products endpoint
-        Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
+        // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
 
         // 🆕 FROM feat/rating-system: Toko & Kuliner specific endpoints
-        Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
-        Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
+        // Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
+        // Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
 
         // ✅ Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
@@ -69,9 +69,9 @@ Route::prefix('public')->name('public.')->group(function () {
             ->name('show');
 
         // 🆕 FROM feat/rating-system: Get variant by option values
-        Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
-            ->where('slug', '^[a-z0-9-]+$')
-            ->name('variant');
+        // Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
+        //     ->where('slug', '^[a-z0-9-]+$')
+        //     ->name('variant');
 
     });
 
@@ -80,14 +80,14 @@ Route::prefix('public')->name('public.')->group(function () {
         // List merchants (with pagination & filters)
         Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
 
-        // Random merchants for homepage
-        Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
+        // // Random merchants for homepage
+        // Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
 
         Route::get('/map', [MerchantController::class, 'mapIndex'])->name('map.index');
         // Route::get('/map/search', [MerchantController::class, 'mapSearch'])->name('map.search');
 
         // Show single merchant
-        Route::get('/{slugOrId}', [MerchantController::class, 'publicShow'])->name('show');
+        Route::get('/{merchantSlug}', [MerchantController::class, 'publicShow'])->name('show');
 
         // Merchant's products (already exists)
         Route::get('/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
@@ -100,14 +100,21 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/{parentId}/sub-categories', [CategoryController::class, 'getSubCategories']);
         // Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
         // Route::get('/search', [CategoryController::class, 'searchCategories']);
-        // 🆕 FROM feat/rating-system: Category tree & search
-        Route::get('/tree', [CategoryController::class, 'getCategoriesTree']);
-        Route::get('/search', [CategoryController::class, 'searchCategories']);
+    });
+
+    Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
+
+    // Locations
+    Route::prefix('locations')->controller(LocationController::class)->group(function () {
+        Route::get('provinces', 'provinces');
+        Route::get('cities/{provinceId}', 'cities');
+        Route::get('districts/{cityId}', 'districts');
+        Route::get('villages/{districtId}', 'villages');
     });
 });
-Route::get('segmentations', [SegmentationController::class, 'index'])->name('segmentations.index');
 
-// Public Community Posts (tanpa auth)
+
+// Public Community Posts (harusnya masuk ke prefix public)
 Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
     Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
@@ -118,7 +125,7 @@ Route::prefix('community')->name('community.')->group(function () {
 
 
 // ============================================================
-// PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
+// API SERVED IMAGES
 // ============================================================
 Route::get('images/{image}', [ImageController::class, 'show'])
     ->name('images.show');
@@ -142,38 +149,13 @@ Route::get('merchant-banner/{merchant}', [MerchantController::class, 'merchantBa
     ->name('merchant_banner.show');
 
 
-// ---------- JASA ----------
-Route::prefix('jasa')->group(function () {
-    Route::get('/', [JasaController::class, 'index']);
-    Route::get('/{id}', [JasaController::class, 'show']);
-    Route::post('/', [JasaController::class, 'store']);
-    Route::put('/{id}', [JasaController::class, 'update']);
-    Route::delete('/{id}', [JasaController::class, 'destroy']);
-});
-
-// ---------- PROMO ----------
-Route::prefix('promos')->group(function () {
-    Route::get('/', [PromoController::class, 'index']);
-    Route::get('/{id}', [PromoController::class, 'show'])->name('promos.show');
-    Route::post('/', [PromoController::class, 'store']);
-    Route::delete('/{id}', [PromoController::class, 'destroy']);
-});
-
-// ---------- ORDERS ----------
-Route::prefix('orders')->group(function () {
-    Route::get('/', [OrderController::class, 'index']);
-    Route::get('/{id}', [OrderController::class, 'show']);
-    Route::post('/', [OrderController::class, 'store']);
-});
-
-
 // ============================================================
 // AUTH ROUTES
 // ============================================================
 Route::prefix('auth')->group(function () {
     // Public auth endpoints with rate limiting for security
     Route::post('register', [AuthController::class, 'register'])
-        ->middleware('throttle:50,60')
+        ->middleware('throttle:5,1')
         ->name('register');
 
     Route::post('login', [AuthController::class, 'login'])
@@ -181,11 +163,11 @@ Route::prefix('auth')->group(function () {
         ->name('login');
 
     Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])
-        ->middleware('throttle:3,60')
+        ->middleware('throttle:5,1')
         ->name('forgot-password');
 
     Route::post('reset-password', [PasswordResetController::class, 'reset'])
-        ->middleware('throttle:5,60')
+        ->middleware('throttle:5,1')
         ->name('reset-password');
 
     // Email verification
@@ -196,13 +178,13 @@ Route::prefix('auth')->group(function () {
             \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
             \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
         ])
-        ->middleware(['throttle:60,1'])
+        ->middleware(['throttle:5,1'])
         ->name('api.verification.verify');
 
     Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
-            ->middleware('throttle:60,1')
+            ->middleware('throttle:5,1')
             ->name('api.verification.send');
     });
 });
@@ -212,33 +194,22 @@ Route::prefix('auth')->group(function () {
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
 // ============================================================
-// Wrap protected routes with 'web' so session/cookie middlewares are available,
-// then apply 'auth:sanctum' and other guards.
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
-
-    // Locations
-    Route::prefix('locations')->controller(LocationController::class)->group(function () {
-        Route::get('provinces', 'provinces');
-        Route::get('cities/{provinceId}', 'cities');
-        Route::get('districts/{cityId}', 'districts');
-        Route::get('villages/{districtId}', 'villages');
-    });
-
-    Route::prefix('cart')->group(function () {
-
-        Route::get('/', [CartController::class, 'index']);
-        Route::get('/count', [CartController::class, 'count']);
-        Route::post('/items', [CartController::class, 'addToCart']);
-        Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
-        Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
-        Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
-        Route::delete('/{cart}', [CartController::class, 'clearCart']);
-    });
-    Route::middleware(['auth:sanctum'])->get('/me', [AuthController::class, 'me'])->name('me');
+    Route::get('/me', [AuthController::class, 'me'])->name('me');
 
     // CUSTOMER ONLY: Register Merchant
     Route::middleware('role:customer')->group(function () {
+        Route::prefix('cart')->group(function () {
+            Route::get('/', [CartController::class, 'index']);
+            Route::get('/count', [CartController::class, 'count']);
+            Route::post('/items', [CartController::class, 'addToCart']);
+            Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
+            Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
+            Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
+            Route::delete('/{cart}', [CartController::class, 'clearCart']);
+        });
+
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
         // Current user's merchant (for Profile page "Akses Toko" button)
         Route::get('/my-merchants', [MerchantController::class, 'myMerchants'])->name('merchant.my-many');
@@ -255,9 +226,11 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             Route::get('/address', 'addressShow')->name('profile.address.show');
             Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
         });
+
+        Route::get('checkout/{merchant}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+
     });
 
-    Route::get('checkout/{merchant}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
 
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
@@ -329,12 +302,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         });
     });
 
-    // ADMIN ONLY: merchant approval
-    Route::middleware('role:admin')->prefix('merchants')->group(function () {
-        Route::post('{merchant}/approve', [MerchantController::class, 'approve']);
-        Route::post('{merchant}/reject', [MerchantController::class, 'reject']);
-    });
-
     // PROTECTED Community Actions (require auth)
     Route::prefix('community')->group(function () {
 
@@ -360,15 +327,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::get('/my-comments', [PostCommentController::class, 'myComments'])
             ->name('community.comments.my-comments');
     });
-});
-
-// Public Community Posts (tanpa auth)
-Route::prefix('community')->name('community.')->group(function () {
-    Route::get('/posts', [CommunityPostController::class, 'index'])->name('posts.index');
-    Route::get('/posts/popular', [CommunityPostController::class, 'popular'])->name('posts.popular');
-    Route::get('/posts/{slug}', [CommunityPostController::class, 'show'])->name('posts.show');
-    Route::get('/posts/{postId}/comments', [PostCommentController::class, 'index'])->name('comments.index');
-    Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
 
 // ============================================================
