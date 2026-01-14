@@ -459,21 +459,22 @@ class MerchantController extends Controller
      * Get merchant profile for authenticated UMKM owner
      * Only returns merchant if it belongs to authenticated user
      */
-    public function showMyMerchant(Request $request, $id)
+    public function showMyMerchant(Request $request, Merchant $merchant)
     {
         $user = $request->user();
 
-        $merchant = Merchant::with([
+        if ((int) $merchant->user_id !== (int) $user->id) {
+            abort(404);
+        }
+
+        $merchant->load([
             'segmentation',
             'paguyuban',
             'primaryAddress.province',
             'primaryAddress.city',
             'primaryAddress.district',
             'primaryAddress.village',
-        ])
-            ->where('id', $id)
-            ->where('user_id', $user->id)
-            ->firstOrFail();
+        ]);
 
         // Fallback: beberapa data lama mungkin tidak memakai label 'utama'
         // sehingga relasi primaryAddress null. Untuk kebutuhan edit form,
@@ -504,15 +505,20 @@ class MerchantController extends Controller
      * Update merchant profile by UMKM owner
      * Includes logo & cover image upload
      */
-    public function updateMyMerchant(Request $request, $merchant)
+    public function updateMyMerchant(Request $request, Merchant $merchant)
     {
         $user = $request->user();
         Log::info('Merchant update request:', [
-            'merchant_id' => $merchant,
+            'merchant_id' => $merchant->id,
+            'merchant_slug' => $merchant->slug,
             'user_id' => $user->id,
             'input' => $request->all(),
             'files' => array_keys($request->allFiles())
         ]);
+
+        if ((int) $merchant->user_id !== (int) $user->id) {
+            abort(404);
+        }
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -549,7 +555,6 @@ class MerchantController extends Controller
             /** ===============================
              * Update merchant basic info
              * =============================== */
-            $merchant = Merchant::findOrFail($merchant);
             $merchant->update([
                 'name' => $validated['name'],
                 'phone' => $validated['phone'] ?? null,

@@ -6,6 +6,8 @@ use App\Models\Image;
 use App\Models\Product;
 use App\Models\CartItem;
 use App\Models\ProductVariant;
+use App\Models\ProductOption;
+use App\Models\ProductOptionValue;
 use App\Models\Merchant;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -66,25 +68,8 @@ class ProductController
                 'coverImage:id,imageable_id,imageable_type,image_path',
                 'merchant:id,name,slug,segmentation_id',
                 'merchant.segmentation:id,name',
-                'categories:id,name',
                 'variants:id,product_id,price',
             ]);
-
-
-        // Search by name
-        if (!empty($data['q'])) {
-            $query->where('name', 'like', '%' . $data['q'] . '%');
-        }
-
-        // Filter by merchant
-        if (!empty($data['merchant_id'])) {
-            $query->where('merchant_id', $data['merchant_id']);
-        }
-
-        // Filter by category
-        if (!empty($data['category_id'])) {
-            $query->whereHas('categories', fn($q) => $q->where('categories.id', $data['category_id']));
-        }
 
         if (!empty($data['segments'])) {
             $query->whereHas('merchant.segmentation', function ($q) use ($data) {
@@ -576,13 +561,34 @@ class ProductController
     // PROTECTED ENDPOINTS (Auth Required - Merchant Owner)
     // ============================================================
 
+    private function abortIfNotOwnerOrNotAllowedMerchant(int $userId, Merchant $merchant)
+    {
+        if ((int) ($merchant->user_id ?? 0) !== (int) $userId) {
+            return response()->json(['message' => 'UMKM tidak sah. Anda bukan pemilik UMKM ini.'], 403);
+        }
+
+        if (($merchant->status ?? null) !== 'approved') {
+            return response()->json(['message' => 'UMKM belum disetujui oleh admin.'], 403);
+        }
+
+        $segmentId = $merchant->segmentation_id
+            ?? $merchant->segment_id
+            ?? optional($merchant->segmentation)->id
+            ?? null;
+
+        if (!in_array((int) $segmentId, self::ALLOWED_SEGMENT_IDS, true)) {
+            return response()->json(['message' => 'Segment UMKM tidak diizinkan untuk mengelola produk.'], 403);
+        }
+
+        return null;
+    }
+
     /**
      * ✅ UPDATED: List products by merchant (auto-detect merchant dari user)
      */
-    public function index(Request $request)
+    public function index(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
-            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'q' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:draft,published,archived'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
@@ -594,21 +600,12 @@ class ProductController
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        if (empty($data['merchant_id'])) {
-            $merchant = Merchant::where('user_id', $request->user()->id)
-                ->where('status', 'approved')
-                ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
-                ->first();
-
-            if (!$merchant)
-                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
-            $merchantId = $merchant->id;
-        } else {
-            $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-            if (is_array($merchantOrError) && isset($merchantOrError['error']))
-                return $merchantOrError['error'];
-            $merchantId = $merchantOrError->id;
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
+
+        $merchantId = $merchant->id;
 
         // 1. BUILD QUERY (Filter)
         $query = $this->buildFilteredProductQuery($merchantId, $data);
@@ -711,11 +708,10 @@ class ProductController
         ]);
     }
 
-    public function store(Request $request)
+    public function store(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
             // Basic product info
-            'merchant_id' => ['required', 'integer', 'exists:merchants,id'],
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'min_purchase' => ['nullable', 'integer', 'min:1'],
@@ -768,12 +764,10 @@ class ProductController
                 'message' => 'Maksimal upload 6 foto produk.',
             ], 422);
         }
-        // Validasi merchant ownership & segment
-        $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-        if (is_array($merchantOrError) && isset($merchantOrError['error'])) {
-            return $merchantOrError['error'];
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
-        $merchant = $merchantOrError;
 
         if (!empty($data['variants'])) {
             $variantNames = collect($data['variants'])
@@ -1201,8 +1195,17 @@ class ProductController
      * ✅ FIXED: Get product (owner only) - WITH ADDONS COMPLETE
      * Use slug instead of id
      */
-    public function show(Request $request, string $slug)
+    public function show(Request $request, Merchant $merchant, Product $product)
     {
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
+
         // 1. QUERY UTAMA: Pilih kolom tabel 'products' saja
         // WAJIB: 'id' (untuk relasi), 'merchant_id' (untuk cek permission), 'status' (untuk logic signed url)
         $product = Product::select([
@@ -1214,15 +1217,10 @@ class ProductController
             'status',
             'min_purchase',
         ])
-            ->where('slug', $slug)
+            ->whereKey($product->id)
             ->firstOrFail();
 
-        // 2. CEK PERMISSION
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
-            return $error;
-
-        // 3. EAGER LOAD DENGAN SELECT
+        // EAGER LOAD DENGAN SELECT
         $product->load([
             // Select kolom tabel images
             'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type'),
@@ -1333,13 +1331,16 @@ class ProductController
      * ✅ UPDATED: Full product update with images, variants, addons
      * Use slug instead of id
      */
-    public function update(Request $request, string $slug)
+    public function update(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         // Validasi (Sama seperti sebelumnya)
         $data = $request->validate([
@@ -1563,7 +1564,7 @@ class ProductController
 
             if ($useVariants) {
                 // Hapus data single variant jika ada (agar tidak bentrok)
-                $product->variants()->each(function ($variant) {
+                $product->variants()->each(function (ProductVariant $variant) {
                     $variant->optionValues()->detach();
                     $variant->delete();
                 });
@@ -1575,7 +1576,7 @@ class ProductController
                 // ==============================
 
                 // 1️⃣ Hapus SEMUA relasi varian lama
-                $product->variants()->each(function ($variant) {
+                $product->variants()->each(function (ProductVariant $variant) {
                     $variant->optionValues()->detach(); // pivot
                     $variant->delete();
                 });
@@ -1686,7 +1687,7 @@ class ProductController
             // DELETE VALUE yang dihapus user
             $option->values()
                 ->whereNotIn('id', $keptValueIds)
-                ->each(function ($val) {
+                ->each(function (ProductOptionValue $val) {
                     if ($val->image_path) {
                         Storage::disk('public')->delete($val->image_path);
                     }
@@ -1697,7 +1698,7 @@ class ProductController
         // DELETE OPTION yang dihapus user
         $product->options()
             ->whereNotIn('id', $keptOptionIds)
-            ->each(function ($opt) {
+            ->each(function (ProductOption $opt) {
                 foreach ($opt->values as $val) {
                     if ($val->image_path) {
                         Storage::disk('public')->delete($val->image_path);
@@ -1747,7 +1748,7 @@ class ProductController
         // DELETE VARIANT yang dihapus user
         $product->variants()
             ->whereNotIn('id', $keptVariantIds)
-            ->each(function ($variant) {
+            ->each(function (ProductVariant $variant) {
                 $variant->optionValues()->detach();
                 $variant->delete();
             });
@@ -2004,17 +2005,19 @@ class ProductController
      */
 
 
-    public function updateStatus(Request $request, string $slug)
+    public function updateStatus(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
         $data = $request->validate([
             'status' => ['required', 'in:published,archived'],
         ]);
 
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
         if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
         }
 
         try {
@@ -2034,13 +2037,16 @@ class ProductController
 
     // Delete product (also deletes images files)
     // Use slug instead of id
-    public function destroy(Request $request, string $slug)
+    public function destroy(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         foreach ($product->images as $img) {
             $this->deleteImageFileIfExists($img->image_path);
@@ -2052,13 +2058,16 @@ class ProductController
 
     // Add images to product
     // Use slug instead of id
-    public function storeImage(Request $request, string $slug)
+    public function storeImage(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         $data = $request->validate([
             'images' => ['required', 'array', 'min:1'],
@@ -2074,13 +2083,16 @@ class ProductController
      * Get total possible combinations
      * Use slug instead of id
      */
-    public function getCombinationCount(Request $request, string $slug)
+    public function getCombinationCount(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         $options = $product->options()->with('values')->get();
 
@@ -2451,10 +2463,9 @@ class ProductController
         return $variants;
     }
 
-    public function exportExcel(Request $request)
+    public function exportExcel(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
-            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'q' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:draft,published,archived'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
@@ -2465,22 +2476,12 @@ class ProductController
             'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
         ]);
 
-        // merchant detection same as index...
-        if (empty($data['merchant_id'])) {
-            $merchant = Merchant::where('user_id', $request->user()->id)
-                ->where('status', 'approved')
-                ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
-                ->first();
-            if (!$merchant) {
-                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
-            }
-            $merchantId = $merchant->id;
-        } else {
-            $owned = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-            if (is_array($owned) && isset($owned['error']))
-                return $owned['error'];
-            $merchantId = $owned->id;
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
+
+        $merchantId = $merchant->id;
 
         // Build same query and get full collection (no pagination for export)
         $query = $this->buildFilteredProductQuery($merchantId, $data);
@@ -2495,10 +2496,9 @@ class ProductController
     }
 
 
-    public function exportPdf(Request $request)
+    public function exportPdf(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
-            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'q' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:draft,published,archived'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
@@ -2509,22 +2509,12 @@ class ProductController
             'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
         ]);
 
-        // merchant detection same as index...
-        if (empty($data['merchant_id'])) {
-            $merchant = Merchant::where('user_id', $request->user()->id)
-                ->where('status', 'approved')
-                ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
-                ->first();
-            if (!$merchant) {
-                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
-            }
-            $merchantId = $merchant->id;
-        } else {
-            $owned = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-            if (is_array($owned) && isset($owned['error']))
-                return $owned['error'];
-            $merchantId = $owned->id;
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
+
+        $merchantId = $merchant->id;
 
         // Use helper to build variant query with same filters
         $variantsQuery = $this->buildFilteredVariantQuery($merchantId, $data);
@@ -2542,7 +2532,7 @@ class ProductController
      * Bulk delete products
      * DELETE /api/products/bulk-delete
      */
-    public function bulkDelete(Request $request)
+    public function bulkDelete(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
             'product_slugs' => ['required', 'array', 'min:1'],
@@ -2552,8 +2542,15 @@ class ProductController
         $user = $request->user();
         $slugs = $data['product_slugs'];
 
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($user->id, $merchant);
+        if ($error) {
+            return $error;
+        }
+
+        $merchantId = $merchant->id;
+
         // Get products and validate ownership
-        $products = Product::whereIn('slug', $slugs)->get();
+        $products = Product::where('merchant_id', $merchantId)->whereIn('slug', $slugs)->get();
 
         $unauthorizedCount = 0;
         $deletedCount = 0;
@@ -2601,7 +2598,7 @@ class ProductController
      * Bulk update product status
      * POST /api/products/bulk-update-status
      */
-    public function bulkUpdateStatus(Request $request)
+    public function bulkUpdateStatus(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
             'product_slugs' => ['required', 'array', 'min:1'],
@@ -2613,8 +2610,15 @@ class ProductController
         $slugs = $data['product_slugs'];
         $newStatus = $data['status'];
 
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($user->id, $merchant);
+        if ($error) {
+            return $error;
+        }
+
+        $merchantId = $merchant->id;
+
         // Get products and validate ownership
-        $products = Product::whereIn('slug', $slugs)->get();
+        $products = Product::where('merchant_id', $merchantId)->whereIn('slug', $slugs)->get();
 
         $unauthorizedCount = 0;
         $updatedCount = 0;

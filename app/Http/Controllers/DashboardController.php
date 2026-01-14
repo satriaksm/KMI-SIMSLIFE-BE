@@ -6,28 +6,23 @@ use App\Models\Product;
 use App\Models\Category;
 use App\Models\Merchant;
 use App\Models\Voucher;
-use App\Models\VoucherUsage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
-    public function merchantDashboard(Request $request, int $merchant)
+    public function merchantDashboard(Request $request, Merchant $merchant)
     {
         $user = $request->user();
 
-        // 🔐 Validasi kepemilikan merchant
-        $merchantModel = Merchant::where('id', $merchant)
-            ->where('user_id', $user->id)
-            ->first();
-
-        if (!$merchantModel) {
+        // 🔐 Validasi kepemilikan merchant (berdasarkan merchant hasil binding by slug)
+        if ((int) $merchant->user_id !== (int) $user->id) {
             return response()->json([
                 'message' => 'Anda tidak memiliki akses ke merchant ini'
             ], 403);
         }
 
-        $merchantId = $merchantModel->id;
+        $merchantId = $merchant->id;
 
         /**
          * =========================
@@ -81,11 +76,6 @@ class DashboardController extends Controller
 
         /**
          * =========================
-         * CHART KATEGORI
-         * =========================
-         */
-        /**
-         * =========================
          * CHART KATEGORI (TOP 3 + LAINNYA)
          * =========================
          */
@@ -102,7 +92,6 @@ class DashboardController extends Controller
             ->orderByDesc('total')
             ->get();
 
-
         $topCategories = $categoryStats->take(3);
         $otherTotal = $categoryStats->slice(3)->sum('total');
 
@@ -114,11 +103,11 @@ class DashboardController extends Controller
             $data[] = $otherTotal;
         }
 
-
         return response()->json([
             'merchant' => [
-                'id' => $merchantModel->id,
-                'name' => $merchantModel->name,
+                'id' => $merchant->id,
+                'slug' => $merchant->slug,
+                'name' => $merchant->name,
             ],
             'stats' => [
                 'total' => $totalProducts,

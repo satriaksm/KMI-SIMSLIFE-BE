@@ -175,7 +175,7 @@ class AuthController extends Controller
         $user = $request->user()->load([
             'roles:id,name',
             'merchants' => function ($query) {
-                $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
+                $query->select('id', 'slug', 'user_id', 'name', 'status', 'segmentation_id')
                     ->where('status', 'approved')
                     ->with('segmentation:id,name');
             }
@@ -190,6 +190,7 @@ class AuthController extends Controller
             'merchants' => $user->merchants->map(function ($merchant) {
                 return [
                     'id' => $merchant->id,
+                    'slug' => $merchant->slug,
                     'name' => $merchant->name,
                     'status' => $merchant->status,
                     'segmentation' => $merchant->segmentation ? [

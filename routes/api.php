@@ -227,7 +227,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
         });
 
-        Route::get('checkout/{merchant}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+        Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
 
     });
 
@@ -235,71 +235,72 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
 
-        Route::get(
-            'merchants/{merchant}/dashboard',
-            [DashboardController::class, 'merchantDashboard']
-        );
-
         Route::prefix('merchant')->group(function () {
-            Route::get('{merchant}/vouchers', [VoucherController::class, 'merchantIndex']);
-            Route::get('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantShow']);
-            Route::post('{merchant}/vouchers', [VoucherController::class, 'merchantStore']);
-            Route::put('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantUpdate']);
-            Route::delete('{merchant}/vouchers/{voucher}', [VoucherController::class, 'merchantDestroy']);
 
-            Route::post('{merchant}/vouchers/bulk-delete', [VoucherController::class, 'bulkDelete'])->name('merchant.bulk-delete');
-            Route::post('{merchant}/vouchers/bulk-update-status', [VoucherController::class, 'bulkUpdateStatus'])->name('merchant.bulk-update-status');
+            Route::get(
+                '{merchant:slug}/dashboard',
+                [DashboardController::class, 'merchantDashboard']
+            );
+
+            Route::get('/{merchant:slug}/profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
+            Route::post('/{merchant:slug}/update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
+
+            // PRODUCT CRUD & NESTED
+            Route::get('{merchant:slug}/products', [ProductController::class, 'index'])->name('index');
+            Route::post('{merchant:slug}/products', [ProductController::class, 'store'])->name('store');
+
+            Route::post('{merchant:slug}/products/bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
+            Route::post('{merchant:slug}/products/bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
+
+            Route::get('{merchant:slug}/products/export/excel', [ProductController::class, 'exportExcel']);
+            Route::get('{merchant:slug}/products/export/pdf', [ProductController::class, 'exportPdf']);
+            Route::get('{merchant:slug}/products/{product:slug}', [ProductController::class, 'show'])
+                ->where('product', '^[a-z0-9-]+$')
+                ->name('show');
+
+            Route::put('{merchant:slug}/products/{product:slug}', [ProductController::class, 'update'])
+                ->where('product', '^[a-z0-9-]+$')
+                ->name('update');
+
+            Route::patch('{merchant:slug}/products/{product:slug}', [ProductController::class, 'update'])
+                ->where('product', '^[a-z0-9-]+$')
+                ->name('update.patch');
+
+            Route::delete('{merchant:slug}/products/{product:slug}', [ProductController::class, 'destroy'])
+                ->where('product', '^[a-z0-9-]+$')
+                ->name('destroy');
+
+            Route::patch('{merchant:slug}/products/{product:slug}/status', [ProductController::class, 'updateStatus'])
+                ->where('product', '^[a-z0-9-]+$')
+                ->name('update-status');
+
+            // Variant combination counter
+            Route::get('{merchant:slug}/products/{product:slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
+                ->where('product', '^[a-z0-9-]+$');
+            // 🆕 FROM feat/rating-system: Upload product images
+            Route::post('{merchant:slug}/products/{product:slug}/images', [ProductController::class, 'storeImage'])
+                ->where('product', '^[a-z0-9-]+$');
+
+            // VOUCHER MANAGEMENT FOR MERCHANT OWNERS
+
+            Route::get('{merchant:slug}/vouchers', [VoucherController::class, 'merchantIndex']);
+            Route::get('{merchant:slug}/vouchers/{voucher}', [VoucherController::class, 'merchantShow']);
+            Route::post('{merchant:slug}/vouchers', [VoucherController::class, 'merchantStore']);
+            Route::put('{merchant:slug}/vouchers/{voucher}', [VoucherController::class, 'merchantUpdate']);
+            Route::delete('{merchant:slug}/vouchers/{voucher}', [VoucherController::class, 'merchantDestroy']);
+
+            Route::post('{merchant:slug}/vouchers/bulk-delete', [VoucherController::class, 'bulkDelete'])->name('merchant.bulk-delete');
+            Route::post('{merchant:slug}/vouchers/bulk-update-status', [VoucherController::class, 'bulkUpdateStatus'])->name('merchant.bulk-update-status');
 
 
-            Route::patch('{merchant}/vouchers/{voucher}/status', [VoucherController::class, 'updateStatus'])
+            Route::patch('{merchant:slug}/vouchers/{voucher}/status', [VoucherController::class, 'updateStatus'])
                 ->name('merchant.update-status');
         });
 
 
-        // PRODUCT CRUD & NESTED
-        Route::prefix('products')->name('products.')->group(function () {
-            // Product CRUD list & create
-            Route::get('/', [ProductController::class, 'index'])->name('index');
-            Route::post('/', [ProductController::class, 'store'])->name('store');
 
-            Route::post('/bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
-            Route::post('/bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
 
-            Route::get('/export/excel', [ProductController::class, 'exportExcel']);
-            Route::get('/export/pdf', [ProductController::class, 'exportPdf']);
-            Route::get('{slug}', [ProductController::class, 'show'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('show');
 
-            Route::put('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update');
-
-            Route::patch('{slug}', [ProductController::class, 'update'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update.patch');
-
-            Route::delete('{slug}', [ProductController::class, 'destroy'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('destroy');
-
-            Route::patch('{slug}/status', [ProductController::class, 'updateStatus'])
-                ->where('slug', '^[a-z0-9-]+$')
-                ->name('update-status');
-
-            // Variant combination counter
-            Route::get('{slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
-                ->where('slug', '^[a-z0-9-]+$');
-            // 🆕 FROM feat/rating-system: Upload product images
-            Route::post('{slug}/images', [ProductController::class, 'storeImage'])
-                ->where('slug', '^[a-z0-9-]+$');
-        });
-
-        // 🆕 FROM feat/rating-system: Merchant Profile Management
-        Route::prefix('merchants')->name('merchants.')->group(function () {
-            Route::get('/{id}/profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
-            Route::post('/{merchant}/update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
-        });
     });
 
     // PROTECTED Community Actions (require auth)
