@@ -181,9 +181,14 @@ class AuthController extends Controller
             }
         ]);
 
+        // Ensure profile picture is a usable absolute URL for the frontend
+        // (User model accessor returns a signed route; make it absolute defensively)
+        $profilePictureUrl = $user->profile_picture ? url($user->profile_picture) : null;
+
         return response()->json([
             'id' => $user->id,
             'name' => $user->name,
+            'profile_picture' => $profilePictureUrl,
             'email' => $user->email,
             'phone' => $user->phone,
             'roles' => $user->roles->pluck('name'),
