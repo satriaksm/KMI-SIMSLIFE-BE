@@ -187,21 +187,27 @@ class AuthController extends Controller
         $user = $request->user()->load([
             'roles:id,name',
             'merchants' => function ($query) {
-                $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
+                $query->select('id', 'slug', 'user_id', 'name', 'status', 'segmentation_id')
                     ->where('status', 'approved')
                     ->with('segmentation:id,name');
             }
         ]);
 
+        // Ensure profile picture is a usable absolute URL for the frontend
+        // (User model accessor returns a signed route; make it absolute defensively)
+        $profilePictureUrl = $user->profile_picture ? url($user->profile_picture) : null;
+
         return response()->json([
             'id' => $user->id,
             'name' => $user->name,
+            'profile_picture' => $profilePictureUrl,
             'email' => $user->email,
             'phone' => $user->phone,
             'roles' => $user->roles->pluck('name'),
             'merchants' => $user->merchants->map(function ($merchant) {
                 return [
                     'id' => $merchant->id,
+                    'slug' => $merchant->slug,
                     'name' => $merchant->name,
                     'status' => $merchant->status,
                     'segmentation' => $merchant->segmentation ? [

@@ -6,6 +6,8 @@ use App\Models\Image;
 use App\Models\Product;
 use App\Models\CartItem;
 use App\Models\ProductVariant;
+use App\Models\ProductOption;
+use App\Models\ProductOptionValue;
 use App\Models\Merchant;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -53,38 +55,21 @@ class ProductController
 
         $query = Product::query()
             ->select([
-                'products.id',
-                'products.merchant_id',
-                'products.name',
-                'products.slug',
-            ])
+                    'products.id',
+                    'products.merchant_id',
+                    'products.name',
+                    'products.slug',
+                ])
             ->whereHas('variants', function ($q) {
                 $q->where('stock', '>', 0);
             })->where('products.status', 'published')
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
-                'coverImage:id,imageable_id,imageable_type,image_path',
-                'merchant:id,name,slug,segmentation_id',
-                'merchant.segmentation:id,name',
-                'categories:id,name',
-                'variants:id,product_id,price',
-            ]);
-
-
-        // Search by name
-        if (!empty($data['q'])) {
-            $query->where('name', 'like', '%' . $data['q'] . '%');
-        }
-
-        // Filter by merchant
-        if (!empty($data['merchant_id'])) {
-            $query->where('merchant_id', $data['merchant_id']);
-        }
-
-        // Filter by category
-        if (!empty($data['category_id'])) {
-            $query->whereHas('categories', fn($q) => $q->where('categories.id', $data['category_id']));
-        }
+                    'coverImage:id,imageable_id,imageable_type,image_path',
+                    'merchant:id,name,slug,segmentation_id',
+                    'merchant.segmentation:id,name',
+                    'variants:id,product_id,price',
+                ]);
 
         if (!empty($data['segments'])) {
             $query->whereHas('merchant.segmentation', function ($q) use ($data) {
@@ -190,46 +175,46 @@ class ProductController
             ->whereIn('status', ['published', 'archived']) // Public usually only allows these
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
-                // Images
-                'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
-                'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
+                    // Images
+                    'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                    'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
 
-                // Merchant & categories
-                'merchant.addresses.district.city.province',
-                'categories:id,name,slug',
+                    // Merchant & categories
+                    'merchant.addresses.district.city.province',
+                    'categories:id,name,slug',
 
-                // Options
-                'options' => function ($q) {
-                    $q->select('id', 'product_id', 'option_name', 'uses_image')
-                        ->orderBy('id')
-                        ->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')]);
-                },
+                    // Options
+                    'options' => function ($q) {
+                        $q->select('id', 'product_id', 'option_name', 'uses_image')
+                            ->orderBy('id')
+                            ->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')]);
+                    },
 
-                // Variants
-                'variants' => function ($q) {
-                    $q->select('id', 'product_id', 'stock', 'price', 'sku')
-                        ->orderBy('price', 'asc')
-                        ->with([
-                            'optionValues' => function ($ovq) {
-                                $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
-                                    ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                                    ->addSelect('product_options.option_name');
-                            }
-                        ]);
-                },
+                    // Variants
+                    'variants' => function ($q) {
+                        $q->select('id', 'product_id', 'stock', 'price', 'sku')
+                            ->orderBy('price', 'asc')
+                            ->with([
+                                    'optionValues' => function ($ovq) {
+                                        $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
+                                            ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                                            ->addSelect('product_options.option_name');
+                                    }
+                                ]);
+                    },
 
-                // Addon groups
-                'addonGroups' => function ($q) {
-                    $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
-                        ->orderBy('id')
-                        ->with([
-                            'options' => function ($oq) {
-                                $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price')
-                                    ->with('addon:id,addon_name');
-                            }
-                        ]);
-                },
-            ])
+                    // Addon groups
+                    'addonGroups' => function ($q) {
+                        $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
+                            ->orderBy('id')
+                            ->with([
+                                    'options' => function ($oq) {
+                                        $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price')
+                                            ->with('addon:id,addon_name');
+                                    }
+                                ]);
+                    },
+                ])
             ->firstOrFail();
 
         // ============================================================
@@ -382,10 +367,10 @@ class ProductController
             })
 
             ->with([
-                'merchant:id,name,slug',
-                'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
-                'variants:id,product_id,price,stock',
-            ])
+                    'merchant:id,name,slug',
+                    'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                    'variants:id,product_id,price,stock',
+                ])
 
             ->inRandomOrder()
             ->limit(5)
@@ -440,63 +425,63 @@ class ProductController
      * Public: Get variant by selected option values
      * Real-time availability check when user selects options
      */
-    public function publicGetVariant(Request $request, string $slug)
-    {
-        $product = Product::where('slug', $slug)
-            ->whereIn('status', ['published', 'archived']) // boleh cek varian walau produk di-archive
-            ->firstOrFail();
+    // public function publicGetVariant(Request $request, string $slug)
+    // {
+    //     $product = Product::where('slug', $slug)
+    //         ->whereIn('status', ['published', 'archived']) // boleh cek varian walau produk di-archive
+    //         ->firstOrFail();
 
-        $data = $request->validate([
-            'option_value_ids' => ['required', 'array', 'min:1'],
-            'option_value_ids.*' => ['integer', 'exists:product_option_values,id'],
-        ]);
+    //     $data = $request->validate([
+    //         'option_value_ids' => ['required', 'array', 'min:1'],
+    //         'option_value_ids.*' => ['integer', 'exists:product_option_values,id'],
+    //     ]);
 
-        $optionValueIds = $data['option_value_ids'];
-        sort($optionValueIds);
+    //     $optionValueIds = $data['option_value_ids'];
+    //     sort($optionValueIds);
 
-        // Find exact combination
-        $variant = $product->variants()
-            ->select('product_variants.*')
-            ->join('product_variant_option_values as pvov', 'product_variants.id', '=', 'pvov.product_variant_id')
-            ->whereIn('pvov.product_option_value_id', $optionValueIds)
-            ->groupBy('product_variants.id')
-            ->havingRaw('COUNT(DISTINCT pvov.product_option_value_id) = ?', [count($optionValueIds)])
-            ->with('optionValues:id,option_value,image_path')
-            ->first();
+    //     // Find exact combination
+    //     $variant = $product->variants()
+    //         ->select('product_variants.*')
+    //         ->join('product_variant_option_values as pvov', 'product_variants.id', '=', 'pvov.product_variant_id')
+    //         ->whereIn('pvov.product_option_value_id', $optionValueIds)
+    //         ->groupBy('product_variants.id')
+    //         ->havingRaw('COUNT(DISTINCT pvov.product_option_value_id) = ?', [count($optionValueIds)])
+    //         ->with('optionValues:id,option_value,image_path')
+    //         ->first();
 
-        // always include product-level min_purchase so frontend knows the rule
-        $minPurchase = (int) ($product->min_purchase ?? 1);
+    //     // always include product-level min_purchase so frontend knows the rule
+    //     $minPurchase = (int) ($product->min_purchase ?? 1);
 
-        if (!$variant) {
-            return response()->json([
-                'message' => 'Variant dengan kombinasi ini tidak tersedia.',
-                'available' => false,
-                'min_purchase' => $minPurchase,
-            ], 404);
-        }
+    //     if (!$variant) {
+    //         return response()->json([
+    //             'message' => 'Variant dengan kombinasi ini tidak tersedia.',
+    //             'available' => false,
+    //             'min_purchase' => $minPurchase,
+    //         ], 404);
+    //     }
 
-        if ($variant->stock <= 0) {
-            return response()->json([
-                'message' => 'Variant ini sedang habis.',
-                'available' => false,
-                'variant' => $variant->only(['id', 'price', 'stock', 'sku']),
-                'min_purchase' => $minPurchase,
-            ], 200);
-        }
+    //     if ($variant->stock <= 0) {
+    //         return response()->json([
+    //             'message' => 'Variant ini sedang habis.',
+    //             'available' => false,
+    //             'variant' => $variant->only(['id', 'price', 'stock', 'sku']),
+    //             'min_purchase' => $minPurchase,
+    //         ], 200);
+    //     }
 
-        return response()->json([
-            'available' => true,
-            'variant' => [
-                'id' => $variant->id,
-                'price' => $variant->price,
-                'stock' => $variant->stock,
-                'sku' => $variant->sku,
-                'option_values' => $variant->optionValues,
-            ],
-            // sertakan min_purchase di response utama
-            'min_purchase' => $minPurchase,
-        ]);
-    }
+    //     return response()->json([
+    //         'available' => true,
+    //         'variant' => [
+    //             'id' => $variant->id,
+    //             'price' => $variant->price,
+    //             'stock' => $variant->stock,
+    //             'sku' => $variant->sku,
+    //             'option_values' => $variant->optionValues,
+    //         ],
+    //         // sertakan min_purchase di response utama
+    //         'min_purchase' => $minPurchase,
+    //     ]);
+    // }
 
 
     /**
@@ -515,9 +500,24 @@ class ProductController
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
 
-        $query = Product::where('merchant_id', $merchant->id)
-            ->whereIn('status', ['published', 'archived'])
-            ->with(['coverImage', 'categories:id,name']);
+        $query = Product::query()
+            ->select([
+                    'products.id',
+                    'products.merchant_id',
+                    'products.name',
+                    'products.slug',
+                    'products.created_at',
+                ])
+            ->where('merchant_id', $merchant->id)
+            ->whereIn('status', ['published'])
+            ->whereHas('variants', function ($q) {
+                $q->where('stock', '>', 0);
+            })
+            ->with([
+
+                    'coverImage:id,imageable_id,imageable_type,image_path',
+                    'categories:id,name',
+                ]);
 
         if (!empty($data['q'])) {
             $query->where('name', 'like', '%' . $data['q'] . '%');
@@ -527,62 +527,104 @@ class ProductController
             $query->whereHas('categories', fn($q) => $q->where('categories.id', $data['category_id']));
         }
 
+        // Match SearchController::searchProducts output (min/max price fields)
+        $query->addSelect([
+            'min_price' => ProductVariant::selectRaw('MIN(price)')
+                ->whereColumn('product_id', 'products.id'),
+
+            'max_price' => ProductVariant::selectRaw('MAX(price)')
+                ->whereColumn('product_id', 'products.id'),
+        ]);
+
         switch ($data['sort'] ?? 'newest') {
             case 'price_asc':
-                $query->leftJoin('product_variants as pv', 'products.id', '=', 'pv.product_id')
-                    ->selectRaw('products.*, MIN(pv.price) as min_price')
-                    ->groupBy('products.id')
-                    ->orderBy('min_price', 'asc');
+                $query->orderBy('min_price', 'asc');
                 break;
             case 'price_desc':
-                $query->leftJoin('product_variants as pv', 'products.id', '=', 'pv.product_id')
-                    ->selectRaw('products.*, MAX(pv.price) as max_price')
-                    ->groupBy('products.id')
-                    ->orderBy('max_price', 'desc');
+                $query->orderBy('max_price', 'desc');
                 break;
             case 'name_asc':
-                $query->orderBy('name', 'asc');
+                $query->orderBy('products.name', 'asc');
                 break;
             case 'newest':
             default:
-                $query->orderBy('created_at', 'desc');
+                $query->orderByDesc('products.created_at');
                 break;
         }
 
         $perPage = $data['per_page'] ?? 20;
 
+        $result = $query->paginate($perPage);
+        $items = collect($result->items())
+            ->map(function ($product) {
+                if ($product->coverImage) {
+                    $product->cover_image = route('images.show', ['image' => $product->coverImage->id]);
+                } else {
+                    $product->cover_image = null;
+                }
+
+                unset($product->coverImage);
+                return $product;
+            })
+            ->values();
+
         return response()->json([
-            'merchant' => $merchant,
-            'products' => $query->paginate($perPage),
+            'data' => $items,
+            'meta' => [
+                'current_page' => $result->currentPage(),
+                'last_page' => $result->lastPage(),
+                'total' => $result->total(),
+            ],
         ]);
     }
 
     /**
      * Public: Get featured products (for homepage)
      */
-    public function publicFeatured()
-    {
-        $products = Product::whereIn('status', ['published', 'archived'])
-            ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
-            ->with(['coverImage', 'merchant:id,name'])
-            ->inRandomOrder()
-            ->limit(12)
-            ->get();
+    // public function publicFeatured()
+    // {
+    //     $products = Product::whereIn('status', ['published', 'archived'])
+    //         ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
+    //         ->with(['coverImage', 'merchant:id,name'])
+    //         ->inRandomOrder()
+    //         ->limit(12)
+    //         ->get();
 
-        return response()->json($products);
-    }
+    //     return response()->json($products);
+    // }
 
     // ============================================================
     // PROTECTED ENDPOINTS (Auth Required - Merchant Owner)
     // ============================================================
 
+    private function abortIfNotOwnerOrNotAllowedMerchant(int $userId, Merchant $merchant)
+    {
+        if ((int) ($merchant->user_id ?? 0) !== (int) $userId) {
+            return response()->json(['message' => 'UMKM tidak sah. Anda bukan pemilik UMKM ini.'], 403);
+        }
+
+        if (($merchant->status ?? null) !== 'approved') {
+            return response()->json(['message' => 'UMKM belum disetujui oleh admin.'], 403);
+        }
+
+        $segmentId = $merchant->segmentation_id
+            ?? $merchant->segment_id
+            ?? optional($merchant->segmentation)->id
+            ?? null;
+
+        if (!in_array((int) $segmentId, self::ALLOWED_SEGMENT_IDS, true)) {
+            return response()->json(['message' => 'Segment UMKM tidak diizinkan untuk mengelola produk.'], 403);
+        }
+
+        return null;
+    }
+
     /**
      * ✅ UPDATED: List products by merchant (auto-detect merchant dari user)
      */
-    public function index(Request $request)
+    public function index(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
-            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'q' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:draft,published,archived'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
@@ -594,21 +636,12 @@ class ProductController
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        if (empty($data['merchant_id'])) {
-            $merchant = Merchant::where('user_id', $request->user()->id)
-                ->where('status', 'approved')
-                ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
-                ->first();
-
-            if (!$merchant)
-                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
-            $merchantId = $merchant->id;
-        } else {
-            $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-            if (is_array($merchantOrError) && isset($merchantOrError['error']))
-                return $merchantOrError['error'];
-            $merchantId = $merchantOrError->id;
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
+
+        $merchantId = $merchant->id;
 
         // 1. BUILD QUERY (Filter)
         $query = $this->buildFilteredProductQuery($merchantId, $data);
@@ -711,11 +744,10 @@ class ProductController
         ]);
     }
 
-    public function store(Request $request)
+    public function store(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
             // Basic product info
-            'merchant_id' => ['required', 'integer', 'exists:merchants,id'],
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'min_purchase' => ['nullable', 'integer', 'min:1'],
@@ -768,12 +800,10 @@ class ProductController
                 'message' => 'Maksimal upload 6 foto produk.',
             ], 422);
         }
-        // Validasi merchant ownership & segment
-        $merchantOrError = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-        if (is_array($merchantOrError) && isset($merchantOrError['error'])) {
-            return $merchantOrError['error'];
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
-        $merchant = $merchantOrError;
 
         if (!empty($data['variants'])) {
             $variantNames = collect($data['variants'])
@@ -1201,8 +1231,17 @@ class ProductController
      * ✅ FIXED: Get product (owner only) - WITH ADDONS COMPLETE
      * Use slug instead of id
      */
-    public function show(Request $request, string $slug)
+    public function show(Request $request, Merchant $merchant, Product $product)
     {
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
+
         // 1. QUERY UTAMA: Pilih kolom tabel 'products' saja
         // WAJIB: 'id' (untuk relasi), 'merchant_id' (untuk cek permission), 'status' (untuk logic signed url)
         $product = Product::select([
@@ -1214,15 +1253,10 @@ class ProductController
             'status',
             'min_purchase',
         ])
-            ->where('slug', $slug)
+            ->whereKey($product->id)
             ->firstOrFail();
 
-        // 2. CEK PERMISSION
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
-            return $error;
-
-        // 3. EAGER LOAD DENGAN SELECT
+        // EAGER LOAD DENGAN SELECT
         $product->load([
             // Select kolom tabel images
             'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type'),
@@ -1242,24 +1276,24 @@ class ProductController
                 $q->select('id', 'product_id', 'sku', 'price', 'stock') // product_id WAJIB
                     ->orderBy('price', 'asc')
                     ->with([
-                        'optionValues' => function ($ovq) {
-                            // Join diperlukan jika ingin mengambil nama option parent-nya juga
-                            $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
-                                ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                                ->addSelect('product_options.option_name');
-                        }
-                    ]);
+                            'optionValues' => function ($ovq) {
+                                // Join diperlukan jika ingin mengambil nama option parent-nya juga
+                                $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
+                                    ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                                    ->addSelect('product_options.option_name');
+                            }
+                        ]);
             },
 
             'addonGroups' => function ($q) {
                 $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection') // product_id WAJIB
                     ->orderBy('id')
                     ->with([
-                        'options' => function ($oq) {
-                            $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price') // addon_group_id WAJIB
-                                ->with('addon:id,addon_name'); // addon_id WAJIB
-                        }
-                    ]);
+                            'options' => function ($oq) {
+                                $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price') // addon_group_id WAJIB
+                                    ->with('addon:id,addon_name'); // addon_id WAJIB
+                            }
+                        ]);
             },
         ]);
 
@@ -1333,13 +1367,16 @@ class ProductController
      * ✅ UPDATED: Full product update with images, variants, addons
      * Use slug instead of id
      */
-    public function update(Request $request, string $slug)
+    public function update(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         // Validasi (Sama seperti sebelumnya)
         $data = $request->validate([
@@ -1563,7 +1600,7 @@ class ProductController
 
             if ($useVariants) {
                 // Hapus data single variant jika ada (agar tidak bentrok)
-                $product->variants()->each(function ($variant) {
+                $product->variants()->each(function (ProductVariant $variant) {
                     $variant->optionValues()->detach();
                     $variant->delete();
                 });
@@ -1575,7 +1612,7 @@ class ProductController
                 // ==============================
 
                 // 1️⃣ Hapus SEMUA relasi varian lama
-                $product->variants()->each(function ($variant) {
+                $product->variants()->each(function (ProductVariant $variant) {
                     $variant->optionValues()->detach(); // pivot
                     $variant->delete();
                 });
@@ -1686,7 +1723,7 @@ class ProductController
             // DELETE VALUE yang dihapus user
             $option->values()
                 ->whereNotIn('id', $keptValueIds)
-                ->each(function ($val) {
+                ->each(function (ProductOptionValue $val) {
                     if ($val->image_path) {
                         Storage::disk('public')->delete($val->image_path);
                     }
@@ -1697,7 +1734,7 @@ class ProductController
         // DELETE OPTION yang dihapus user
         $product->options()
             ->whereNotIn('id', $keptOptionIds)
-            ->each(function ($opt) {
+            ->each(function (ProductOption $opt) {
                 foreach ($opt->values as $val) {
                     if ($val->image_path) {
                         Storage::disk('public')->delete($val->image_path);
@@ -1747,7 +1784,7 @@ class ProductController
         // DELETE VARIANT yang dihapus user
         $product->variants()
             ->whereNotIn('id', $keptVariantIds)
-            ->each(function ($variant) {
+            ->each(function (ProductVariant $variant) {
                 $variant->optionValues()->detach();
                 $variant->delete();
             });
@@ -2004,17 +2041,19 @@ class ProductController
      */
 
 
-    public function updateStatus(Request $request, string $slug)
+    public function updateStatus(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
         $data = $request->validate([
             'status' => ['required', 'in:published,archived'],
         ]);
 
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
         if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
         }
 
         try {
@@ -2034,13 +2073,16 @@ class ProductController
 
     // Delete product (also deletes images files)
     // Use slug instead of id
-    public function destroy(Request $request, string $slug)
+    public function destroy(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         foreach ($product->images as $img) {
             $this->deleteImageFileIfExists($img->image_path);
@@ -2052,13 +2094,16 @@ class ProductController
 
     // Add images to product
     // Use slug instead of id
-    public function storeImage(Request $request, string $slug)
+    public function storeImage(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         $data = $request->validate([
             'images' => ['required', 'array', 'min:1'],
@@ -2074,13 +2119,16 @@ class ProductController
      * Get total possible combinations
      * Use slug instead of id
      */
-    public function getCombinationCount(Request $request, string $slug)
+    public function getCombinationCount(Request $request, Merchant $merchant, Product $product)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
-
-        $error = $this->abortIfNotOwnerOrNotAllowed($request->user()->id, $product->merchant_id);
-        if ($error)
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
             return $error;
+        }
+
+        if ((int) $product->merchant_id !== (int) $merchant->id) {
+            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+        }
 
         $options = $product->options()->with('values')->get();
 
@@ -2367,19 +2415,19 @@ class ProductController
 
         $variants = ProductVariant::query()
             ->select([
-                'product_variants.id',
-                'product_variants.product_id',
-                'product_variants.sku',
-                'product_variants.price',
-                'product_variants.stock',
-            ])
+                    'product_variants.id',
+                    'product_variants.product_id',
+                    'product_variants.sku',
+                    'product_variants.price',
+                    'product_variants.stock',
+                ])
             ->with([
-                'product' => function ($p) {
-                    $p->select('id', 'merchant_id', 'name', 'status', 'created_at');
-                },
-                'product.categories:id,name',
-                'optionValues.option:id,option_name',
-            ])
+                    'product' => function ($p) {
+                        $p->select('id', 'merchant_id', 'name', 'status', 'created_at');
+                    },
+                    'product.categories:id,name',
+                    'optionValues.option:id,option_name',
+                ])
             ->whereHas('product', fn($p) => $p->where('merchant_id', $merchantId))
             ->join($productsTable, $productsTable . '.id', '=', 'product_variants.product_id')
             ->addSelect('product_variants.*');
@@ -2451,10 +2499,9 @@ class ProductController
         return $variants;
     }
 
-    public function exportExcel(Request $request)
+    public function exportExcel(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
-            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'q' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:draft,published,archived'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
@@ -2465,22 +2512,12 @@ class ProductController
             'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
         ]);
 
-        // merchant detection same as index...
-        if (empty($data['merchant_id'])) {
-            $merchant = Merchant::where('user_id', $request->user()->id)
-                ->where('status', 'approved')
-                ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
-                ->first();
-            if (!$merchant) {
-                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
-            }
-            $merchantId = $merchant->id;
-        } else {
-            $owned = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-            if (is_array($owned) && isset($owned['error']))
-                return $owned['error'];
-            $merchantId = $owned->id;
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
+
+        $merchantId = $merchant->id;
 
         // Build same query and get full collection (no pagination for export)
         $query = $this->buildFilteredProductQuery($merchantId, $data);
@@ -2495,10 +2532,9 @@ class ProductController
     }
 
 
-    public function exportPdf(Request $request)
+    public function exportPdf(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
-            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'q' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:draft,published,archived'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
@@ -2509,22 +2545,12 @@ class ProductController
             'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
         ]);
 
-        // merchant detection same as index...
-        if (empty($data['merchant_id'])) {
-            $merchant = Merchant::where('user_id', $request->user()->id)
-                ->where('status', 'approved')
-                ->whereIn('segmentation_id', self::ALLOWED_SEGMENT_IDS)
-                ->first();
-            if (!$merchant) {
-                return response()->json(['message' => 'Anda belum memiliki UMKM.'], 403);
-            }
-            $merchantId = $merchant->id;
-        } else {
-            $owned = $this->findOwnedMerchantOrAbort($request->user()->id, (int) $data['merchant_id']);
-            if (is_array($owned) && isset($owned['error']))
-                return $owned['error'];
-            $merchantId = $owned->id;
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
+        if ($error) {
+            return $error;
         }
+
+        $merchantId = $merchant->id;
 
         // Use helper to build variant query with same filters
         $variantsQuery = $this->buildFilteredVariantQuery($merchantId, $data);
@@ -2542,7 +2568,7 @@ class ProductController
      * Bulk delete products
      * DELETE /api/products/bulk-delete
      */
-    public function bulkDelete(Request $request)
+    public function bulkDelete(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
             'product_slugs' => ['required', 'array', 'min:1'],
@@ -2552,8 +2578,15 @@ class ProductController
         $user = $request->user();
         $slugs = $data['product_slugs'];
 
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($user->id, $merchant);
+        if ($error) {
+            return $error;
+        }
+
+        $merchantId = $merchant->id;
+
         // Get products and validate ownership
-        $products = Product::whereIn('slug', $slugs)->get();
+        $products = Product::where('merchant_id', $merchantId)->whereIn('slug', $slugs)->get();
 
         $unauthorizedCount = 0;
         $deletedCount = 0;
@@ -2601,7 +2634,7 @@ class ProductController
      * Bulk update product status
      * POST /api/products/bulk-update-status
      */
-    public function bulkUpdateStatus(Request $request)
+    public function bulkUpdateStatus(Request $request, Merchant $merchant)
     {
         $data = $request->validate([
             'product_slugs' => ['required', 'array', 'min:1'],
@@ -2613,8 +2646,15 @@ class ProductController
         $slugs = $data['product_slugs'];
         $newStatus = $data['status'];
 
+        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($user->id, $merchant);
+        if ($error) {
+            return $error;
+        }
+
+        $merchantId = $merchant->id;
+
         // Get products and validate ownership
-        $products = Product::whereIn('slug', $slugs)->get();
+        $products = Product::where('merchant_id', $merchantId)->whereIn('slug', $slugs)->get();
 
         $unauthorizedCount = 0;
         $updatedCount = 0;

@@ -92,7 +92,7 @@ class User extends Authenticatable implements MustVerifyEmail
     public function getProfilePictureAttribute()
     {
         if (empty($this->profile_picture_path)) {
-            return url('storage/profilepics/profilepicdefault.png');
+            return null;
         }
 
         return URL::signedRoute('profile-pictures.show', ['user' => $this->id]);

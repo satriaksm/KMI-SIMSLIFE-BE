@@ -24,24 +24,29 @@ class SearchController extends Controller
             'segments' => ['nullable', 'array'],
             'segments.*' => ['string', 'in:UMKM Toko,UMKM Kuliner,UMKM Jasa'],
 
-            'sort' => ['nullable', 'in:latest,oldest,cheapest,expensive'],
+            'sort' => ['nullable', 'in:latest,oldest,cheapest,expensive,nearest'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+
+            // Nearest sorting params (required when sort=nearest)
+            'lat' => ['nullable', 'numeric', 'between:-90,90', 'required_if:sort,nearest'],
+            'lng' => ['nullable', 'numeric', 'between:-180,180', 'required_if:sort,nearest'],
+            'radius_km' => ['nullable', 'numeric', 'min:0.1', 'max:200'],
         ]);
 
         $query = Product::query()
             ->select([
-                'products.id',
-                'products.merchant_id',
-                'products.name',
-                'products.slug',
-                'products.created_at',
-            ])
+                    'products.id',
+                    'products.merchant_id',
+                    'products.name',
+                    'products.slug',
+                    'products.created_at',
+                ])
             ->with([
-                'merchant:id,name',
-                'merchant.segmentation:id,name',
-                'coverImage:id,imageable_id,imageable_type,image_path',
-            ])
-            ->whereIn('status', ['published'])
+                    'merchant:id,name',
+                    'merchant.segmentation:id,name',
+                    'coverImage:id,imageable_id,imageable_type,image_path',
+                ])
+            ->whereIn('products.status', ['published'])
             ->whereHas('merchant', function ($q) {
                 $q->where('status', 'approved');
             })
@@ -97,13 +102,51 @@ class SearchController extends Controller
 
         $sort = $data['sort'] ?? 'latest';
 
-        match ($sort) {
-            'latest' => $query->orderByDesc('products.created_at'),
-            'oldest' => $query->orderBy('products.created_at'),
-            'cheapest' => $query->orderBy('min_price'),
-            'expensive' => $query->orderByDesc('max_price'),
-            default => null,
-        };
+        if ($sort === 'nearest') {
+            $lat = (float) $data['lat'];
+            $lng = (float) $data['lng'];
+
+            $merchantMorphClass = (new Merchant())->getMorphClass();
+
+            // Join merchant primary address (label=utama) for distance computation.
+            // Use subquery to ensure 1 address row per merchant.
+            $primaryAddrIdSub = DB::table('addresses')
+                ->selectRaw('addressable_id, MAX(id) as addr_id')
+                ->where('addressable_type', $merchantMorphClass)
+                ->where('label', 'utama')
+                ->groupBy('addressable_id');
+
+            $query
+                ->joinSub($primaryAddrIdSub, 'pa', function ($join) {
+                    $join->on('pa.addressable_id', '=', 'products.merchant_id');
+                })
+                ->join('addresses as addr', 'addr.id', '=', 'pa.addr_id')
+                ->whereNotNull('addr.latitude')
+                ->whereNotNull('addr.longitude')
+                ->selectRaw(
+                    '(
+                        6371 * acos(
+                            cos(radians(?)) * cos(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                            * cos(radians(CAST(addr.longitude AS DECIMAL(10,7))) - radians(?))
+                            + sin(radians(?)) * sin(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                        )
+                    ) as distance_km',
+                    [$lat, $lng, $lat]
+                )
+                ->orderBy('distance_km');
+
+            if (isset($data['radius_km'])) {
+                $query->having('distance_km', '<=', (float) $data['radius_km']);
+            }
+        } else {
+            match ($sort) {
+                'latest' => $query->orderByDesc('products.created_at'),
+                'oldest' => $query->orderBy('products.created_at'),
+                'cheapest' => $query->orderBy('min_price'),
+                'expensive' => $query->orderByDesc('max_price'),
+                default => null,
+            };
+        }
 
         $perPage = $data['per_page'] ?? 12;
 
@@ -148,38 +191,44 @@ class SearchController extends Controller
             'min_price' => ['nullable', 'numeric', 'min:0'],
             'max_price' => ['nullable', 'numeric', 'min:0'],
 
-            'sort' => ['nullable', 'in:latest,oldest,most_products'],
+            'sort' => ['nullable', 'in:latest,oldest,most_products,nearest'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'is_open' => ['nullable', 'boolean'],
+
+            // Nearest sorting params (required when sort=nearest)
+            'lat' => ['nullable', 'numeric', 'between:-90,90', 'required_if:sort,nearest'],
+            'lng' => ['nullable', 'numeric', 'between:-180,180', 'required_if:sort,nearest'],
+            'radius_km' => ['nullable', 'numeric', 'min:0.1', 'max:200'],
         ]);
 
         $query = Merchant::query()
             ->select([
-                'merchants.id',
-                'merchants.name',
-                'merchants.slug',
-                'merchants.segmentation_id',
-                'merchants.logo_path',
-                'merchants.operational_hours',
-                'merchants.status',
-                'merchants.created_at',
-            ])
+                    'merchants.id',
+                    'merchants.name',
+                    'merchants.slug',
+                    'merchants.segmentation_id',
+                    'merchants.logo_path',
+                    'merchants.operational_hours',
+                    'merchants.status',
+                    'merchants.created_at',
+                ])
             ->approved()
             ->with([
-                'segmentation:id,name',
-                'primaryAddress:id,addressable_id,detail,village_id,district_id,city_id,province_id,latitude,longitude',
-                'primaryAddress.village:id,name',
-                'primaryAddress.district:id,name',
-                'primaryAddress.city:id,name',
-                'primaryAddress.province:id,name',
-            ])
+                    'segmentation:id,name',
+                    'primaryAddress:id,addressable_id,detail,village_id,district_id,city_id,province_id,latitude,longitude',
+                    'primaryAddress.village:id,name',
+                    'primaryAddress.district:id,name',
+                    'primaryAddress.city:id,name',
+                    'primaryAddress.province:id,name',
+                ])
             ->withCount([
-                'products as products_count' => function ($q) {
-                    $q->where('status', 'published')
-                        ->whereHas('variants', function ($v) {
-                            $v->where('stock', '>', 0);
-                        });
-                }
-            ]);
+                    'products as products_count' => function ($q) {
+                        $q->where('status', 'published')
+                            ->whereHas('variants', function ($v) {
+                                $v->where('stock', '>', 0);
+                            });
+                    }
+                ]);
 
 
         if (!empty($data['q'])) {
@@ -193,17 +242,82 @@ class SearchController extends Controller
         }
         $sort = $data['sort'] ?? 'latest';
 
-        match ($sort) {
-            'latest' => $query->orderByDesc('merchants.created_at'),
-            'oldest' => $query->orderBy('merchants.created_at'),
-            'most_products' => $query
-                ->withCount(['products' => fn($q) => $q->where('status', 'published')])
-                ->orderByDesc('products_count'),
-            default => null,
-        };
+        if ($sort === 'nearest') {
+            $lat = (float) $data['lat'];
+            $lng = (float) $data['lng'];
+
+            $merchantMorphClass = (new Merchant())->getMorphClass();
+
+            // Join merchant primary address (label=utama) for distance computation.
+            // Use subquery to ensure 1 address row per merchant.
+            $primaryAddrIdSub = DB::table('addresses')
+                ->selectRaw('addressable_id, MAX(id) as addr_id')
+                ->where('addressable_type', $merchantMorphClass)
+                ->where('label', 'utama')
+                ->groupBy('addressable_id');
+
+            $query
+                ->joinSub($primaryAddrIdSub, 'pa', function ($join) {
+                    $join->on('pa.addressable_id', '=', 'merchants.id');
+                })
+                ->join('addresses as addr', 'addr.id', '=', 'pa.addr_id')
+                ->whereNotNull('addr.latitude')
+                ->whereNotNull('addr.longitude')
+                ->selectRaw(
+                    '(
+                        6371 * acos(
+                            cos(radians(?)) * cos(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                            * cos(radians(CAST(addr.longitude AS DECIMAL(10,7))) - radians(?))
+                            + sin(radians(?)) * sin(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                        )
+                    ) as distance_km',
+                    [$lat, $lng, $lat]
+                )
+                ->orderBy('distance_km');
+
+            if (isset($data['radius_km'])) {
+                $query->having('distance_km', '<=', (float) $data['radius_km']);
+            }
+        } else {
+            match ($sort) {
+                'latest' => $query->orderByDesc('merchants.created_at'),
+                'oldest' => $query->orderBy('merchants.created_at'),
+                'most_products' => $query
+                    ->withCount(['products' => fn($q) => $q->where('status', 'published')])
+                    ->orderByDesc('products_count'),
+                default => null,
+            };
+        }
 
         $perPage = $data['per_page'] ?? 10;
-        $result = $query->paginate($perPage);
+
+        // If is_open is provided, filter by computed attribute is_open_now.
+        // This can't be expressed easily in SQL (depends on timezone & current time),
+        // so we filter in memory and paginate the filtered results.
+        if (array_key_exists('is_open', $data)) {
+            $desired = (bool) $data['is_open'];
+            $all = $query->get();
+            $filtered = $all->filter(fn(Merchant $m) => (bool) $m->is_open_now === $desired)->values();
+
+            $page = (int) $request->input('page', 1);
+            if ($page < 1) {
+                $page = 1;
+            }
+
+            $pageItems = $filtered->forPage($page, $perPage)->values();
+            $result = new \Illuminate\Pagination\LengthAwarePaginator(
+                $pageItems,
+                $filtered->count(),
+                $perPage,
+                $page,
+                [
+                    'path' => $request->url(),
+                    'query' => $request->query(),
+                ]
+            );
+        } else {
+            $result = $query->paginate($perPage);
+        }
 
         $items = collect($result->items())
             ->map(function (Merchant $merchant) {
