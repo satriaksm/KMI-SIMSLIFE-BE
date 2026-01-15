@@ -99,8 +99,46 @@ class SearchController extends Controller
             );
         }
 
+        $sort = $data['sort'] ?? 'latest';
 
         $sort = $data['sort'] ?? 'latest';
+
+        $hasCoords = isset($data['lat']) && isset($data['lng']);
+        if ($hasCoords && $sort !== 'nearest') {
+            $lat = (float) $data['lat'];
+            $lng = (float) $data['lng'];
+
+            $merchantMorphClass = (new Merchant())->getMorphClass();
+
+            // Join merchant primary address (label=utama) for distance computation.
+            // LEFT JOIN so items without coordinates still show up (distance_km=null).
+            $primaryAddrIdSub = DB::table('addresses')
+                ->selectRaw('addressable_id, MAX(id) as addr_id')
+                ->where('addressable_type', $merchantMorphClass)
+                ->where('label', 'utama')
+                ->groupBy('addressable_id');
+
+            $query
+                ->leftJoinSub($primaryAddrIdSub, 'pa', function ($join) {
+                    $join->on('pa.addressable_id', '=', 'products.merchant_id');
+                })
+                ->leftJoin('addresses as addr', 'addr.id', '=', 'pa.addr_id')
+                ->selectRaw(
+                    '(
+                        CASE
+                            WHEN addr.latitude IS NULL OR addr.longitude IS NULL THEN NULL
+                            ELSE (
+                                6371 * acos(
+                                    cos(radians(?)) * cos(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                                    * cos(radians(CAST(addr.longitude AS DECIMAL(10,7))) - radians(?))
+                                    + sin(radians(?)) * sin(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                                )
+                            )
+                        END
+                    ) as distance_km',
+                    [$lat, $lng, $lat]
+                );
+        }
 
         if ($sort === 'nearest') {
             $lat = (float) $data['lat'];
@@ -241,6 +279,42 @@ class SearchController extends Controller
             });
         }
         $sort = $data['sort'] ?? 'latest';
+
+        $hasCoords = isset($data['lat']) && isset($data['lng']);
+        if ($hasCoords && $sort !== 'nearest') {
+            $lat = (float) $data['lat'];
+            $lng = (float) $data['lng'];
+
+            $merchantMorphClass = (new Merchant())->getMorphClass();
+
+            // LEFT JOIN so merchants without coordinates still show up (distance_km=null).
+            $primaryAddrIdSub = DB::table('addresses')
+                ->selectRaw('addressable_id, MAX(id) as addr_id')
+                ->where('addressable_type', $merchantMorphClass)
+                ->where('label', 'utama')
+                ->groupBy('addressable_id');
+
+            $query
+                ->leftJoinSub($primaryAddrIdSub, 'pa', function ($join) {
+                    $join->on('pa.addressable_id', '=', 'merchants.id');
+                })
+                ->leftJoin('addresses as addr', 'addr.id', '=', 'pa.addr_id')
+                ->selectRaw(
+                    '(
+                        CASE
+                            WHEN addr.latitude IS NULL OR addr.longitude IS NULL THEN NULL
+                            ELSE (
+                                6371 * acos(
+                                    cos(radians(?)) * cos(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                                    * cos(radians(CAST(addr.longitude AS DECIMAL(10,7))) - radians(?))
+                                    + sin(radians(?)) * sin(radians(CAST(addr.latitude AS DECIMAL(10,7))))
+                                )
+                            )
+                        END
+                    ) as distance_km',
+                    [$lat, $lng, $lat]
+                );
+        }
 
         if ($sort === 'nearest') {
             $lat = (float) $data['lat'];
