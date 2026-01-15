@@ -229,6 +229,44 @@ class AdminEventController extends Controller
             }
         }
 
+        // ✅ FIX: Handle banner upload BEFORE status validation
+        if ($request->hasFile('banner_img')) {
+            $file = $request->file('banner_img');
+            
+            // Delete old banner FIRST
+            if ($event->banner_img_path && Storage::disk('public')->exists($event->banner_img_path)) {
+                Storage::disk('public')->delete($event->banner_img_path);
+                Log::info('[AdminEvent] Old banner deleted', [
+                    'event_id' => $event->id,
+                    'old_path' => $event->banner_img_path,
+                ]);
+            }
+            
+            // Upload new banner
+            if ($file->getClientOriginalExtension() === 'svg') {
+                $sanitizer = new Sanitizer();
+                $dirtySVG = file_get_contents($file->getRealPath());
+                $cleanSVG = $sanitizer->sanitize($dirtySVG);
+                
+                if ($cleanSVG === false) {
+                    return response()->json([
+                        'message' => 'File SVG tidak valid atau berbahaya',
+                    ], 422);
+                }
+                
+                $path = 'events/banners/' . uniqid() . '.svg';
+                Storage::disk('public')->put($path, $cleanSVG);
+                $validated['banner_img_path'] = $path;
+            } else {
+                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+            }
+            
+            Log::info('[AdminEvent] New banner uploaded', [
+                'event_id' => $event->id,
+                'new_path' => $validated['banner_img_path'],
+            ]);
+        }
+
         if (isset($validated['status'])) {
             // Event already started
             if ($originalStartDate->lt($today)) {
@@ -269,41 +307,9 @@ class AdminEventController extends Controller
             }
         }
 
-        if ($request->hasFile('banner_img')) {
-            $file = $request->file('banner_img');
-            
-            // Delete old banner BEFORE uploading new one
-            if ($event->banner_img_path && Storage::disk('public')->exists($event->banner_img_path)) {
-                Storage::disk('public')->delete($event->banner_img_path);
-            }
-            
-            if ($file->getClientOriginalExtension() === 'svg') {
-                $sanitizer = new Sanitizer();
-                $dirtySVG = file_get_contents($file->getRealPath());
-                $cleanSVG = $sanitizer->sanitize($dirtySVG);
-                
-                if ($cleanSVG === false) {
-                    return response()->json([
-                        'message' => 'File SVG tidak valid atau berbahaya',
-                    ], 422);
-                }
-                
-                $path = 'events/banners/' . uniqid() . '.svg';
-                Storage::disk('public')->put($path, $cleanSVG);
-                $validated['banner_img_path'] = $path;
-            } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
-            }
-            
-            Log::info('[AdminEvent] Banner updated', [
-                'event_id' => $event->id,
-                'old_banner' => $event->banner_img_path,
-                'new_banner' => $validated['banner_img_path'],
-            ]);
-        }
-
         $event->update($validated);
 
+        // ✅ FIX: Reload event dengan relasi untuk response yang konsisten
         $event = Event::with(['creator:id,name'])
             ->withCount(['merchants', 'vouchers'])
             ->find($event->id);
