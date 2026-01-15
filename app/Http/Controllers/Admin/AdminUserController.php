@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class AdminUserController extends Controller
 {
@@ -101,9 +102,9 @@ class AdminUserController extends Controller
             ];
 
             // Get status distribution
-            $statusDistribution = User::selectRaw('computed_status, COUNT(*) as count')
-                ->groupBy('computed_status')
-                ->pluck('count', 'computed_status')
+            $statusDistribution = User::selectRaw('status, COUNT(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status')
                 ->toArray();
 
             // Get 30-day trend
@@ -112,13 +113,13 @@ class AdminUserController extends Controller
                 $date = now()->subDays($i)->format('Y-m-d');
                 $userTrend[] = [
                     'date' => $date,
-                    'active' => User::where('computed_status', 'active')
+                    'active' => User::where('status', 'active')
                         ->whereDate('updated_at', '<=', $date)
                         ->count(),
-                    'watchlist' => User::where('computed_status', 'watchlist')
+                    'watchlist' => User::where('status', 'watchlist')
                         ->whereDate('updated_at', '<=', $date)
                         ->count(),
-                    'suspended' => User::where('computed_status', 'suspended')
+                    'suspended' => User::where('status', 'suspended')
                         ->whereDate('updated_at', '<=', $date)
                         ->count(),
                 ];
@@ -171,11 +172,11 @@ class AdminUserController extends Controller
 
         return [
             'total_users' => User::count(),
-            'active_users' => User::where('computed_status', 'active')->count(),
-            'declining_users' => User::where('computed_status', 'declining')->count(),
-            'watchlist_users' => User::where('computed_status', 'watchlist')->count(),
-            'suspended_users' => User::where('computed_status', 'suspended')->count(),
-            'dormant_users' => User::where('computed_status', 'inactive')->count(),
+            'active_users' => User::where('status', 'active')->count(),
+            'declining_users' => User::where('status', 'declining')->count(),
+            'watchlist_users' => User::where('status', 'watchlist')->count(),
+            'suspended_users' => User::where('status', 'suspended')->count(),
+            'dormant_users' => User::where('status', 'inactive')->count(),
             'new_users_period' => User::where('created_at', '>=', $startDate)->count(),
             'pending_reports' => ContentReport::where('status', 'pending')->count(),
             'high_priority_alerts' => Alert::where('status', 'pending')
@@ -218,14 +219,14 @@ class AdminUserController extends Controller
      */
     private function getStatusDistribution()
     {
-        return User::select('computed_status', DB::raw('count(*) as count'))
-            ->groupBy('computed_status')
+        return User::select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
             ->get()
             ->map(function ($item) {
                 return [
-                    'status' => $item->computed_status,
+                    'status' => $item->status,
                     'count' => $item->count,
-                    'label' => ucfirst($item->computed_status),
+                    'label' => ucfirst($item->status),
                 ];
             });
     }
@@ -285,7 +286,7 @@ class AdminUserController extends Controller
      *
      * @authenticated
      *
-     * @queryParam computed_status string Filter by computed status. Example: active
+     * @queryParam status string Filter by computed status. Example: active
      * @queryParam role string Filter by role. Example: customer
      * @queryParam reports_gte integer Filter by minimum validated reports. Example: 5
      * @queryParam activity_score_min number Filter by minimum activity score. Example: 70
@@ -308,7 +309,7 @@ class AdminUserController extends Controller
      *
      * @authenticated
      *
-     * @queryParam computed_status string Filter by computed status. Example: active
+     * @queryParam status string Filter by computed status. Example: active
      * @queryParam role string Filter by role. Example: customer
      * @queryParam reports_gte integer Filter by minimum validated reports. Example: 5
      * @queryParam activity_score_min number Filter by minimum activity score. Example: 70
@@ -326,125 +327,109 @@ class AdminUserController extends Controller
      */
     public function index(Request $request)
     {
-        try {
-            $query = User::with([
-                'roles:id,name',
-                'merchants:id,user_id,name,status',
-                'activityMetric',
-            ])
-            ->whereDoesntHave('roles', function ($q) {
-                $q->where('name', 'admin');
-            });
+        $query = User::with(['roles', 'merchants']);
 
-            // Filter by computed status
-            if ($request->filled('computed_status')) {
-                $query->where('computed_status', $request->computed_status);
-            }
-
-            // Filter by role
-            if ($request->filled('role')) {
-                if ($request->role === 'customer') {
-                    // Hanya user yang role-nya customer SAJA
-                    $query->whereHas('roles', function ($q) {
-                        $q->where('name', 'customer');
-                    })
-                    ->whereDoesntHave('roles', function ($q) {
-                        $q->where('name', '!=', 'customer');
+        // Search
+        if ($search = $request->input('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhere('nik', 'like', "%{$search}%")
+                    ->orWhereHas('merchants', function ($mq) use ($search) {
+                        $mq->where('name', 'like', "%{$search}%");
                     });
-                } else {
-                    // Role lain: tetap seperti biasa
-                    $query->whereHas('roles', function ($q) use ($request) {
-                        $q->where('name', $request->role);
-                    });
-                }
-            }
-
-            // Filter by reports threshold
-            if ($request->filled('reports_gte')) {
-                $query->whereHas('activityMetric', function ($q) use ($request) {
-                    $q->where('reports_validated_30d', '>=', $request->reports_gte);
-                });
-            }
-
-            // Filter by activity score range
-            if ($request->filled('activity_score_min')) {
-                $query->whereHas('activityMetric', function ($q) use ($request) {
-                    $q->where('activity_score', '>=', $request->activity_score_min);
-                });
-            }
-
-            // Search by name, email, phone
-            if ($request->filled('search')) {
-                $search = $request->search;
-                $query->where(function ($q) use ($search) {
-                    $q->where('name', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%")
-                        ->orWhere('phone', 'like', "%{$search}%")
-                        ->orWhere('nik', 'like', "%{$search}%")
-                        ->orWhereHas('merchants', function ($mq) use ($search) {
-                            $mq->where('name', 'like', "%{$search}%");
-                        });
-                });
-            }
-
-            // Filter: Show only users with merchants
-            if ($request->boolean('has_merchants')) {
-                $query->whereHas('merchants');
-            }
-
-            // Filter: Show only users with pending merchant registrations
-            if ($request->boolean('pending_merchants')) {
-                $query->whereHas('merchants', function ($q) {
-                    $q->where('status', 'pending');
-                });
-            }
-
-            // ✅ FIX: Filter by active alerts
-            if ($request->filled('has_alerts') || $request->boolean('has_alerts')) {
-                $query->whereHas('alerts', function ($q) {
-                    $q->where('status', 'pending');
-                });
-            }
-
-            $users = $query->latest()
-                ->paginate($request->input('per_page', 15));
-
-            // Transform for UI
-            $users->getCollection()->transform(function ($user) {
-                $metric = $user->activityMetric;
-
-                return [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'phone' => $user->phone,
-                    'nik' => $user->nik,
-                    'status' => $user->status,
-                    'computed_status' => $user->computed_status ?? 'active',
-                    'roles' => $user->roles->pluck('name'),
-                    'merchants' => $user->merchants->map(function ($m) {
-                        return [
-                            'id' => $m->id,
-                            'name' => $m->name,
-                            'status' => $m->status,
-                        ];
-                    }),
-                    'activity_score' => $metric ? $metric->activity_score : 0,
-                    'reports_30d' => $metric ? $metric->reports_validated_30d : 0,
-                    'last_login' => $user->last_login_at,
-                    'alerts_count' => $user->alerts()->where('status', 'pending')->count(),
-                    'created_at' => $user->created_at,
-                ];
             });
-
-            return response()->json($users);
-        } catch (\Exception $e) {
-
-            return response()->json([
-                'message' => 'Failed to fetch users',
-                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
-            ], 500);
         }
+
+        // Filter by status (changed from status)
+        if ($status = $request->input('status')) {
+            $query->where('status', $status);
+        }
+
+        // Filter by role
+        if ($request->filled('role')) {
+            if ($request->role === 'customer') {
+                // Hanya user yang role-nya customer SAJA
+                $query->whereHas('roles', function ($q) {
+                    $q->where('name', 'customer');
+                })
+                ->whereDoesntHave('roles', function ($q) {
+                    $q->where('name', '!=', 'customer');
+                });
+            } else {
+                // Role lain: tetap seperti biasa
+                $query->whereHas('roles', function ($q) use ($request) {
+                    $q->where('name', $request->role);
+                });
+            }
+        }
+
+        // Filter by reports threshold
+        if ($request->filled('reports_gte')) {
+            $query->whereHas('activityMetric', function ($q) use ($request) {
+                $q->where('reports_validated_30d', '>=', $request->reports_gte);
+            });
+        }
+
+        // Filter by activity score range
+        if ($request->filled('activity_score_min')) {
+            $query->whereHas('activityMetric', function ($q) use ($request) {
+                $q->where('activity_score', '>=', $request->activity_score_min);
+            });
+        }
+
+        // Filter: Show only users with merchants
+        if ($request->boolean('has_merchants')) {
+            $query->whereHas('merchants');
+        }
+
+        // Filter: Show only users with pending merchant registrations
+        if ($request->boolean('pending_merchants')) {
+            $query->whereHas('merchants', function ($q) {
+                $q->where('status', 'pending');
+            });
+        }
+
+        // ✅ FIX: Filter by active alerts
+        if ($request->filled('has_alerts') || $request->boolean('has_alerts')) {
+            $query->whereHas('alerts', function ($q) {
+                $q->where('status', 'pending');
+            });
+        }
+
+        $users = $query->latest()
+            ->paginate($request->input('per_page', 15));
+
+        // Transform for UI
+        $users->getCollection()->transform(function ($user) {
+            $metric = $user->activityMetric;
+
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'nik' => $user->nik,
+                'status' => $user->status,
+                'status' => $user->status ?? 'active',
+                'roles' => $user->roles->pluck('name'),
+                'merchants' => $user->merchants->map(function ($m) {
+                    return [
+                        'id' => $m->id,
+                        'name' => $m->name,
+                        'status' => $m->status,
+                    ];
+                }),
+                'activity_score' => $metric ? $metric->activity_score : 0,
+                'reports_30d' => $metric ? $metric->reports_validated_30d : 0,
+                'last_login' => $user->last_login_at,
+                'alerts_count' => $user->alerts()->where('status', 'pending')->count(),
+                'created_at' => $user->created_at,
+            ];
+        });
+
+        return response()->json($users);
     }
 
     /**
@@ -601,10 +586,10 @@ class AdminUserController extends Controller
      *   "message": "User not found"
      * }
      */
-    public function show($id)
+    public function show(string $id)
     {
         $user = User::with([
-            'roles:id,name',
+            'roles',
             'merchants.segmentation',
             'merchants.products',
             'activityMetric',
@@ -657,14 +642,12 @@ class AdminUserController extends Controller
             ->get();
 
         return response()->json([
-            'data' => [
-                'user' => $user,
-                'status_history' => $statusHistory,
-                'admin_actions' => $adminActions,
-                'reports' => $reports,
-                'alerts' => $alerts,
-                'permissions' => $this->getUserPermissions($user),
-            ],
+            'user' => $user->makeVisible(['status']), 
+            'status_history' => $statusHistory,
+            'admin_actions' => $adminActions,
+            'reports' => $reports,
+            'alerts' => $alerts,
+            'permissions' => $this->getUserPermissions($user),
         ]);
     }
 
@@ -709,39 +692,33 @@ class AdminUserController extends Controller
      *   "errors": { ... }
      * }
      */
-    public function changeStatus(Request $request, $id)
+    public function changeStatus(ChangeUserStatusRequest $request, string $id)
     {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|in:active,declining,watchlist,suspended,inactive',
-            'reason' => 'required|string|max:500',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         $user = User::findOrFail($id);
-        $oldStatus = $user->computed_status;
+        $validated = $request->validated();
 
-        DB::transaction(function () use ($user, $request, $oldStatus) {
+        $oldStatus = $user->status; 
+        $newStatus = $validated['status'];
+
+        DB::transaction(function () use ($user, $request, $oldStatus, $newStatus) {
             // Update user status
             $user->update([
-                'computed_status' => $request->status,
+                'status' => $newStatus, 
             ]);
 
             // Log action
             AdminAction::create([
-                'admin_id' => Auth::id(),
+                'admin_id' => auth()->id(),
                 'action_type' => 'status_change',
                 'target_type' => User::class,
                 'target_id' => $user->id,
-                'reason' => $request->reason,
-                'status_before' => $oldStatus,
-                'status_after' => $request->status,
+                'reason' => $validated['reason'] ?? null,
                 'metadata' => [
-                    'manual_override' => true,
-                    'timestamp' => now(),
+                    'old_status' => $oldStatus,
+                    'new_status' => $newStatus,
                 ],
+                'status_before' => $oldStatus,
+                'status_after' => $newStatus,
             ]);
 
             // Clear related alerts
@@ -873,7 +850,7 @@ class AdminUserController extends Controller
      *   "errors": { ... }
      * }
      */
-    public function suspend(Request $request, $id)
+    public function suspend(Request $request, string $id)
     {
         $validator = Validator::make($request->all(), [
             'reason' => 'required|string|max:500',
@@ -885,35 +862,31 @@ class AdminUserController extends Controller
         }
 
         $user = User::findOrFail($id);
-        $oldStatus = $user->computed_status;
+        $oldStatus = $user->status; 
 
-        DB::transaction(function () use ($user, $request, $oldStatus) {
-            // Update status
-            $user->update([
-                'computed_status' => 'suspended',
-                'status' => 'inactive',
-            ]);
+        $user->update([
+            'status' => 'suspended', 
+        ]);
 
-            // Log action
-            AdminAction::create([
-                'admin_id' => Auth::id(),
-                'action_type' => 'suspend_user',
-                'target_type' => User::class,
-                'target_id' => $user->id,
-                'reason' => $request->reason,
-                'status_before' => $oldStatus,
-                'status_after' => 'suspended',
-                'metadata' => [
-                    'duration_days' => $request->duration_days,
-                    'expires_at' => $request->duration_days
-                        ? now()->addDays($request->duration_days)
-                        : null,
-                ],
-            ]);
+        // Log action
+        AdminAction::create([
+            'admin_id' => Auth::id(),
+            'action_type' => 'suspend_user',
+            'target_type' => User::class,
+            'target_id' => $user->id,
+            'reason' => $request->reason,
+            'status_before' => $oldStatus,
+            'status_after' => 'suspended',
+            'metadata' => [
+                'duration_days' => $request->duration_days,
+                'expires_at' => $request->duration_days
+                    ? now()->addDays($request->duration_days)
+                    : null,
+            ],
+        ]);
 
-            // TODO: Revoke user's active tokens/sessions
-            // $user->tokens()->delete();
-        });
+        // TODO: Revoke user's active tokens/sessions
+        // $user->tokens()->delete();
 
         return response()->json([
             'message' => 'User suspended successfully',
@@ -960,7 +933,7 @@ class AdminUserController extends Controller
      *   "errors": { ... }
      * }
      */
-    public function unsuspend(Request $request, $id)
+    public function unsuspend(Request $request, string $id)
     {
         $validator = Validator::make($request->all(), [
             'reason' => 'required|string|max:500',
@@ -972,24 +945,20 @@ class AdminUserController extends Controller
 
         $user = User::findOrFail($id);
 
-        DB::transaction(function () use ($user, $request) {
-            // Update status
-            $user->update([
-                'computed_status' => 'active',
-                'status' => 'active',
-            ]);
+        $user->update([
+            'status' => 'active', 
+        ]);
 
-            // Log action
-            AdminAction::create([
-                'admin_id' => Auth::id(),
-                'action_type' => 'unsuspend_user',
-                'target_type' => User::class,
-                'target_id' => $user->id,
-                'reason' => $request->reason,
-                'status_before' => 'suspended',
-                'status_after' => 'active',
-            ]);
-        });
+        // Log action
+        AdminAction::create([
+            'admin_id' => Auth::id(),
+            'action_type' => 'unsuspend_user',
+            'target_type' => User::class,
+            'target_id' => $user->id,
+            'reason' => $request->reason,
+            'status_before' => 'suspended',
+            'status_after' => 'active',
+        ]);
 
         return response()->json([
             'message' => 'User unsuspended successfully',
@@ -1114,27 +1083,21 @@ class AdminUserController extends Controller
      *   "errors": { ... }
      * }
      */
-    public function bulkUpdateStatus(Request $request)
+    public function bulkUpdateStatus(BulkUpdateStatusRequest $request)
     {
-        $validator = Validator::make($request->all(), [
-            'user_ids' => 'required|array|min:1',
-            'user_ids.*' => 'exists:users,id',
-            'status' => 'required|in:active,declining,watchlist,suspended,inactive',
-            'reason' => 'required|string|max:500',
-        ]);
+        $validated = $request->validated();
+        $userIds = $validated['user_ids'];
+        $newStatus = $validated['status'];
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        $users = User::whereIn('id', $userIds)->get();
 
-        DB::transaction(function () use ($request) {
-            foreach ($request->user_ids as $userId) {
-                $user = User::find($userId);
-                if (!$user) continue;
+        DB::transaction(function () use ($users, $newStatus) {
+            foreach ($users as $user) {
+                $oldStatus = $user->status; 
 
-                $oldStatus = $user->computed_status;
-
-                $user->update(['computed_status' => $request->status]);
+                $user->update([
+                    'status' => $newStatus, 
+                ]);
 
                 AdminAction::create([
                     'admin_id' => Auth::id(),
@@ -1143,14 +1106,14 @@ class AdminUserController extends Controller
                     'target_id' => $user->id,
                     'reason' => $request->reason,
                     'status_before' => $oldStatus,
-                    'status_after' => $request->status,
+                    'status_after' => $newStatus,
                 ]);
             }
         });
 
         return response()->json([
             'message' => 'Bulk update completed successfully',
-            'updated_count' => count($request->user_ids),
+            'updated_count' => count($userIds),
         ]);
     }
 
@@ -1328,8 +1291,8 @@ class AdminUserController extends Controller
     {
         return [
             'can_warn' => true,
-            'can_suspend' => $user->computed_status !== 'suspended',
-            'can_unsuspend' => $user->computed_status === 'suspended',
+            'can_suspend' => $user->status !== 'suspended',
+            'can_unsuspend' => $user->status === 'suspended',
             'can_change_status' => true,
             'can_delete' => !$user->merchants()->where('status', 'approved')->exists(),
         ];
@@ -1389,19 +1352,27 @@ class AdminUserController extends Controller
                         ->count(),
                 ],
                 'watchlist_users' => [
-                    'current' => User::where('computed_status', 'watchlist')
+                    'current' => User::where('status', 'watchlist')
                         ->where('updated_at', '>=', $startDate)
                         ->count(),
-                    'previous' => User::where('computed_status', 'watchlist')
+                    'previous' => User::where('status', 'watchlist')
                         ->where('updated_at', '<', $startDate)
                         ->count(),
                 ],
             ];
 
+            // Status distribution (changed from status)
+            $statusDistribution = User::select('status', DB::raw('count(*) as count'))
+                ->groupBy('status')
+                ->get()
+                ->keyBy('status')
+                ->map->count;
+
             return response()->json([
                 'success' => true,
                 'data' => [
                     'overview' => $currentStats,
+                    'status_distribution' => $statusDistribution,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -1460,5 +1431,204 @@ class AdminUserController extends Controller
                 'series' => $series,
             ],
         ]);
+    }
+
+    /**
+     * Export Customers to PDF (Admin)
+     *
+     * Export list of customers to PDF with filters.
+     *
+     * @authenticated
+     *
+     * @queryParam status string Filter by status. Example: active
+     * @queryParam role string Filter by role. Example: customer
+     * @queryParam search string Search query. Example: John
+     *
+     * @response 200 application/pdf
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $admin = $request->user();
+
+            // Build query with same filters as index
+            $query = User::with(['roles', 'merchants.segmentation']);
+
+            // Apply filters
+            if ($search = $request->input('search')) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('nik', 'like', "%{$search}%");
+                });
+            }
+
+            if ($status = $request->input('status')) {
+                $query->where('status', $status);
+            }
+
+            if ($request->filled('role')) {
+                if ($request->role === 'customer') {
+                    $query->whereHas('roles', function ($q) {
+                        $q->where('name', 'customer');
+                    })
+                    ->whereDoesntHave('roles', function ($q) {
+                        $q->where('name', '!=', 'customer');
+                    });
+                } else {
+                    $query->whereHas('roles', function ($q) use ($request) {
+                        $q->where('name', $request->role);
+                    });
+                }
+            }
+
+            $users = $query->latest()->limit(500)->get();
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'total_users' => $users->count(),
+                'filters' => [
+                    'status' => $request->input('status') ?: 'Semua',
+                    'role' => $request->input('role') ?: 'Semua',
+                    'search' => $request->input('search') ?: '-',
+                ],
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-customer', [
+                'users' => $users,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'customers-report-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminUser] Export PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
+    }
+
+    /**
+     * Export User Detail to PDF (Admin)
+     *
+     * Export single user detail to PDF.
+     *
+     * @authenticated
+     *
+     * @urlParam id integer required The ID of the user. Example: 1
+     *
+     * @response 200 application/pdf
+     */
+    public function exportUserDetailPdf(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+            
+            // Get user with full details
+            $user = User::with([
+                'roles',
+                'merchants.segmentation',
+                'merchants.products',
+                'activityMetric',
+            ])
+                ->withCount(['merchants', 'communityPosts', 'postComments'])
+                ->findOrFail($id);
+
+            // Get login trend (last 30 days)
+            $loginTrend = [];
+            try {
+                $response = DB::table('user_login_events')
+                    ->selectRaw('DATE(logged_in_at) as date, COUNT(*) as total')
+                    ->where('user_id', $id)
+                    ->where('logged_in_at', '>=', now()->subDays(30))
+                    ->groupByRaw('DATE(logged_in_at)')
+                    ->orderBy('date')
+                    ->get();
+
+                $map = $response->keyBy('date');
+                
+                for ($i = 29; $i >= 0; $i--) {
+                    $date = now()->subDays($i)->toDateString();
+                    $loginTrend[] = [
+                        'date' => $date,
+                        'total' => (int) ($map[$date]->total ?? 0),
+                    ];
+                }
+            } catch (\Exception $e) {
+                Log::warning('[AdminUser] Login trend query failed: ' . $e->getMessage());
+            }
+
+            // Metadata
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+            ];
+
+            // Load logo
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-user-detail', [
+                'user' => $user,
+                'loginTrend' => $loginTrend,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'portrait')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            $filename = 'user-detail-' . $user->id . '-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminUser] Export user detail PDF failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
     }
 }

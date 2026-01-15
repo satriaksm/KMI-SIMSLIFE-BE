@@ -2,10 +2,14 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Carbon\Carbon;
 
 class Event extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'event_name',
         'event_description',
@@ -39,15 +43,91 @@ class Event extends Model
         return $this->hasMany(Voucher::class);
     }
 
+    /**
+     * Scope: Only active events (published & within date range)
+     */
+    public function scopeActive($query)
+    {
+        $today = Carbon::today();
+        
+        return $query->where('status', 'published')
+            ->whereDate('event_start_date', '<=', $today)
+            ->whereDate('event_end_date', '>=', $today);
+    }
+
+    /**
+     * Scope: Published events
+     */
     public function scopePublished($query)
     {
         return $query->where('status', 'published');
     }
 
-    public function scopeActive($query)
+    /**
+     * Auto-update event statuses based on dates
+     * Call this periodically or before fetching events
+     */
+    public static function autoUpdateStatuses()
     {
-        return $query->where('status', 'published')
-            ->where('event_start_date', '<=', now())
-            ->where('event_end_date', '>=', now());
+        $now = Carbon::now();
+
+        // Archive events that passed end date and still published
+        static::where('status', 'published')
+            ->whereDate('event_end_date', '<', $now)
+            ->update(['status' => 'archived']);
+
+        Log::info('[Event] Auto-archived past events', [
+            'date' => $now->format('Y-m-d H:i:s'),
+        ]);
+    }
+
+    /**
+     * Check if event is currently active
+     */
+    public function isActive(): bool
+    {
+        $today = Carbon::today();
+        
+        return $this->status === 'published'
+            && $today->gte($this->event_start_date)
+            && $today->lte($this->event_end_date);
+    }
+
+    /**
+     * Check if event has started
+     */
+    public function hasStarted(): bool
+    {
+        return Carbon::today()->gte($this->event_start_date);
+    }
+
+    /**
+     * Check if event has ended
+     */
+    public function hasEnded(): bool
+    {
+        return Carbon::today()->gt($this->event_end_date);
+    }
+
+    /**
+     * Get appropriate status based on dates
+     */
+    public function getAutoStatus(): string
+    {
+        $now = Carbon::now();
+
+        if ($now->gt($this->event_end_date)) {
+            return 'archived';
+        }
+
+        if ($this->status === 'draft') {
+            return 'draft';
+        }
+
+        if ($now->gte($this->event_start_date) && $now->lte($this->event_end_date)) {
+            return 'published';
+        }
+
+        return 'draft';
     }
 }

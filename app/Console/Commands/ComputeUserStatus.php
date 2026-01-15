@@ -232,7 +232,7 @@ class ComputeUserStatus extends Command
     private function computeUserStatus(User $user, bool $createAlerts = false): array
     {
         $metric = $user->activityMetric;
-        $oldStatus = $user->computed_status;
+        $oldStatus = $user->status; // Changed from computed_status
 
         // Default: active
         $newStatus = 'active';
@@ -320,7 +320,7 @@ class ComputeUserStatus extends Command
         $statusChanged = $oldStatus !== $newStatus;
 
         $user->update([
-            'computed_status' => $newStatus,
+            'status' => $newStatus, // Changed from computed_status
         ]);
 
         // Create alert if status changed
@@ -412,7 +412,7 @@ class ComputeUserStatus extends Command
             'message' => $reason,
             'recommended_actions' => $actions,
             'metadata' => [
-                'previous_status' => $user->getOriginal('computed_status'),
+                'previous_status' => $user->getOriginal('status'), // Changed from computed_status
                 'new_status' => $status,
                 'timestamp' => now()->toIso8601String(),
             ],

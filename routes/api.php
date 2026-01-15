@@ -30,6 +30,7 @@ use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\ProductOptionValueImageController;
 // 🆕 ADDED FROM feat/rating-system: Profile Controller
 use App\Http\Controllers\ProfileController;
@@ -111,6 +112,9 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('districts/{cityId}', 'districts');
         Route::get('villages/{districtId}', 'villages');
     });
+
+    // ✅ NEW: Public events endpoint (published only, for homepage banner)
+    Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
 });
 
 
@@ -367,8 +371,9 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     // ===== DASHBOARD STATISTICS =====
     Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
     Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']);
+    Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']); // ✅ NEW
 
-    // ===== DASHBOARD USER MANAGEMENT (NEW) =====
+    // ===== DASHBOARD USER MANA0GEMENT (NEW) =====
     Route::get('/dashboard', [AdminUserController::class, 'dashboard'])->name('dashboard');
 
     // ===== USER MANAGEMENT =====
@@ -378,6 +383,9 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/roles', [AdminUserController::class, 'getRoles'])->name('roles');
         Route::get('/{id}/login-trend', [AdminUserController::class, 'loginTrend'])->name('login-trend');
         Route::get('/overview-stats', [AdminUserController::class, 'overviewStats'])->name('overview-stats');
+        Route::get('/{id}/export-pdf', [AdminUserController::class, 'exportUserDetailPdf'])->name('exportUserDetailPdf'); 
+        Route::get('/export-pdf', [AdminUserController::class, 'exportPdf'])->name('export-pdf'); 
+
         Route::get('/{id}', [AdminUserController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminUserController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminUserController::class, 'destroy'])->name('destroy');
@@ -389,19 +397,14 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::post('/{id}/unsuspend', [AdminUserController::class, 'unsuspend'])->name('unsuspend');
         Route::patch('/{id}/status', [AdminUserController::class, 'changeStatus'])->name('change-status');
         Route::post('/{id}/notify', [AdminUserController::class, 'notify'])->name('notify');
-
-        // Merchant Approval (nested under users)
-        Route::prefix('merchants')->name('merchants.')->group(function () {
-            Route::get('/{merchantId}', [AdminUserController::class, 'showMerchant'])->name('show');
-            Route::patch('/{merchantId}/approve', [AdminUserController::class, 'approveMerchant'])->name('approve');
-            Route::patch('/{merchantId}/reject', [AdminUserController::class, 'rejectMerchant'])->name('reject');
-        });
     });
 
     // ===== MERCHANT MANAGEMENT =====
     Route::prefix('merchants')->name('merchants.')->group(function () {
         Route::get('/', [AdminMerchantController::class, 'index'])->name('index');
         Route::post('/', [AdminMerchantController::class, 'store'])->name('store');
+        Route::get('/{id}/export-pdf', [AdminMerchantController::class, 'exportMerchantDetailPdf'])->name('exportMerchantDetailPdf'); 
+        Route::get('/export-pdf', [AdminMerchantController::class, 'exportPdf'])->name('export-pdf'); 
         Route::get('/{id}', [AdminMerchantController::class, 'show'])->name('show');
         Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
         Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
@@ -432,17 +435,32 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     Route::prefix('events')->name('events.')->group(function () {
         Route::get('/', [AdminEventController::class, 'index'])->name('index');
         Route::post('/', [AdminEventController::class, 'store'])->name('store');
+        Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf'); 
+        
+        //  Manual trigger auto-archive
+        Route::post('/auto-archive', [AdminEventController::class, 'triggerAutoArchive'])->name('auto-archive');
+        
         Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
         Route::post('/{event}/invite-merchants', [AdminEventController::class, 'inviteMerchants'])->name('invite-merchants');
+        Route::post('/{event}/vouchers/attach', [AdminEventController::class, 'attachVoucher']);
+        Route::delete('/{event}/vouchers/{voucher}', [AdminEventController::class, 'detachVoucher']);
+        Route::get('/vouchers/available', [AdminEventController::class, 'availableVouchers']);
+        Route::delete('/{event}/merchants/{merchant}', [AdminEventController::class, 'removeMerchant']);
+        Route::post('/{event}/merchants/{merchant}/restore', [AdminEventController::class, 'restoreMerchant']);
+        Route::get('/{event}/merchants/removed', [AdminEventController::class, 'removedMerchants']);
     });
 
     // ===== VOUCHER MANAGEMENT =====
     Route::prefix('vouchers')->name('vouchers.')->group(function () {
-        Route::get('/', [VoucherController::class, 'adminIndex'])->name('index');
-        Route::get('/{id}', [VoucherController::class, 'adminShow'])->name('show');
-        Route::delete('/{id}', [VoucherController::class, 'destroy'])->name('destroy');
+        Route::get('/', [AdminVoucherController::class, 'index']);
+        Route::post('/', [AdminVoucherController::class, 'store']);
+        Route::get('/export-pdf', [AdminVoucherController::class, 'exportPdf'])->name('export-pdf'); // ✅ NEW
+        Route::get('/{id}', [AdminVoucherController::class, 'show']);
+        Route::post('/{voucher}/assign-merchants', [AdminVoucherController::class, 'assignMerchants']);
+        Route::post('/{id}/activate', [AdminVoucherController::class, 'activate'])->name('activate');
+        Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
     });
 
     // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
@@ -471,3 +489,11 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
     });
 });
+
+// Event banner images (served via API)
+Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
+    ->name('event-banners.show');
+
+// Alternate naming with underscore
+Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
+    ->name('event_banners.show');

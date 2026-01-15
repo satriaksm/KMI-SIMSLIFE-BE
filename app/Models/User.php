@@ -23,16 +23,15 @@ class User extends Authenticatable implements MustVerifyEmail
         'name',
         'email',
         'phone',
-        'password',
         'profile_picture_path',
         'nik',
         'status',
-        'computed_status',
+        'email_verified_at',
+        'password',
     ];
 
     protected $guarded = [
         'id',
-        'email_verified_at',
         'remember_token',
     ];
 
@@ -186,12 +185,40 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function orders()
     {
-        // ✅ Check if orders table has user_id column
         if (DB::getSchemaBuilder()->hasColumn('orders', 'user_id')) {
             return $this->hasMany(Order::class);
         }
 
-        // ✅ Return empty relation if column doesn't exist
         return $this->hasMany(Order::class)->whereRaw('1 = 0'); // Always empty
+    }
+
+    public function canLogin(): bool
+    {
+        return in_array($this->status, ['active', 'declining', 'watchlist']);
+    }
+
+    public function isFullyActive(): bool
+    {
+        return $this->status === 'active';
+    }
+
+    public function isBlocked(): bool
+    {
+        return in_array($this->status, ['suspended', 'inactive']);
+    }
+
+    public function needsAttention(): bool
+    {
+        return in_array($this->status, ['declining', 'watchlist', 'suspended']);
+    }
+
+    public function scopeCanLogin($query)
+    {
+        return $query->whereIn('status', ['active', 'declining', 'watchlist']);
+    }
+
+    public function scopeBlocked($query)
+    {
+        return $query->whereIn('status', ['suspended', 'inactive']);
     }
 }

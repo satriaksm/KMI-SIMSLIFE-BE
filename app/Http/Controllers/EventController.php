@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Event;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use enshrined\svgSanitize\Sanitizer;
 
 class EventController extends Controller
 {
@@ -39,18 +41,42 @@ class EventController extends Controller
             'event_description' => 'nullable|string',
             'event_start_date' => 'sometimes|required|date',
             'event_end_date' => 'sometimes|required|date|after_or_equal:event_start_date',
-            'banner_img' => 'nullable|image|max:2048',
+            'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:2048',
             'status' => 'sometimes|required|in:draft,published,archived',
         ]);
 
         if ($request->hasFile('banner_img')) {
-            // Delete old banner
-            if ($event->banner_img_path) {
-                Storage::disk('public')->delete($event->banner_img_path);
+            $file = $request->file('banner_img');
+            
+            // Sanitize SVG files
+            if ($file->getClientOriginalExtension() === 'svg') {
+                $sanitizer = new Sanitizer();
+                $dirtySVG = file_get_contents($file->getRealPath());
+                $cleanSVG = $sanitizer->sanitize($dirtySVG);
+                
+                if ($cleanSVG === false) {
+                    return response()->json([
+                        'message' => 'File SVG tidak valid atau berbahaya',
+                    ], 422);
+                }
+                
+                // Delete old banner
+                if ($event->banner_img_path) {
+                    Storage::disk('public')->delete($event->banner_img_path);
+                }
+                
+                // Save sanitized SVG
+                $path = 'events/banners/' . uniqid() . '.svg';
+                Storage::disk('public')->put($path, $cleanSVG);
+                $validated['banner_img_path'] = $path;
+            } else {
+                // Delete old banner
+                if ($event->banner_img_path) {
+                    Storage::disk('public')->delete($event->banner_img_path);
+                }
+                
+                $validated['banner_img_path'] = $file->store('events/banners', 'public');
             }
-
-            $validated['banner_img_path'] = $request->file('banner_img')
-                ->store('events/banners', 'public');
         }
 
         $event->update($validated);
@@ -94,15 +120,34 @@ class EventController extends Controller
             'event_description' => 'nullable|string',
             'event_start_date' => 'required|date',
             'event_end_date' => 'required|date|after_or_equal:event_start_date',
-            'banner_img' => 'nullable|image|max:2048',
+            'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:2048',
             'status' => 'required|in:draft,published,archived',
         ]);
 
         $validated['created_by'] = $request->user()->id;
 
         if ($request->hasFile('banner_img')) {
-            $validated['banner_img_path'] = $request->file('banner_img')
-                ->store('events/banners', 'public');
+            $file = $request->file('banner_img');
+            
+            // Sanitize SVG files
+            if ($file->getClientOriginalExtension() === 'svg') {
+                $sanitizer = new Sanitizer();
+                $dirtySVG = file_get_contents($file->getRealPath());
+                $cleanSVG = $sanitizer->sanitize($dirtySVG);
+                
+                if ($cleanSVG === false) {
+                    return response()->json([
+                        'message' => 'File SVG tidak valid atau berbahaya',
+                    ], 422);
+                }
+                
+                // Save sanitized SVG
+                $path = 'events/banners/' . uniqid() . '.svg';
+                Storage::disk('public')->put($path, $cleanSVG);
+                $validated['banner_img_path'] = $path;
+            } else {
+                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+            }
         }
 
         $event = Event::create($validated);
@@ -131,6 +176,27 @@ class EventController extends Controller
 
         return response()->json([
             'message' => 'Merchants invited successfully',
+        ]);
+    }
+
+    /**
+     * Public: Get published events (for homepage banner)
+     * Only return events that are currently active (published & within date range)
+     */
+    public function publicIndex()
+    {
+        $today = Carbon::today();
+
+        $events = Event::where('status', 'published')
+            ->whereDate('event_start_date', '<=', $today)
+            ->whereDate('event_end_date', '>=', $today)
+            ->select('id', 'event_name', 'event_description', 'banner_img_path', 'event_start_date', 'event_end_date')
+            ->orderBy('event_start_date', 'desc')
+            ->limit(10) // Limit to 10 latest events
+            ->get();
+
+        return response()->json([
+            'data' => $events,
         ]);
     }
 }
