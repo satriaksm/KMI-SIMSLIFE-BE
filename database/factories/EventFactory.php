@@ -32,7 +32,7 @@ class EventFactory extends Factory
             'event_end_date' => $endDate,
             'banner_img_path' => null,
             'status' => $status,
-            'created_by' => User::role('admin')->first()->id ?? 1,
+            'created_by' => User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->first()?->id ?? 1,
         ];
     }
 
