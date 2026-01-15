@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\Category;
 use App\Models\Merchant;
+use App\Models\Jasa;
 use App\Models\Voucher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,37 +24,50 @@ class DashboardController extends Controller
         }
 
         $merchantId = $merchant->id;
+        $isJasaMerchant = (int) $merchant->segmentation_id === 3;
 
         /**
          * =========================
-         * STAT PRODUK
+         * STAT KATALOG (Produk / Jasa)
          * =========================
          */
-        $totalProducts = Product::where('merchant_id', $merchantId)->count();
-        $published = Product::where('merchant_id', $merchantId)->published()->count();
-        $draft = Product::where('merchant_id', $merchantId)->draft()->count();
-        $archived = Product::where('merchant_id', $merchantId)->archived()->count();
+        if ($isJasaMerchant) {
+            $totalProducts = Jasa::where('merchant_id', $merchantId)->count();
+            $published = Jasa::where('merchant_id', $merchantId)->where('is_active', true)->count();
+            $draft = Jasa::where('merchant_id', $merchantId)->where('is_active', false)->count();
+            $archived = 0;
+        } else {
+            $totalProducts = Product::where('merchant_id', $merchantId)->count();
+            $published = Product::where('merchant_id', $merchantId)->published()->count();
+            $draft = Product::where('merchant_id', $merchantId)->draft()->count();
+            $archived = Product::where('merchant_id', $merchantId)->archived()->count();
+        }
 
         /**
          * =========================
          * STOK (VARIANT-BASED)
          * =========================
          */
-        $lowStock = DB::table('product_variants')
-            ->join('products', 'products.id', '=', 'product_variants.product_id')
-            ->where('products.merchant_id', $merchantId)
-            ->where('products.status', 'published')
-            ->whereBetween('product_variants.stock', [1, 5])
-            ->distinct('products.id')
-            ->count('products.id');
+        if ($isJasaMerchant) {
+            $lowStock = 0;
+            $outOfStock = 0;
+        } else {
+            $lowStock = DB::table('product_variants')
+                ->join('products', 'products.id', '=', 'product_variants.product_id')
+                ->where('products.merchant_id', $merchantId)
+                ->where('products.status', 'published')
+                ->whereBetween('product_variants.stock', [1, 5])
+                ->distinct('products.id')
+                ->count('products.id');
 
-        $outOfStock = DB::table('product_variants')
-            ->join('products', 'products.id', '=', 'product_variants.product_id')
-            ->where('products.merchant_id', $merchantId)
-            ->where('products.status', 'published')
-            ->where('product_variants.stock', 0)
-            ->distinct('products.id')
-            ->count('products.id');
+            $outOfStock = DB::table('product_variants')
+                ->join('products', 'products.id', '=', 'product_variants.product_id')
+                ->where('products.merchant_id', $merchantId)
+                ->where('products.status', 'published')
+                ->where('product_variants.stock', 0)
+                ->distinct('products.id')
+                ->count('products.id');
+        }
 
         /**
          * =========================
@@ -79,28 +93,33 @@ class DashboardController extends Controller
          * CHART KATEGORI (TOP 3 + LAINNYA)
          * =========================
          */
-        $categoryStats = Category::whereHas('products', function ($q) use ($merchantId) {
-            $q->where('merchant_id', $merchantId)
-                ->where('status', 'published');
-        })
-            ->withCount([
-                'products as total' => function ($q) use ($merchantId) {
-                    $q->where('merchant_id', $merchantId)
-                        ->where('status', 'published');
-                }
-            ])
-            ->orderByDesc('total')
-            ->get();
+        if ($isJasaMerchant) {
+            $labels = [];
+            $data = [];
+        } else {
+            $categoryStats = Category::whereHas('products', function ($q) use ($merchantId) {
+                $q->where('merchant_id', $merchantId)
+                    ->where('status', 'published');
+            })
+                ->withCount([
+                        'products as total' => function ($q) use ($merchantId) {
+                            $q->where('merchant_id', $merchantId)
+                                ->where('status', 'published');
+                        }
+                    ])
+                ->orderByDesc('total')
+                ->get();
 
-        $topCategories = $categoryStats->take(3);
-        $otherTotal = $categoryStats->slice(3)->sum('total');
+            $topCategories = $categoryStats->take(3);
+            $otherTotal = $categoryStats->slice(3)->sum('total');
 
-        $labels = $topCategories->pluck('name')->toArray();
-        $data = $topCategories->pluck('total')->toArray();
+            $labels = $topCategories->pluck('name')->toArray();
+            $data = $topCategories->pluck('total')->toArray();
 
-        if ($otherTotal > 0) {
-            $labels[] = 'Lainnya';
-            $data[] = $otherTotal;
+            if ($otherTotal > 0) {
+                $labels[] = 'Lainnya';
+                $data[] = $otherTotal;
+            }
         }
 
         return response()->json([

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CartItem;
 use App\Models\Image;
+use App\Models\Jasa;
 use App\Models\Product;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\Request;
@@ -18,7 +19,7 @@ class ImageController extends Controller
         // Jika URL memiliki tanda tangan valid dari Laravel, langsung izinkan stream.
         // Ini memintas kebutuhan login/token di header request.
         if ($request->hasValidSignature()) {
-            return $this->stream($image);
+            return $this->stream($image, $this->resolveDiskForImage($image));
         }
 
         $imageable = $image->imageable;
@@ -27,7 +28,7 @@ class ImageController extends Controller
 
             // 2. LOGIKA BARU: Published DAN Archived adalah PUBLIC
             if (in_array($imageable->status, ['published', 'archived'])) {
-                return $this->stream($image);
+                return $this->stream($image, $this->resolveDiskForImage($image));
             }
 
             // 3. Jika status DRAFT, cek ownership
@@ -36,7 +37,28 @@ class ImageController extends Controller
             $user = $request->user();
 
             if ($user && $imageable->merchant && $user->id === $imageable->merchant->user_id) {
-                return $this->stream($image);
+                return $this->stream($image, $this->resolveDiskForImage($image));
+            }
+
+            return response()->json(['message' => 'Tidak boleh mengakses gambar ini (Draft)'], 403);
+        }
+
+        if ($imageable instanceof Jasa) {
+
+            // Published/Active/Archived bersifat public untuk customer
+            if (
+                in_array($imageable->status, ['published', 'active', 'archived'], true)
+                || ($imageable->status === null && (bool) $imageable->is_active)
+            ) {
+                return $this->stream($image, $this->resolveDiskForImage($image));
+            }
+
+            // Draft/non-public: cek ownership
+            $user = $request->user();
+            $imageable->loadMissing('merchant:id,user_id');
+
+            if ($user && $imageable->merchant && (int) $user->id === (int) $imageable->merchant->user_id) {
+                return $this->stream($image, $this->resolveDiskForImage($image));
             }
 
             return response()->json(['message' => 'Tidak boleh mengakses gambar ini (Draft)'], 403);
@@ -60,9 +82,22 @@ class ImageController extends Controller
         return $this->streamCartSnapshot($cartItem);
     }
 
-    private function stream(Image $image)
+    private function resolveDiskForImage(Image $image): string
     {
-        $disk = config('filesystems.product_disk', 'private'); // Pastikan disk sesuai config
+        $type = (string) ($image->imageable_type ?? '');
+
+        // Jasa images disimpan di disk public (storage/app/public/...)
+        if ($type === 'jasa' || str_ends_with($type, '\\Jasa')) {
+            return 'public';
+        }
+
+        // Default: mengikuti konfigurasi product
+        return config('filesystems.product_disk', 'private');
+    }
+
+    private function stream(Image $image, string $disk)
+    {
+        // Pastikan disk sesuai tipe image
 
         if (!Storage::disk($disk)->exists($image->image_path)) {
             abort(404);

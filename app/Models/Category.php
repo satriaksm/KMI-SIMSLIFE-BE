@@ -41,6 +41,17 @@ class Category extends Model
         )->withTimestamps();
     }
 
+    public function jasas(): MorphToMany
+    {
+        return $this->morphedByMany(
+            Jasa::class,
+            'categorizable',
+            'categorizables',
+            'category_id',
+            'categorizable_id'
+        )->withTimestamps();
+    }
+
     // public function services(): MorphToMany
     // {
     //     return $this->morphedByMany(

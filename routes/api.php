@@ -51,8 +51,9 @@ Route::prefix('public')->name('public.')->group(function () {
     Route::get('search', [SearchController::class, 'searchProducts'])->name('search');
     Route::get('search-merchants', [SearchController::class, 'searchMerchants'])->name('search.merchants');
 
-    Route::get('/jasas', [JasaController::class, 'index']);
-    // Public Products
+    // Public jasa listing (only published/active)
+    Route::get('/jasas', [JasaController::class, 'publicIndex']);
+    Route::get('/jasas/{id}', [JasaController::class, 'publicShow']);    // Public Products
     Route::prefix('products')->name('products.')->group(function () {
         Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
         // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
@@ -93,6 +94,11 @@ Route::prefix('public')->name('public.')->group(function () {
         // Merchant's products (already exists)
         Route::get('/{merchantSlug}/products', [ProductController::class, 'publicByMerchant'])
             ->name('products');
+
+        // Merchant's jasa (published/active only)
+        Route::get('/{merchantSlug}/jasas', [JasaController::class, 'publicByMerchant'])
+            ->where('merchantSlug', '^[A-Za-z0-9-]+$')
+            ->name('jasas');
     });
 
     // Category Routes
@@ -177,11 +183,11 @@ Route::prefix('auth')->group(function () {
     // Email verification
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
         ->withoutMiddleware([
-            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
-            \Illuminate\Session\Middleware\StartSession::class,
-            \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
-            \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
-        ])
+                \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+                \Illuminate\Session\Middleware\StartSession::class,
+                \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
+                \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
+            ])
         ->middleware(['throttle:5,1'])
         ->name('api.verification.verify');
 
@@ -238,6 +244,22 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
+        // ---------- JASA ----------
+        Route::prefix('jasa')->group(function () {
+            Route::get('/', [JasaController::class, 'index']);
+            Route::get('/{id}', [JasaController::class, 'show']);
+            Route::post('/', [JasaController::class, 'store']);
+            Route::put('/{id}', [JasaController::class, 'update']);
+            Route::delete('/{id}', [JasaController::class, 'destroy']);
+        });
+
+        // Create jasa for a merchant (preferred: slug-based)
+        Route::post('/merchants/{merchantSlug}/jasas', [JasaController::class, 'storeForMerchantBySlug'])
+            ->where('merchantSlug', '^[A-Za-z0-9-]+$');
+
+        // Backward compatibility: numeric merchantId endpoint
+        // Route::post('/merchants/{merchantId}/jasas', [JasaController::class, 'storeForMerchant'])
+        //     ->whereNumber('merchantId');
 
         Route::prefix('merchant')->group(function () {
 
@@ -338,14 +360,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 // PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
 // ============================================================
 
-// ---------- JASA ----------
-Route::prefix('jasa')->group(function () {
-    Route::get('/', [JasaController::class, 'index']);
-    Route::get('/{id}', [JasaController::class, 'show']);
-    Route::post('/', [JasaController::class, 'store']);
-    Route::put('/{id}', [JasaController::class, 'update']);
-    Route::delete('/{id}', [JasaController::class, 'destroy']);
-});
 
 // ---------- PROMO ----------
 Route::prefix('promos')->group(function () {
