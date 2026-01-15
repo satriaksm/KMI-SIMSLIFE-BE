@@ -2,14 +2,14 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Laporan Dashboard Admin</title>
+    <title>Laporan Data Voucher</title>
     <style>
         body {
             font-family: DejaVu Sans, sans-serif;
             font-size: 11px;
             margin: 0;
             padding: 15px;
-            padding-bottom: 50px; /* ✅ Space for fixed footer */
+            padding-bottom: 50px;
             color: #333;
         }
 

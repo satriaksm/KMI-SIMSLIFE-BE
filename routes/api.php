@@ -433,7 +433,10 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/', [AdminEventController::class, 'index'])->name('index');
         Route::post('/', [AdminEventController::class, 'store'])->name('store');
         Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf'); 
-        Route::get('/{id}/export-pdf', [AdminMerchantController::class, 'exportMerchantDetailPdf'])->name('exportMerchantDetailPdf'); 
+        
+        // ✅ NEW: Manual trigger auto-archive (optional)
+        Route::post('/auto-archive', [AdminEventController::class, 'triggerAutoArchive'])->name('auto-archive');
+        
         Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');

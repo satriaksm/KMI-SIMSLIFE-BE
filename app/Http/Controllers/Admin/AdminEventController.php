@@ -11,10 +11,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 
 class AdminEventController extends Controller
 {
-
     /**
      * Stream event banner image
      */
@@ -70,6 +70,9 @@ class AdminEventController extends Controller
      */
     public function index(Request $request)
     {
+        // ✅ Auto-archive expired events setiap kali index dipanggil
+        $this->autoArchiveEvents();
+
         $query = Event::with(['creator:id,name'])
             ->withCount(['merchants', 'vouchers']);
 
@@ -100,6 +103,9 @@ class AdminEventController extends Controller
      */
     public function show($id)
     {
+        // ✅ Auto-archive saat show juga
+        $this->autoArchiveEvents();
+
         $event = Event::with([
             'creator:id,name',
             'merchants' => function ($query) {
@@ -130,6 +136,52 @@ class AdminEventController extends Controller
     }
 
     /**
+     * ✅ FIXED: Auto-archive events yang sudah lewat end_date
+     * Dan auto-draft events yang belum dimulai tapi statusnya published
+     */
+    private function autoArchiveEvents()
+    {
+        $today = Carbon::today();
+
+        // 1. Archive events yang sudah lewat end_date
+        $archivedCount = Event::where('status', 'published')
+            ->whereDate('event_end_date', '<', $today)
+            ->update(['status' => 'archived']);
+
+        // 2. ✅ NEW: Auto-draft events yang belum dimulai (status published tapi sebelum start_date)
+        $draftedCount = Event::where('status', 'published')
+            ->whereDate('event_start_date', '>', $today)
+            ->update(['status' => 'draft']);
+
+        if ($archivedCount > 0 || $draftedCount > 0) {
+            Log::info('[AdminEvent] Auto-updated event statuses', [
+                'archived_count' => $archivedCount,
+                'drafted_count' => $draftedCount,
+                'date' => $today->format('Y-m-d'),
+            ]);
+        }
+
+        return [
+            'archived' => $archivedCount,
+            'drafted' => $draftedCount,
+        ];
+    }
+
+    /**
+     * ADMIN: Manual trigger auto-archive (optional endpoint)
+     */
+    public function triggerAutoArchive()
+    {
+        $result = $this->autoArchiveEvents();
+
+        return response()->json([
+            'message' => 'Auto-archive completed',
+            'archived_count' => $result['archived'],
+            'drafted_count' => $result['drafted'],
+        ]);
+    }
+
+    /**
      * ADMIN: Update event
      */
     public function update(Request $request, $id)
@@ -145,8 +197,83 @@ class AdminEventController extends Controller
             'status' => 'sometimes|required|in:draft,published,archived',
         ]);
 
+        $startDate = isset($validated['event_start_date']) 
+            ? Carbon::parse($validated['event_start_date'])
+            : Carbon::parse($event->event_start_date);
+        
+        $endDate = isset($validated['event_end_date'])
+            ? Carbon::parse($validated['event_end_date'])
+            : Carbon::parse($event->event_end_date);
+
+        $today = Carbon::today();
+        $originalStartDate = Carbon::parse($event->event_start_date);
+
+        // ✅ FIXED: Logic konsisten untuk edit start_date
+        if (isset($validated['event_start_date']) && !$startDate->eq($originalStartDate)) {
+            // Case 1: Event sudah dimulai → TIDAK BOLEH ubah start_date sama sekali
+            if ($originalStartDate->lt($today)) {
+                return response()->json([
+                    'message' => 'Event yang sudah dimulai tidak dapat diubah tanggal mulainya',
+                    'errors' => [
+                        'event_start_date' => ['Tanggal mulai event yang sudah berjalan tidak dapat diubah untuk menjaga integritas data']
+                    ]
+                ], 422);
+            }
+
+            // Case 2: Event belum dimulai, tapi admin set start_date ke masa lalu
+            if ($startDate->lt($today)) {
+                return response()->json([
+                    'message' => 'Tanggal mulai tidak boleh di masa lalu',
+                    'errors' => [
+                        'event_start_date' => ['Tanggal mulai harus hari ini atau di masa depan']
+                    ]
+                ], 422);
+            }
+        }
+
+        // ✅ Validate status based on dates
+        if (isset($validated['status'])) {
+            // Event already started
+            if ($originalStartDate->lt($today)) {
+                if ($validated['status'] === 'draft' && $event->status === 'published') {
+                    return response()->json([
+                        'message' => 'Event yang sudah berjalan tidak dapat diubah ke status Draft',
+                        'suggestion' => 'Gunakan status Published atau Archived',
+                    ], 422);
+                }
+            }
+
+            // Cannot set to 'published' if outside date range
+            if ($validated['status'] === 'published') {
+                if ($today->lt($startDate)) {
+                    return response()->json([
+                        'message' => 'Event belum dapat dipublish karena belum memasuki tanggal mulai',
+                        'current_date' => $today->format('Y-m-d'),
+                        'start_date' => $startDate->format('Y-m-d'),
+                    ], 422);
+                }
+
+                if ($today->gt($endDate)) {
+                    return response()->json([
+                        'message' => 'Event tidak dapat dipublish karena sudah melewati tanggal selesai',
+                        'current_date' => $today->format('Y-m-d'),
+                        'end_date' => $endDate->format('Y-m-d'),
+                    ], 422);
+                }
+            }
+
+            // Auto-set to draft if before start date
+            if ($today->lt($startDate) && $validated['status'] === 'published') {
+                $validated['status'] = 'draft';
+            }
+
+            // Auto-archive if past end date
+            if ($today->gt($endDate)) {
+                $validated['status'] = 'archived';
+            }
+        }
+
         if ($request->hasFile('banner_img')) {
-            // Delete old banner
             if ($event->banner_img_path) {
                 Storage::disk('public')->delete($event->banner_img_path);
             }
@@ -194,11 +321,28 @@ class AdminEventController extends Controller
         $validated = $request->validate([
             'event_name' => 'required|string|max:255',
             'event_description' => 'nullable|string',
-            'event_start_date' => 'required|date',
+            'event_start_date' => 'required|date|after_or_equal:today', // ✅ FIXED: Must be today or future
             'event_end_date' => 'required|date|after_or_equal:event_start_date',
             'banner_img' => 'nullable|image|max:2048',
             'status' => 'required|in:draft,published,archived',
+        ], [
+            'event_start_date.after_or_equal' => 'Tanggal mulai tidak boleh di masa lalu',
         ]);
+
+        $startDate = Carbon::parse($validated['event_start_date']);
+        $endDate = Carbon::parse($validated['event_end_date']);
+        $today = Carbon::today();
+
+        // ✅ Auto-determine status based on dates
+        if ($startDate->eq($today) && $endDate->gte($today)) {
+            // Event dimulai hari ini, boleh draft atau published
+            if (!in_array($validated['status'], ['draft', 'published'])) {
+                $validated['status'] = 'draft';
+            }
+        } elseif ($startDate->gt($today)) {
+            // Event belum dimulai, harus draft
+            $validated['status'] = 'draft';
+        }
 
         $validated['created_by'] = $request->user()->id;
 
