@@ -4,6 +4,8 @@ namespace Database\Seeders;
 
 use App\Models\Event;
 use App\Models\User;
+use App\Models\Merchant;
+use Illuminate\Support\Str;
 use Illuminate\Database\Seeder;
 use Carbon\Carbon;
 
