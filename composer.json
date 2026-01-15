@@ -80,9 +80,7 @@
     },
     "extra": {
         "laravel": {
-            "dont-discover": [
-                "knuckleswtf/scribe"
-            ]
+            "dont-discover": []
         }
     },
     "config": {

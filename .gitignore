@@ -20,6 +20,7 @@
 /storage/pail
 /vendor
 /.scribe
+/config/scribe.php  
 Homestead.json
 Homestead.yaml
 Thumbs.db
