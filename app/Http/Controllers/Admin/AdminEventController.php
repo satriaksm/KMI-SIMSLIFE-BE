@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use enshrined\svgSanitize\Sanitizer;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 
@@ -70,7 +71,7 @@ class AdminEventController extends Controller
      */
     public function index(Request $request)
     {
-        // ✅ Auto-archive expired events setiap kali index dipanggil
+        // Auto-archive expired events setiap kali index dipanggil
         $this->autoArchiveEvents();
 
         $query = Event::with(['creator:id,name'])
@@ -103,7 +104,7 @@ class AdminEventController extends Controller
      */
     public function show($id)
     {
-        // ✅ Auto-archive saat show juga
+        // Auto-archive saat show juga
         $this->autoArchiveEvents();
 
         $event = Event::with([
@@ -136,7 +137,7 @@ class AdminEventController extends Controller
     }
 
     /**
-     * ✅ FIXED: Auto-archive events yang sudah lewat end_date
+     * Auto-archive events yang sudah lewat end_date
      * Dan auto-draft events yang belum dimulai tapi statusnya published
      */
     private function autoArchiveEvents()
@@ -148,7 +149,7 @@ class AdminEventController extends Controller
             ->whereDate('event_end_date', '<', $today)
             ->update(['status' => 'archived']);
 
-        // 2. ✅ NEW: Auto-draft events yang belum dimulai (status published tapi sebelum start_date)
+        // 2. Auto-draft events yang belum dimulai (status published tapi sebelum start_date)
         $draftedCount = Event::where('status', 'published')
             ->whereDate('event_start_date', '>', $today)
             ->update(['status' => 'draft']);
@@ -193,7 +194,7 @@ class AdminEventController extends Controller
             'event_description' => 'nullable|string',
             'event_start_date' => 'sometimes|required|date',
             'event_end_date' => 'sometimes|required|date|after_or_equal:event_start_date',
-            'banner_img' => 'nullable|image|max:2048',
+            'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:5120',
             'status' => 'sometimes|required|in:draft,published,archived',
         ]);
 
@@ -208,9 +209,7 @@ class AdminEventController extends Controller
         $today = Carbon::today();
         $originalStartDate = Carbon::parse($event->event_start_date);
 
-        // ✅ FIXED: Logic konsisten untuk edit start_date
         if (isset($validated['event_start_date']) && !$startDate->eq($originalStartDate)) {
-            // Case 1: Event sudah dimulai → TIDAK BOLEH ubah start_date sama sekali
             if ($originalStartDate->lt($today)) {
                 return response()->json([
                     'message' => 'Event yang sudah dimulai tidak dapat diubah tanggal mulainya',
@@ -220,7 +219,6 @@ class AdminEventController extends Controller
                 ], 422);
             }
 
-            // Case 2: Event belum dimulai, tapi admin set start_date ke masa lalu
             if ($startDate->lt($today)) {
                 return response()->json([
                     'message' => 'Tanggal mulai tidak boleh di masa lalu',
@@ -231,7 +229,6 @@ class AdminEventController extends Controller
             }
         }
 
-        // ✅ Validate status based on dates
         if (isset($validated['status'])) {
             // Event already started
             if ($originalStartDate->lt($today)) {
@@ -243,7 +240,6 @@ class AdminEventController extends Controller
                 }
             }
 
-            // Cannot set to 'published' if outside date range
             if ($validated['status'] === 'published') {
                 if ($today->lt($startDate)) {
                     return response()->json([
@@ -274,19 +270,47 @@ class AdminEventController extends Controller
         }
 
         if ($request->hasFile('banner_img')) {
-            if ($event->banner_img_path) {
+            $file = $request->file('banner_img');
+            
+            // Delete old banner BEFORE uploading new one
+            if ($event->banner_img_path && Storage::disk('public')->exists($event->banner_img_path)) {
                 Storage::disk('public')->delete($event->banner_img_path);
             }
-
-            $validated['banner_img_path'] = $request->file('banner_img')
-                ->store('events/banners', 'public');
+            
+            if ($file->getClientOriginalExtension() === 'svg') {
+                $sanitizer = new Sanitizer();
+                $dirtySVG = file_get_contents($file->getRealPath());
+                $cleanSVG = $sanitizer->sanitize($dirtySVG);
+                
+                if ($cleanSVG === false) {
+                    return response()->json([
+                        'message' => 'File SVG tidak valid atau berbahaya',
+                    ], 422);
+                }
+                
+                $path = 'events/banners/' . uniqid() . '.svg';
+                Storage::disk('public')->put($path, $cleanSVG);
+                $validated['banner_img_path'] = $path;
+            } else {
+                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+            }
+            
+            Log::info('[AdminEvent] Banner updated', [
+                'event_id' => $event->id,
+                'old_banner' => $event->banner_img_path,
+                'new_banner' => $validated['banner_img_path'],
+            ]);
         }
 
         $event->update($validated);
 
+        $event = Event::with(['creator:id,name'])
+            ->withCount(['merchants', 'vouchers'])
+            ->find($event->id);
+
         return response()->json([
             'message' => 'Event updated successfully',
-            'data' => $event->fresh(),
+            'data' => $event,
         ]);
     }
 
@@ -321,36 +345,50 @@ class AdminEventController extends Controller
         $validated = $request->validate([
             'event_name' => 'required|string|max:255',
             'event_description' => 'nullable|string',
-            'event_start_date' => 'required|date|after_or_equal:today', // ✅ FIXED: Must be today or future
+            'event_start_date' => 'required|date|after_or_equal:today', 
             'event_end_date' => 'required|date|after_or_equal:event_start_date',
-            'banner_img' => 'nullable|image|max:2048',
+            'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:5120',
             'status' => 'required|in:draft,published,archived',
         ], [
             'event_start_date.after_or_equal' => 'Tanggal mulai tidak boleh di masa lalu',
+            'banner_img.max' => 'Ukuran file maksimal 5MB',
         ]);
 
         $startDate = Carbon::parse($validated['event_start_date']);
         $endDate = Carbon::parse($validated['event_end_date']);
         $today = Carbon::today();
-
-        // ✅ Auto-determine status based on dates
         if ($startDate->eq($today) && $endDate->gte($today)) {
-            // Event dimulai hari ini, boleh draft atau published
             if (!in_array($validated['status'], ['draft', 'published'])) {
                 $validated['status'] = 'draft';
             }
         } elseif ($startDate->gt($today)) {
-            // Event belum dimulai, harus draft
             $validated['status'] = 'draft';
         }
 
         $validated['created_by'] = $request->user()->id;
 
         if ($request->hasFile('banner_img')) {
-            $validated['banner_img_path'] = $request->file('banner_img')
-                ->store('events/banners', 'public');
+            $file = $request->file('banner_img');
+            
+            if ($file->getClientOriginalExtension() === 'svg') {
+                $sanitizer = new Sanitizer();
+                $dirtySVG = file_get_contents($file->getRealPath());
+                $cleanSVG = $sanitizer->sanitize($dirtySVG);
+                
+                if ($cleanSVG === false) {
+                    return response()->json([
+                        'message' => 'File SVG tidak valid atau berbahaya',
+                    ], 422);
+                }
+                
+                // Save sanitized SVG
+                $path = 'events/banners/' . uniqid() . '.svg';
+                Storage::disk('public')->put($path, $cleanSVG);
+                $validated['banner_img_path'] = $path;
+            } else {
+                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+            }
         }
-
         $event = Event::create($validated);
 
         return response()->json([

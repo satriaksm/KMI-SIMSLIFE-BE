@@ -112,6 +112,9 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('districts/{cityId}', 'districts');
         Route::get('villages/{districtId}', 'villages');
     });
+
+    // ✅ NEW: Public events endpoint (published only, for homepage banner)
+    Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
 });
 
 
@@ -434,7 +437,7 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::post('/', [AdminEventController::class, 'store'])->name('store');
         Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf'); 
         
-        // ✅ NEW: Manual trigger auto-archive (optional)
+        //  Manual trigger auto-archive
         Route::post('/auto-archive', [AdminEventController::class, 'triggerAutoArchive'])->name('auto-archive');
         
         Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
