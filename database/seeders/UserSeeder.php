@@ -22,6 +22,34 @@ class UserSeeder extends Seeder
             $admin->roles()->syncWithoutDetaching([$adminRole->id]);
         }
 
+        // Sample customer dengan nomor telepon untuk pengujian "Gunakan data profil"
+        $customer = User::factory()->create([
+            'name' => 'Customer Verified',
+            'email' => 'customer@example.com',
+            'password' => bcrypt('123123123'),
+            'status' => 'active',
+            'phone' => '081234567890',
+        ]);
+
+        $customerRole = Role::where('name', 'customer')->first();
+        if ($customerRole) {
+            $customer->roles()->syncWithoutDetaching([$customerRole->id]);
+        }
+
+        // Sample UMKM jasa dengan nomor telepon
+        $umkmJasa = User::factory()->create([
+            'name' => 'UMKM Jasa',
+            'email' => 'umkmjasa@example.com',
+            'password' => bcrypt('123123123'),
+            'status' => 'active',
+            'phone' => '081298765432',
+        ]);
+
+        $umkmRole = Role::where('name', 'umkm-owner')->first();
+        if ($umkmRole) {
+            $umkmJasa->roles()->syncWithoutDetaching([$umkmRole->id]);
+        }
+
 
         // $this->command->info('Creating sample customers (30)...');
         // $customers = User::factory()->count(30)->create([

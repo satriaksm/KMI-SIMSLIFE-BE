@@ -60,11 +60,13 @@ class Voucher extends Model
 
     public function getUsageAttribute()
     {
+        $usedCount = $this->usages_count ?? 0;
+
         if ($this->usage_limit === null) {
-            return "{$this->usages_count} / ∞";
+            return "{$usedCount} / ∞";
         }
 
-        return "{$this->usages_count} / {$this->usage_limit}";
+        return "{$usedCount} / {$this->usage_limit}";
     }
 
     public function scopeActive($query)
