@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class AdminMerchantController extends Controller
 {
@@ -681,5 +682,55 @@ class AdminMerchantController extends Controller
                 'message' => 'Gagal membuat laporan PDF',
             ], 500);
         }
+    }
+
+    /**
+     * Stream merchant logo image
+     */
+    public function showLogo(Request $request, Merchant $merchant)
+    {
+        // Support signed URL for secure access
+        if ($request->hasValidSignature()) {
+            return $this->streamMerchantLogo($merchant);
+        }
+
+        // Public access for now (you can add auth checks later)
+        return $this->streamMerchantLogo($merchant);
+    }
+
+    /**
+     * Private method to stream merchant logo
+     */
+    private function streamMerchantLogo(Merchant $merchant)
+    {
+        if (empty($merchant->logo_path)) {
+            abort(404);
+        }
+
+        $disk = 'public';
+        $path = ltrim($merchant->logo_path, '/');
+
+        if (!Storage::disk($disk)->exists($path)) {
+            abort(404);
+        }
+
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'svg' => 'image/svg+xml',
+            'webp' => 'image/webp',
+            'jpg', 'jpeg' => 'image/jpeg',
+            default => 'application/octet-stream',
+        };
+
+        $stream = Storage::disk($disk)->readStream($path);
+
+        return response()->stream(function () use ($stream) {
+            fpassthru($stream);
+        }, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=31536000',
+        ]);
     }
 }

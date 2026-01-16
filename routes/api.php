@@ -507,3 +507,11 @@ Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
 // Alternate naming with underscore
 Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
     ->name('event_banners.show');
+
+// ✅ ADD: Merchant logo streaming route
+Route::get('/merchant-logo/{merchant}', [AdminMerchantController::class, 'showLogo'])
+    ->name('merchant.logo');
+
+// ✅ ADD: User profile picture streaming route  
+Route::get('/user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])
+    ->name('user.profile');
