@@ -500,6 +500,7 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     });
 });
 
+// ✅ Event banner streaming route (should already exist)
 Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
     ->name('event-banners.show');
 

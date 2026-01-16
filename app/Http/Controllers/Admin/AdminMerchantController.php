@@ -274,26 +274,46 @@ class AdminMerchantController extends Controller
     {
         try {
             $merchant = Merchant::with([
-                'user.roles',
+                'user',
                 'segmentation',
                 'paguyuban',
-                'addresses.province',
-                'addresses.city',
-                'addresses.district',
-                'addresses.village',
-                'products' => function ($query) {
-                    $query->with('categories')->latest()->limit(20);
-                },
-                'products.categories',
-                'vouchers' => function ($query) {
-                    $query->with('usages')->latest()->limit(10);
-                },
-                'events' => function ($query) {
-                    $query->wherePivot('status', 'accepted')->latest();
-                },
+                'primaryAddress.province',
+                'primaryAddress.city',
+                'primaryAddress.district',
+                'primaryAddress.village',
+                'products.categories', // ✅ Already exists
+                'products.variants', // ✅ ADD: Load variants untuk ambil SKU, price, stock
+                'vouchers',
+                'events',
             ])
-                ->withCount(['products', 'vouchers', 'events'])
-                ->findOrFail($id);
+            ->withCount(['products', 'vouchers', 'events'])
+            ->findOrFail($id);
+
+            // ✅ FIX: Transform products to include complete data from variants
+            $merchant->products->transform(function ($product) {
+                // Ambil data dari variants
+                $variants = $product->variants;
+                
+                // Untuk single variant, ambil data pertama
+                $firstVariant = $variants->first();
+                
+                return [
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'slug' => $product->slug,
+                    'sku' => $firstVariant ? $firstVariant->sku : null, // ✅ Dari variant pertama
+                    'price' => $variants->isNotEmpty() ? $variants->min('price') : null, // ✅ Min price dari variants
+                    'stock' => $variants->sum('stock'), // ✅ Total stock dari semua variants
+                    'status' => $product->status,
+                    'categories' => $product->categories->map(function ($category) {
+                        return [
+                            'id' => $category->id,
+                            'name' => $category->name,
+                        ];
+                    }),
+                    'created_at' => $product->created_at,
+                ];
+            });
 
             // Additional aggregated data
             $aggregatedData = [
@@ -618,26 +638,73 @@ class AdminMerchantController extends Controller
         try {
             $admin = $request->user();
             
-            // ✅ Get merchant with FULL details including categories relationship
+            // ✅ FIX: Load merchant dengan relasi yang sama seperti show()
             $merchant = Merchant::with([
-                'user.roles',
+                'user',
                 'segmentation',
-                'addresses.province',
-                'addresses.city',
-                'addresses.district',
-                'addresses.village',
-                'products' => function ($query) {
-                    $query->with('categories')->latest()->limit(20);
-                },
-                'vouchers' => function ($query) {
-                    $query->with('usages')->latest();
-                },
-                'events' => function ($query) {
-                    $query->latest();
-                },
+                'paguyuban',
+                'primaryAddress.province',
+                'primaryAddress.city',
+                'primaryAddress.district',
+                'primaryAddress.village',
+                'products.categories',
+                'products.variants', // ✅ ADD: Load variants untuk ambil SKU, price, stock
+                'vouchers',
+                'events',
             ])
-                ->withCount(['products', 'vouchers'])
-                ->findOrFail($id);
+            ->withCount(['products', 'vouchers', 'events'])
+            ->findOrFail($id);
+
+            // ✅ FIX: Transform products data (sama seperti di show())
+            $merchant->products->transform(function ($product) {
+                // Ambil data dari variants
+                $variants = $product->variants;
+                
+                // Untuk single variant, ambil data pertama
+                $firstVariant = $variants->first();
+                
+                return [
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'slug' => $product->slug,
+                    'sku' => $firstVariant ? $firstVariant->sku : null, // ✅ Dari variant pertama
+                    'price' => $variants->isNotEmpty() ? $variants->min('price') : null, // ✅ Min price dari variants
+                    'stock' => $variants->sum('stock'), // ✅ Total stock dari semua variants
+                    'status' => $product->status,
+                    'categories' => $product->categories->map(function ($category) {
+                        return [
+                            'id' => $category->id,
+                            'name' => $category->name,
+                        ];
+                    })->toArray(),
+                    'created_at' => $product->created_at,
+                ];
+            });
+
+            // Get statistics
+            try {
+                $stats = DB::table('orders')
+                    ->join('order_items', 'orders.id', '=', 'order_items.order_id')
+                    ->join('products', 'order_items.product_id', '=', 'products.id')
+                    ->where('products.merchant_id', $merchant->id)
+                    ->where('orders.created_at', '>=', now()->subDays(30))
+                    ->selectRaw('
+                        COUNT(DISTINCT orders.id) as total_orders,
+                        SUM(order_items.quantity * order_items.price) as total_revenue
+                    ')
+                    ->first();
+
+                $statistics = [
+                    'total_orders' => $stats->total_orders ?? 0,
+                    'total_revenue' => $stats->total_revenue ?? 0,
+                ];
+            } catch (\Exception $e) {
+                Log::warning('[AdminMerchant] Statistics query failed: ' . $e->getMessage());
+                $statistics = [
+                    'total_orders' => 0,
+                    'total_revenue' => 0,
+                ];
+            }
 
             // Metadata
             $metadata = [
@@ -646,7 +713,7 @@ class AdminMerchantController extends Controller
                 'generated_by_email' => $admin->email ?? '-',
             ];
 
-            // Load logo as base64
+            // Load logo
             $logoPath = public_path('images/logo-sumilir.png');
             $logoBase64 = '';
             
@@ -658,6 +725,7 @@ class AdminMerchantController extends Controller
             // Generate PDF
             $pdf = Pdf::loadView('exports.admin.admin-merchant-detail', [
                 'merchant' => $merchant,
+                'statistics' => $statistics,
                 'metadata' => $metadata,
                 'logoBase64' => $logoBase64,
             ])
