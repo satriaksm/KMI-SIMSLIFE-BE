@@ -115,6 +115,16 @@ Route::prefix('public')->name('public.')->group(function () {
 
     // ✅ NEW: Public events endpoint (published only, for homepage banner)
     Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
+
+    // ✅ NEW: Homepage specific endpoints
+    Route::prefix('home')->name('home.')->group(function () {
+        Route::get('recommended-merchants', [\App\Http\Controllers\HomeController::class, 'recommendedMerchants'])
+            ->name('recommended-merchants');
+        Route::get('map-carousel-merchants', [\App\Http\Controllers\HomeController::class, 'mapCarouselMerchants'])
+            ->name('map-carousel-merchants');
+        Route::get('statistics', [\App\Http\Controllers\HomeController::class, 'statistics'])
+            ->name('statistics');
+    });
 });
 
 
