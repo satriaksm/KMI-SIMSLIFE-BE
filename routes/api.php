@@ -203,6 +203,18 @@ Route::prefix('auth')->group(function () {
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     Route::get('/me', [AuthController::class, 'me'])->name('me');
+    // 🆕 ADDED FROM feat/rating-system: Profile Management
+    Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+        Route::get('/', 'show')->name('profile.show');
+        Route::post('/update', 'update')->name('profile.update');
+        Route::post('/change-password', 'changePassword')->name('profile.change-password');
+    });
+
+    // Customer profile address (primary / "utama")
+    Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+        Route::get('/address', 'addressShow')->name('profile.address.show');
+        Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
+    });
 
     // CUSTOMER ONLY: Register Merchant
     Route::middleware('role:customer')->group(function () {
@@ -220,18 +232,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         // Current user's merchant (for Profile page "Akses Toko" button)
         Route::get('/my-merchants', [MerchantController::class, 'myMerchants'])->name('merchant.my-many');
 
-        // 🆕 ADDED FROM feat/rating-system: Profile Management
-        Route::prefix('profile')->controller(ProfileController::class)->group(function () {
-            Route::get('/', 'show')->name('profile.show');
-            Route::post('/update', 'update')->name('profile.update');
-            Route::post('/change-password', 'changePassword')->name('profile.change-password');
-        });
 
-        // Customer profile address (primary / "utama")
-        Route::prefix('profile')->controller(ProfileController::class)->group(function () {
-            Route::get('/address', 'addressShow')->name('profile.address.show');
-            Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
-        });
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
 
