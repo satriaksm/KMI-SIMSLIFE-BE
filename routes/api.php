@@ -52,18 +52,14 @@ Route::prefix('public')->name('public.')->group(function () {
     Route::get('search-merchants', [SearchController::class, 'searchMerchants'])->name('search.merchants');
 
     // Public jasa listing (only published/active)
-    Route::get('/jasas', [JasaController::class, 'publicIndex']);
+    // Route::get('/jasas', [JasaController::class, 'publicIndex']);
     Route::get('/jasas/{id}', [JasaController::class, 'publicShow']);    // Public Products
     Route::prefix('products')->name('products.')->group(function () {
-        Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
+        // Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
         // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
 
         // 🆕 FROM feat/rating-system: Featured products endpoint
         // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
-
-        // 🆕 FROM feat/rating-system: Toko & Kuliner specific endpoints
-        // Route::get('/toko', [ProductController::class, 'publicIndexToko'])->name('toko');
-        // Route::get('/kuliner', [ProductController::class, 'publicIndexKuliner'])->name('kuliner');
 
         // ✅ Public show by slug (only published)
         Route::get('/{slug}', [ProductController::class, 'publicShow'])
@@ -80,7 +76,7 @@ Route::prefix('public')->name('public.')->group(function () {
     // Public Merchants
     Route::prefix('merchants')->name('merchants.')->group(function () {
         // List merchants (with pagination & filters)
-        Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
+        // Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
 
         // // Random merchants for homepage
         // Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
@@ -183,11 +179,11 @@ Route::prefix('auth')->group(function () {
     // Email verification
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
         ->withoutMiddleware([
-                \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
-                \Illuminate\Session\Middleware\StartSession::class,
-                \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
-                \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
-            ])
+            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+            \Illuminate\Session\Middleware\StartSession::class,
+            \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
+            \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
+        ])
         ->middleware(['throttle:5,1'])
         ->name('api.verification.verify');
 
@@ -397,8 +393,8 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/roles', [AdminUserController::class, 'getRoles'])->name('roles');
         Route::get('/{id}/login-trend', [AdminUserController::class, 'loginTrend'])->name('login-trend');
         Route::get('/overview-stats', [AdminUserController::class, 'overviewStats'])->name('overview-stats');
-        Route::get('/{id}/export-pdf', [AdminUserController::class, 'exportUserDetailPdf'])->name('exportUserDetailPdf'); 
-        Route::get('/export-pdf', [AdminUserController::class, 'exportPdf'])->name('export-pdf'); 
+        Route::get('/{id}/export-pdf', [AdminUserController::class, 'exportUserDetailPdf'])->name('exportUserDetailPdf');
+        Route::get('/export-pdf', [AdminUserController::class, 'exportPdf'])->name('export-pdf');
 
         Route::get('/{id}', [AdminUserController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminUserController::class, 'update'])->name('update');
@@ -417,8 +413,8 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     Route::prefix('merchants')->name('merchants.')->group(function () {
         Route::get('/', [AdminMerchantController::class, 'index'])->name('index');
         Route::post('/', [AdminMerchantController::class, 'store'])->name('store');
-        Route::get('/{id}/export-pdf', [AdminMerchantController::class, 'exportMerchantDetailPdf'])->name('exportMerchantDetailPdf'); 
-        Route::get('/export-pdf', [AdminMerchantController::class, 'exportPdf'])->name('export-pdf'); 
+        Route::get('/{id}/export-pdf', [AdminMerchantController::class, 'exportMerchantDetailPdf'])->name('exportMerchantDetailPdf');
+        Route::get('/export-pdf', [AdminMerchantController::class, 'exportPdf'])->name('export-pdf');
         Route::get('/{id}', [AdminMerchantController::class, 'show'])->name('show');
         Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
         Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
@@ -449,11 +445,11 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     Route::prefix('events')->name('events.')->group(function () {
         Route::get('/', [AdminEventController::class, 'index'])->name('index');
         Route::post('/', [AdminEventController::class, 'store'])->name('store');
-        Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf'); 
-        
+        Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf');
+
         //  Manual trigger auto-archive
         Route::post('/auto-archive', [AdminEventController::class, 'triggerAutoArchive'])->name('auto-archive');
-        
+
         Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
         Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
         Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');

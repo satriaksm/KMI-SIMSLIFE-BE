@@ -149,6 +149,28 @@ class JasaController extends Controller
      */
     public function publicIndex(Request $request)
     {
+        // Params filter (dibuat mirip dengan public products)
+        // - Tetap backward compatible: jika tidak kirim per_page/page => response tetap array seperti sebelumnya
+        // - Merchant filter: dukung merchant_id (baru) dan merchantId (lama)
+        $data = $request->validate([
+            'q' => ['nullable', 'string', 'max:255'],
+            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
+            'merchantId' => ['nullable', 'integer', 'exists:merchants,id'],
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+
+            // filter by segmentation name (konsisten dengan ProductController::publicIndex)
+            'segments' => ['nullable', 'array'],
+            'segments.*' => ['in:UMKM Toko,UMKM Kuliner,UMKM Jasa'],
+
+            // price range (berdasarkan harga efektif jasa)
+            'min_price' => ['nullable', 'numeric', 'min:0'],
+            'max_price' => ['nullable', 'numeric', 'min:0'],
+
+            'sort' => ['nullable', 'in:newest,price_asc,price_desc,name_asc,name_desc'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+
         $query = Jasa::with(['categories', 'merchant.segmentation', 'images'])
             // Hanya tampilkan jasa yang aktif/dipublish ke customer
             ->where(function ($q) {
@@ -157,33 +179,73 @@ class JasaController extends Controller
                     ->orWhere(function ($sub) {
                     $sub->whereNull('status')->where('is_active', true);
                 });
-            })
-            ->orderBy('id', 'desc');
+            });
 
-        // Optional: filter jasa berdasarkan merchant tertentu (untuk halaman store merchant)
-        if ($request->filled('merchantId')) {
-            $query->where('merchant_id', $request->input('merchantId'));
+        // Filter by merchant
+        $merchantId = $data['merchant_id'] ?? $data['merchantId'] ?? null;
+        if (!empty($merchantId)) {
+            $query->where('merchant_id', (int) $merchantId);
         }
 
-        // Optional: filter kategori jika dikirim (via pivot categorizables)
-        if ($request->filled('category_id')) {
-            $categoryId = (int) $request->input('category_id');
+        // Filter by segmentation name
+        if (!empty($data['segments'])) {
+            $query->whereHas('merchant.segmentation', function ($q) use ($data) {
+                $q->whereIn('name', $data['segments']);
+            });
+        }
+
+        // Filter by category (via pivot categorizables)
+        if (!empty($data['category_id'])) {
+            $categoryId = (int) $data['category_id'];
             $query->whereHas('categories', fn($q) => $q->where('categories.id', $categoryId));
         }
 
-        // Optional: pencarian judul / deskripsi
-        if ($request->filled('q')) {
-            $q = $request->input('q');
+        // Search
+        if (!empty($data['q'])) {
+            $q = $data['q'];
             $query->where(function ($sub) use ($q) {
                 $sub->where('title', 'like', "%{$q}%")
                     ->orWhere('description', 'like', "%{$q}%");
             });
         }
 
-        $jasas = $query->get();
+        // Price range
+        if (array_key_exists('min_price', $data) || array_key_exists('max_price', $data)) {
+            // Harga efektif jasa: fixed_price > base_price > price (legacy)
+            $priceExpr = "COALESCE(NULLIF(fixed_price, 0), NULLIF(base_price, 0), NULLIF(price, 0), 0)";
 
-        // Tambah alias kategori & normalisasi struktur images untuk kompatibilitas FE
-        $jasas->each(function ($jasa) {
+            if (isset($data['min_price'])) {
+                $query->whereRaw("{$priceExpr} >= ?", [(float) $data['min_price']]);
+            }
+            if (isset($data['max_price'])) {
+                $query->whereRaw("{$priceExpr} <= ?", [(float) $data['max_price']]);
+            }
+        }
+
+        // Sorting
+        $sort = $data['sort'] ?? 'newest';
+        switch ($sort) {
+            case 'price_asc':
+                $query->orderByRaw("COALESCE(NULLIF(fixed_price, 0), NULLIF(base_price, 0), NULLIF(price, 0), 0) asc")
+                    ->orderByDesc('id');
+                break;
+            case 'price_desc':
+                $query->orderByRaw("COALESCE(NULLIF(fixed_price, 0), NULLIF(base_price, 0), NULLIF(price, 0), 0) desc")
+                    ->orderByDesc('id');
+                break;
+            case 'name_asc':
+                $query->orderBy('title', 'asc')->orderByDesc('id');
+                break;
+            case 'name_desc':
+                $query->orderBy('title', 'desc')->orderByDesc('id');
+                break;
+            case 'newest':
+            default:
+                $query->orderByDesc('id');
+                break;
+        }
+
+        $transform = function (Jasa $jasa) {
             $this->attachCategoryAliases($jasa);
 
             if ($jasa->images) {
@@ -199,8 +261,19 @@ class JasaController extends Controller
                 // public endpoint => always public URL
                 $this->attachCoverImg($jasa, true);
             }
-        });
 
+            return $jasa;
+        };
+
+        $wantsPagination = isset($data['per_page']) || isset($data['page']);
+        if ($wantsPagination) {
+            $perPage = $data['per_page'] ?? 20;
+            return response()->json(
+                $query->paginate($perPage)->through($transform)
+            );
+        }
+
+        $jasas = $query->get()->each($transform);
         return response()->json($jasas);
     }
 

@@ -46,7 +46,7 @@ class ProductController
             'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'segments' => ['nullable', 'array'],
-            'segments.*' => ['in:UMKM Toko,UMKM Kuliner,UMKM Jasa'],
+            'segments.*' => ['in:UMKM Toko,UMKM Kuliner'],
             'min_price' => ['nullable', 'numeric', 'min:0'],
             'max_price' => ['nullable', 'numeric', 'min:0'],
             'sort' => ['nullable', 'in:newest,price_asc,price_desc,name_asc,name_desc'],
@@ -55,21 +55,21 @@ class ProductController
 
         $query = Product::query()
             ->select([
-                    'products.id',
-                    'products.merchant_id',
-                    'products.name',
-                    'products.slug',
-                ])
+                'products.id',
+                'products.merchant_id',
+                'products.name',
+                'products.slug',
+            ])
             ->whereHas('variants', function ($q) {
                 $q->where('stock', '>', 0);
             })->where('products.status', 'published')
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
-                    'coverImage:id,imageable_id,imageable_type,image_path',
-                    'merchant:id,name,slug,segmentation_id',
-                    'merchant.segmentation:id,name',
-                    'variants:id,product_id,price',
-                ]);
+                'coverImage:id,imageable_id,imageable_type,image_path',
+                'merchant:id,name,slug,segmentation_id',
+                'merchant.segmentation:id,name',
+                'variants:id,product_id,price',
+            ]);
 
         if (!empty($data['segments'])) {
             $query->whereHas('merchant.segmentation', function ($q) use ($data) {
@@ -175,46 +175,46 @@ class ProductController
             ->whereIn('status', ['published', 'archived']) // Public usually only allows these
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
-                    // Images
-                    'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
-                    'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
+                // Images
+                'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
 
-                    // Merchant & categories
-                    'merchant.addresses.district.city.province',
-                    'categories:id,name,slug',
+                // Merchant & categories
+                'merchant.addresses.district.city.province',
+                'categories:id,name,slug',
 
-                    // Options
-                    'options' => function ($q) {
-                        $q->select('id', 'product_id', 'option_name', 'uses_image')
-                            ->orderBy('id')
-                            ->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')]);
-                    },
+                // Options
+                'options' => function ($q) {
+                    $q->select('id', 'product_id', 'option_name', 'uses_image')
+                        ->orderBy('id')
+                        ->with(['values' => fn($vq) => $vq->select('id', 'product_option_id', 'option_value', 'image_path')]);
+                },
 
-                    // Variants
-                    'variants' => function ($q) {
-                        $q->select('id', 'product_id', 'stock', 'price', 'sku')
-                            ->orderBy('price', 'asc')
-                            ->with([
-                                    'optionValues' => function ($ovq) {
-                                        $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
-                                            ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                                            ->addSelect('product_options.option_name');
-                                    }
-                                ]);
-                    },
+                // Variants
+                'variants' => function ($q) {
+                    $q->select('id', 'product_id', 'stock', 'price', 'sku')
+                        ->orderBy('price', 'asc')
+                        ->with([
+                            'optionValues' => function ($ovq) {
+                                $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
+                                    ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                                    ->addSelect('product_options.option_name');
+                            }
+                        ]);
+                },
 
-                    // Addon groups
-                    'addonGroups' => function ($q) {
-                        $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
-                            ->orderBy('id')
-                            ->with([
-                                    'options' => function ($oq) {
-                                        $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price')
-                                            ->with('addon:id,addon_name');
-                                    }
-                                ]);
-                    },
-                ])
+                // Addon groups
+                'addonGroups' => function ($q) {
+                    $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection')
+                        ->orderBy('id')
+                        ->with([
+                            'options' => function ($oq) {
+                                $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price')
+                                    ->with('addon:id,addon_name');
+                            }
+                        ]);
+                },
+            ])
             ->firstOrFail();
 
         // ============================================================
@@ -367,10 +367,10 @@ class ProductController
             })
 
             ->with([
-                    'merchant:id,name,slug',
-                    'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
-                    'variants:id,product_id,price,stock',
-                ])
+                'merchant:id,name,slug',
+                'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                'variants:id,product_id,price,stock',
+            ])
 
             ->inRandomOrder()
             ->limit(5)
@@ -502,12 +502,12 @@ class ProductController
 
         $query = Product::query()
             ->select([
-                    'products.id',
-                    'products.merchant_id',
-                    'products.name',
-                    'products.slug',
-                    'products.created_at',
-                ])
+                'products.id',
+                'products.merchant_id',
+                'products.name',
+                'products.slug',
+                'products.created_at',
+            ])
             ->where('merchant_id', $merchant->id)
             ->whereIn('status', ['published'])
             ->whereHas('variants', function ($q) {
@@ -515,9 +515,9 @@ class ProductController
             })
             ->with([
 
-                    'coverImage:id,imageable_id,imageable_type,image_path',
-                    'categories:id,name',
-                ]);
+                'coverImage:id,imageable_id,imageable_type,image_path',
+                'categories:id,name',
+            ]);
 
         if (!empty($data['q'])) {
             $query->where('name', 'like', '%' . $data['q'] . '%');
@@ -1276,24 +1276,24 @@ class ProductController
                 $q->select('id', 'product_id', 'sku', 'price', 'stock') // product_id WAJIB
                     ->orderBy('price', 'asc')
                     ->with([
-                            'optionValues' => function ($ovq) {
-                                // Join diperlukan jika ingin mengambil nama option parent-nya juga
-                                $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
-                                    ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
-                                    ->addSelect('product_options.option_name');
-                            }
-                        ]);
+                        'optionValues' => function ($ovq) {
+                            // Join diperlukan jika ingin mengambil nama option parent-nya juga
+                            $ovq->select('product_option_values.id', 'product_option_values.product_option_id', 'product_option_values.option_value')
+                                ->join('product_options', 'product_option_values.product_option_id', '=', 'product_options.id')
+                                ->addSelect('product_options.option_name');
+                        }
+                    ]);
             },
 
             'addonGroups' => function ($q) {
                 $q->select('id', 'product_id', 'addon_group_name', 'selection_type', 'min_selection', 'max_selection') // product_id WAJIB
                     ->orderBy('id')
                     ->with([
-                            'options' => function ($oq) {
-                                $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price') // addon_group_id WAJIB
-                                    ->with('addon:id,addon_name'); // addon_id WAJIB
-                            }
-                        ]);
+                        'options' => function ($oq) {
+                            $oq->select('id', 'addon_group_id', 'addon_id', 'addon_price') // addon_group_id WAJIB
+                                ->with('addon:id,addon_name'); // addon_id WAJIB
+                        }
+                    ]);
             },
         ]);
 
@@ -2415,19 +2415,19 @@ class ProductController
 
         $variants = ProductVariant::query()
             ->select([
-                    'product_variants.id',
-                    'product_variants.product_id',
-                    'product_variants.sku',
-                    'product_variants.price',
-                    'product_variants.stock',
-                ])
+                'product_variants.id',
+                'product_variants.product_id',
+                'product_variants.sku',
+                'product_variants.price',
+                'product_variants.stock',
+            ])
             ->with([
-                    'product' => function ($p) {
-                        $p->select('id', 'merchant_id', 'name', 'status', 'created_at');
-                    },
-                    'product.categories:id,name',
-                    'optionValues.option:id,option_name',
-                ])
+                'product' => function ($p) {
+                    $p->select('id', 'merchant_id', 'name', 'status', 'created_at');
+                },
+                'product.categories:id,name',
+                'optionValues.option:id,option_name',
+            ])
             ->whereHas('product', fn($p) => $p->where('merchant_id', $merchantId))
             ->join($productsTable, $productsTable . '.id', '=', 'product_variants.product_id')
             ->addSelect('product_variants.*');
