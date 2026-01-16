@@ -11,8 +11,8 @@ return new class extends Migration {
             $table->foreignId('merchant_id')->nullable()->constrained()->onDelete('cascade');
             $table->foreignId('event_id')->nullable()->constrained()->onDelete('cascade');
 
-            $table->string('voucher_name', 100);
-            $table->string('voucher_code', 100)->unique();
+            $table->string('voucher_name', 100)->unique(); 
+            $table->string('voucher_code', 100)->unique(); 
             $table->enum('voucher_status', ['active', 'inactive'])->default('active');
             $table->enum('voucher_type', ['percent', 'fixed'])->default('percent');
             $table->text('voucher_description')->nullable();
@@ -29,8 +29,9 @@ return new class extends Migration {
 
             $table->timestamps();
 
-
             $table->index('voucher_status');
+            $table->index('voucher_code'); 
+            $table->index('voucher_name'); 
         });
     }
 

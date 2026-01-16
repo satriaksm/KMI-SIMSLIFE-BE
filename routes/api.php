@@ -115,8 +115,18 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('villages/{districtId}', 'villages');
     });
 
-    // ✅ NEW: Public events endpoint (published only, for homepage banner)
+    //  events endpoint (published only, for homepage banner)
     Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
+
+    //  Homepage specific endpoints
+    Route::prefix('home')->name('home.')->group(function () {
+        Route::get('recommended-merchants', [\App\Http\Controllers\HomeController::class, 'recommendedMerchants'])
+            ->name('recommended-merchants');
+        Route::get('map-carousel-merchants', [\App\Http\Controllers\HomeController::class, 'mapCarouselMerchants'])
+            ->name('map-carousel-merchants');
+        Route::get('statistics', [\App\Http\Controllers\HomeController::class, 'statistics'])
+            ->name('statistics');
+    });
 });
 
 
@@ -501,10 +511,16 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
     });
 });
 
-// Event banner images (served via API)
+// ✅ Event banner streaming route (should already exist)
 Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
     ->name('event-banners.show');
 
-// Alternate naming with underscore
 Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
     ->name('event_banners.show');
+
+Route::get('/merchant-logo/{merchant}', [AdminMerchantController::class, 'showLogo'])
+    ->name('merchant.logo');
+ 
+// ✅ User profile picture streaming route  
+Route::get('/user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])
+    ->name('user.profile');

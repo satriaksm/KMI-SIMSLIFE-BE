@@ -80,12 +80,30 @@ class AdminVoucherController extends Controller
         }
     }
 
+    /**
+     * Generate unique voucher code
+     * Format: SUMILIR-{RANDOM_8_CHARS}
+     */
+    private function generateVoucherCode(): string
+    {
+        do {
+            // Generate random 8 characters (uppercase + numbers)
+            $randomChars = strtoupper(substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), 0, 8));
+            $code = 'SUMILIR-' . $randomChars;
+            
+            // Check if code already exists
+            $exists = Voucher::where('voucher_code', $code)->exists();
+        } while ($exists);
+
+        return $code;
+    }
+
     // Create voucher (contoh sederhana)
     public function store(Request $request)
     {
         try {
             $data = $request->validate([
-                'voucher_code' => 'required|string|unique:vouchers,voucher_code',
+                'voucher_name' => 'required|string|max:100|unique:vouchers,voucher_name', // ✅ ADD unique
                 'voucher_description' => 'nullable|string',
                 'voucher_type' => 'required|in:percent,fixed',
                 'value' => 'required|numeric|min:1',
@@ -98,20 +116,56 @@ class AdminVoucherController extends Controller
                 'usage_limit_per_user' => 'nullable|integer|min:1',
                 'max_discount_amount' => 'nullable|numeric|min:0',
                 'min_purchase_amount' => 'nullable|numeric|min:0',
+                'merchant_ids' => 'nullable|array',
+                'merchant_ids.*' => 'exists:merchants,id',
+            ], [
+                'voucher_name.unique' => 'Nama voucher sudah digunakan. Gunakan nama yang berbeda.', // ✅ ADD error message
             ]);
 
+            // ✅ Generate unique voucher code dengan validasi
+            $attempts = 0;
+            $maxAttempts = 10;
+            
+            do {
+                $data['voucher_code'] = $this->generateVoucherCode();
+                $exists = Voucher::where('voucher_code', $data['voucher_code'])->exists();
+                $attempts++;
+                
+                if ($attempts >= $maxAttempts) {
+                    throw new \Exception('Gagal generate kode voucher unik setelah ' . $maxAttempts . ' percobaan');
+                }
+            } while ($exists);
+
+            // ✅ Create voucher
             $voucher = Voucher::create($data);
+
+            // ✅ Attach to merchants if event voucher
+            if (!empty($data['event_id']) && !empty($data['merchant_ids'])) {
+                foreach ($data['merchant_ids'] as $merchantId) {
+                    $voucher->merchantsVoucher()->attach($merchantId, [
+                        'status' => 'inactive',
+                        'voucher_type' => null,
+                        'discount_value' => null,
+                        'activated_at' => null,
+                    ]);
+                }
+            }
 
             return response()->json([
                 'message' => 'Voucher berhasil dibuat',
-                'data' => $voucher
-            ]);
+                'data' => $voucher->load(['merchant', 'event'])
+            ], 201);
         } catch (ValidationException $e) {
             return response()->json([
                 'message' => 'Validasi gagal',
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            Log::error('[AdminVoucher] Create voucher failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'message' => 'Gagal membuat voucher',
                 'error' => $e->getMessage(),

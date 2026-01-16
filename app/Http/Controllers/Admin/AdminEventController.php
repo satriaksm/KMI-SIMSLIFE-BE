@@ -190,12 +190,16 @@ class AdminEventController extends Controller
         $event = Event::findOrFail($id);
 
         $validated = $request->validate([
-            'event_name' => 'sometimes|required|string|max:255',
+            'event_name' => 'sometimes|required|string|max:255|unique:events,event_name,' . $id, 
             'event_description' => 'nullable|string',
             'event_start_date' => 'sometimes|required|date',
             'event_end_date' => 'sometimes|required|date|after_or_equal:event_start_date',
             'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:5120',
             'status' => 'sometimes|required|in:draft,published,archived',
+        ], [
+            'event_name.unique' => 'Nama event sudah digunakan. Gunakan nama yang berbeda.', 
+            'banner_img.mimes' => 'Format banner harus JPG, PNG, WebP, atau SVG',
+            'banner_img.max' => 'Ukuran banner maksimal 5MB',
         ]);
 
         $startDate = isset($validated['event_start_date']) 
@@ -229,7 +233,7 @@ class AdminEventController extends Controller
             }
         }
 
-        // ✅ FIX: Handle banner upload BEFORE status validation
+        // Handle banner upload BEFORE status validation
         if ($request->hasFile('banner_img')) {
             $file = $request->file('banner_img');
             
@@ -349,15 +353,18 @@ class AdminEventController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'event_name' => 'required|string|max:255',
+            'event_name' => 'required|string|max:255|unique:events,event_name', // ✅ ADDED unique
             'event_description' => 'nullable|string',
             'event_start_date' => 'required|date|after_or_equal:today', 
             'event_end_date' => 'required|date|after_or_equal:event_start_date',
-            'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:5120',
+            'banner_img' => 'required|mimes:jpeg,jpg,png,webp,svg|max:5120', // ✅ REQUIRED
             'status' => 'required|in:draft,published,archived',
         ], [
+            'event_name.unique' => 'Nama event sudah digunakan. Gunakan nama yang berbeda.', // ✅ ADDED
             'event_start_date.after_or_equal' => 'Tanggal mulai tidak boleh di masa lalu',
-            'banner_img.max' => 'Ukuran file maksimal 5MB',
+            'banner_img.required' => 'Banner event wajib diupload', // ✅ ERROR MESSAGE
+            'banner_img.mimes' => 'Format banner harus JPG, PNG, WebP, atau SVG',
+            'banner_img.max' => 'Ukuran banner maksimal 5MB',
         ]);
 
         $startDate = Carbon::parse($validated['event_start_date']);
@@ -394,6 +401,14 @@ class AdminEventController extends Controller
             } else {
                 $validated['banner_img_path'] = $file->store('events/banners', 'public');
             }
+        } else {
+            // ✅ Double check (should never happen with validation)
+            return response()->json([
+                'message' => 'Banner event wajib diupload',
+                'errors' => [
+                    'banner_img' => ['Banner event wajib diupload']
+                ]
+            ], 422);
         }
         $event = Event::create($validated);
 

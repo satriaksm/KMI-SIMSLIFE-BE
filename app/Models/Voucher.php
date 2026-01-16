@@ -44,39 +44,15 @@ class Voucher extends Model
         return $this->belongsTo(Event::class);
     }
 
-    public function merchantsVoucher()
-    {
-        return $this->belongsToMany(Merchant::class, 'voucher_merchants')
-            ->withPivot('status', 'voucher_type', 'discount_value', 'activated_at')
-            ->withTimestamps();
-    }
-
-
     public function usages()
     {
         return $this->hasMany(VoucherUsage::class);
     }
-    protected $appends = ['usage', 'is_expired'];
 
-    public function getUsageAttribute()
+    public function merchantsVoucher()
     {
-        if ($this->usage_limit === null) {
-            return "{$this->usages_count} / ∞";
-        }
-
-        return "{$this->usages_count} / {$this->usage_limit}";
-    }
-
-    public function scopeActive($query)
-    {
-        return $query->where('voucher_status', 'active')
-            ->where('voucher_start_date', '<=', now())
-            ->where('voucher_end_date', '>=', now());
-    }
-
-
-    public function getIsExpiredAttribute(): bool
-    {
-        return Carbon::parse($this->voucher_end_date)->isPast();
+        return $this->belongsToMany(Merchant::class, 'merchant_vouchers')
+            ->withPivot(['status', 'voucher_type', 'discount_value', 'activated_at'])
+            ->withTimestamps();
     }
 }

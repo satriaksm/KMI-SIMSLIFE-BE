@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\Storage;
 
 class AdminUserController extends Controller
 {
@@ -411,7 +412,7 @@ class AdminUserController extends Controller
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'nik' => $user->nik,
-                'status' => $user->status,
+                'profile_picture_path' => $user->profile_picture_path, // ✅ ADD THIS
                 'status' => $user->status ?? 'active',
                 'roles' => $user->roles->pluck('name'),
                 'merchants' => $user->merchants->map(function ($m) {
@@ -1629,6 +1630,78 @@ class AdminUserController extends Controller
                 'success' => false,
                 'message' => 'Gagal membuat laporan PDF',
             ], 500);
+        }
+    }
+
+    /**
+     * Stream user profile picture
+     */
+    public function showProfilePicture(Request $request, User $user)
+    {
+        // Support signed URL for secure access
+        if ($request->hasValidSignature()) {
+            return $this->streamProfilePicture($user);
+        }
+
+        // Public access for now (you can add auth checks later)
+        return $this->streamProfilePicture($user);
+    }
+
+    /**
+     * Private method to stream profile picture
+     */
+    private function streamProfilePicture(User $user)
+    {
+        // ✅ FIX: Check if path exists and is not empty
+        if (empty($user->profile_picture_path)) {
+            abort(404, 'Profile picture not found');
+        }
+
+        $disk = 'public';
+        $path = ltrim($user->profile_picture_path, '/');
+
+        // ✅ FIX: Verify file exists on disk
+        if (!Storage::disk($disk)->exists($path)) {
+            Log::warning('[AdminUser] Profile picture file not found', [
+                'user_id' => $user->id,
+                'path' => $path,
+            ]);
+            abort(404, 'File not found on storage');
+        }
+
+        // ✅ FIX: Get file extension safely
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'svg' => 'image/svg+xml',
+            'webp' => 'image/webp',
+            'jpg', 'jpeg' => 'image/jpeg',
+            default => 'application/octet-stream',
+        };
+
+        try {
+            $stream = Storage::disk($disk)->readStream($path);
+
+            return response()->stream(function () use ($stream) {
+                fpassthru($stream);
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            }, 200, [
+                'Content-Type' => $mime,
+                'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
+                'Cache-Control' => 'public, max-age=31536000, immutable',
+                'Pragma' => 'public',
+                'Expires' => gmdate('D, d M Y H:i:s \G\M\T', time() + 31536000),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[AdminUser] Stream profile picture failed', [
+                'user_id' => $user->id,
+                'path' => $path,
+                'error' => $e->getMessage(),
+            ]);
+            abort(500, 'Error streaming file');
         }
     }
 }

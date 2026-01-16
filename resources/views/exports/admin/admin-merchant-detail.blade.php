@@ -425,51 +425,76 @@
     </div>
 
     <!-- Products -->
+
+    <!-- Products Section -->
     @if($merchant->products && $merchant->products->count() > 0)
-    <div class="section">
-        <div class="section-title">Daftar Products ({{ $merchant->products->count() }})</div>
-        <table>
+    <div style="margin-top: 20px;">
+        <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1f2937;">
+            Daftar Produk ({{ $merchant->products->count() }})
+        </h3>
+        
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
             <thead>
-                <tr>
-                    <th style="width: 5%;">No</th>
-                    <th style="width: 30%;">Nama Product</th>
-                    <th style="width: 15%;">SKU</th>
-                    <th style="width: 15%;">Kategori</th>
-                    <th style="width: 13%;">Harga</th>
-                    <th style="width: 8%;">Stok</th>
-                    <th style="width: 14%;">Status</th>
+                <tr style="background-color: #f3f4f6;">
+                    <th style="border: 1px solid #d1d5db; padding: 8px; text-align: left; font-weight: 600;">No</th>
+                    <th style="border: 1px solid #d1d5db; padding: 8px; text-align: left; font-weight: 600;">Nama Produk</th>
+                    <th style="border: 1px solid #d1d5db; padding: 8px; text-align: left; font-weight: 600;">SKU</th>
+                    <th style="border: 1px solid #d1d5db; padding: 8px; text-align: left; font-weight: 600;">Kategori</th>
+                    <th style="border: 1px solid #d1d5db; padding: 8px; text-align: right; font-weight: 600;">Harga</th>
+                    <th style="border: 1px solid #d1d5db; padding: 8px; text-align: center; font-weight: 600;">Stok</th>
+                    <th style="border: 1px solid #d1d5db; padding: 8px; text-align: center; font-weight: 600;">Status</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach($merchant->products as $index => $product)
-                    <tr>
-                        <td class="text-center">{{ $index + 1 }}</td>
-                        <td>{{ $product->name }}</td>
-                        <td>{{ $product->sku ?? '-' }}</td>
-                        <td>
-                            @if($product->categories && $product->categories->count() > 0)
-                                {{ $product->categories->first()->name }}
-                            @else
-                                -
+                <tr>
+                    <td style="border: 1px solid #d1d5db; padding: 8px;">{{ $index + 1 }}</td>
+                    <td style="border: 1px solid #d1d5db; padding: 8px;">{{ $product['name'] ?? '-' }}</td>
+                    <td style="border: 1px solid #d1d5db; padding: 8px; font-family: monospace;">{{ $product['sku'] ?? '-' }}</td>
+                    <td style="border: 1px solid #d1d5db; padding: 8px;">
+                        @if(isset($product['categories']) && count($product['categories']) > 0)
+                            {{ $product['categories'][0]['name'] }}
+                            @if(count($product['categories']) > 1)
+                                <span style="color: #6b7280; font-size: 10px;">+{{ count($product['categories']) - 1 }}</span>
                             @endif
-                        </td>
-                        <td>Rp {{ number_format($product->price ?? 0, 0, ',', '.') }}</td>
-                        <td class="text-center">{{ $product->stock ?? 0 }}</td>
-                        <td>
-                            @php
-                                $statusBadgeClass = $product->status === 'published' ? 'badge-published' : 'badge-draft';
-                            @endphp
-                            <span class="badge {{ $statusBadgeClass }}">{{ ucfirst($product->status) }}</span>
-                        </td>
-                    </tr>
+                        @else
+                            -
+                        @endif
+                    </td>
+                    <td style="border: 1px solid #d1d5db; padding: 8px; text-align: right; font-weight: 600;">
+                        @if(isset($product['price']) && $product['price'])
+                            Rp {{ number_format($product['price'], 0, ',', '.') }}
+                        @else
+                            -
+                        @endif
+                    </td>
+                    <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center;">
+                        <span style="background-color: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 4px; font-weight: 600;">
+                            {{ $product['stock'] ?? 0 }}
+                        </span>
+                    </td>
+                    <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center;">
+                        @php
+                            $statusColors = [
+                                'published' => ['bg' => '#dcfce7', 'text' => '#166534'],
+                                'draft' => ['bg' => '#fef3c7', 'text' => '#92400e'],
+                                'archived' => ['bg' => '#fee2e2', 'text' => '#991b1b'],
+                            ];
+                            $status = $product['status'] ?? 'draft';
+                            $colors = $statusColors[$status] ?? ['bg' => '#f3f4f6', 'text' => '#374151'];
+                        @endphp
+                        <span style="background-color: {{ $colors['bg'] }}; color: {{ $colors['text'] }}; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 10px;">
+                            {{ ucfirst($status) }}
+                        </span>
+                    </td>
+                </tr>
                 @endforeach
             </tbody>
         </table>
     </div>
     @else
-    <div class="section">
-        <div class="section-title">Daftar Products</div>
-        <div class="no-data">Merchant ini belum memiliki produk</div>
+    <div style="margin-top: 20px; padding: 16px; background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; text-align: center;">
+        <p style="color: #6b7280; font-size: 12px; margin: 0;">Belum ada produk terdaftar</p>
     </div>
     @endif
 
