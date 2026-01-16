@@ -544,7 +544,15 @@ class SearchController extends Controller
                         ->whereHas('variants', function ($v) {
                             $v->where('stock', '>', 0);
                         });
-                }
+                },
+                'jasas as jasas_count' => function ($q) {
+                    $q->where(function ($sub) {
+                        $sub->whereIn('status', ['published', 'active'])
+                            ->orWhere(function ($sub2) {
+                                $sub2->whereNull('status')->where('is_active', true);
+                            });
+                    });
+                },
             ]);
 
 
@@ -640,7 +648,7 @@ class SearchController extends Controller
                 match ($s) {
                     'latest' => $query->orderByDesc('merchants.created_at'),
                     'oldest' => $query->orderBy('merchants.created_at'),
-                    'most_products' => $query->orderByDesc('products_count'),
+                    'most_products' => $query->orderByRaw('(products_count + jasas_count) DESC'),
                     default => null,
                 };
             }
@@ -653,8 +661,7 @@ class SearchController extends Controller
                 'latest' => $query->orderByDesc('merchants.created_at'),
                 'oldest' => $query->orderBy('merchants.created_at'),
                 'most_products' => $query
-                    ->withCount(['products' => fn($q) => $q->where('status', 'published')])
-                    ->orderByDesc('products_count'),
+                    ->orderByRaw('(products_count + jasas_count) DESC'),
                 default => null,
             };
         }
@@ -693,12 +700,16 @@ class SearchController extends Controller
             ->map(function (Merchant $merchant) {
                 $payload = $merchant->toArray();
 
+                $payload['products_count'] = (int) ($merchant->products_count ?? 0)
+                    + (int) ($merchant->jasas_count ?? 0);
+
                 $payload['logo_url'] = !empty($merchant->logo_path)
                     ? route('merchant_profile_pictures.show', ['merchant' => $merchant->id])
                     : null;
 
                 unset($payload['logo_path']);
                 unset($payload['operational_hours']);
+                unset($payload['jasas_count']);
 
                 return $payload;
             })

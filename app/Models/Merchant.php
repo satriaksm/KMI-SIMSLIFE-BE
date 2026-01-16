@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Addon;
+use App\Models\Jasa;
 use App\Models\Product;
 use Carbon\Carbon;
 use Illuminate\Support\Str;
@@ -106,6 +107,12 @@ class Merchant extends Model
     public function products(): HasMany
     {
         return $this->hasMany(Product::class, 'merchant_id');
+    }
+
+    // Relasi ke Jasa
+    public function jasas(): HasMany
+    {
+        return $this->hasMany(Jasa::class, 'merchant_id');
     }
 
     public function user(): BelongsTo
