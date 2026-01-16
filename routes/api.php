@@ -251,6 +251,14 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
+
+        Route::prefix('events')->name('events.')->group(function () {
+            Route::get('/', [EventController::class, 'indexByMerchant'])->name('index');
+            Route::get('/{id}', [EventController::class, 'show'])->name('show');
+
+            Route::post('/{id}', [EventController::class, 'approvalByMerchant'])->name('approval');
+        });
+
         // ---------- JASA ----------
         Route::prefix('jasa')->group(function () {
             Route::get('/', [JasaController::class, 'index']);

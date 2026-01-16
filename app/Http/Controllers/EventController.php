@@ -11,6 +11,188 @@ use enshrined\svgSanitize\Sanitizer;
 
 class EventController extends Controller
 {
+    public function indexByMerchant(Request $request)
+    {
+        $merchantId = $request->integer('merchant_id');
+        if (!$merchantId) {
+            return response()->json([
+                'message' => 'merchant_id is required',
+            ], 422);
+        }
+
+        // Ensure the merchant belongs to the authenticated user
+        $ownsMerchant = $request->user()
+                ?->merchants()
+            ->whereKey($merchantId)
+            ->exists();
+
+        if (!$ownsMerchant) {
+            return response()->json([
+                'message' => 'Unauthorized merchant',
+            ], 403);
+        }
+
+        $invitationStatus = $request->input('invitation_status');
+        $q = trim((string) $request->input('q', ''));
+
+        $query = Event::whereHas('merchants', function ($builder) use ($merchantId, $invitationStatus) {
+            $builder->where('merchants.id', $merchantId);
+            if ($invitationStatus) {
+                $builder->where('event_merchants.status', $invitationStatus);
+            }
+        })
+            ->with(['creator:id,name'])
+            ->with([
+                'vouchers' => function ($builder) {
+                    $builder->select([
+                        'id',
+                        'event_id',
+                        'voucher_name',
+                        'voucher_code',
+                        'voucher_status',
+                        'voucher_type',
+                        'value',
+                        'voucher_start_date',
+                        'voucher_end_date',
+                    ])->orderByDesc('id');
+                }
+            ])
+            // Load only the pivot for this merchant (so we can expose invitation_status)
+            ->with([
+                'merchants' => function ($builder) use ($merchantId) {
+                    $builder->where('merchants.id', $merchantId)->select('merchants.id');
+                }
+            ]);
+
+        if ($q !== '') {
+            $query->where(function ($builder) use ($q) {
+                $builder->where('event_name', 'like', "%{$q}%")
+                    ->orWhere('event_description', 'like', "%{$q}%");
+            });
+        }
+
+        if ($request->boolean('active_only')) {
+            $query->active();
+        }
+
+        $events = $query->latest('event_start_date')
+            ->paginate($request->input('per_page', 10));
+
+        // Flatten invitation status for this merchant
+        $events->getCollection()->transform(function ($event) {
+            $merchant = $event->merchants->first();
+            $event->invitation_status = $merchant?->pivot?->status;
+            $event->responded_at = $merchant?->pivot?->responded_at;
+
+            // Only show vouchers when the invitation is accepted
+            if (($event->invitation_status ?? null) !== 'accepted') {
+                $event->vouchers = [];
+            }
+
+            unset($event->merchants);
+            return $event;
+        });
+
+        return response()->json($events);
+    }
+
+    public function show(Request $request, $id)
+    {
+        $merchantId = $request->integer('merchant_id');
+        if (!$merchantId) {
+            return response()->json([
+                'message' => 'merchant_id is required',
+            ], 422);
+        }
+
+        $ownsMerchant = $request->user()
+                ?->merchants()
+            ->whereKey($merchantId)
+            ->exists();
+
+        if (!$ownsMerchant) {
+            return response()->json([
+                'message' => 'Unauthorized merchant',
+            ], 403);
+        }
+
+        $event = Event::whereHas('merchants', function ($q) use ($merchantId) {
+            $q->where('merchants.id', $merchantId);
+        })
+            ->with(['creator:id,name'])
+            ->with([
+                'vouchers' => function ($builder) {
+                    $builder->select([
+                        'id',
+                        'event_id',
+                        'voucher_name',
+                        'voucher_code',
+                        'voucher_status',
+                        'voucher_type',
+                        'value',
+                        'voucher_start_date',
+                        'voucher_end_date',
+                    ])->orderByDesc('id');
+                }
+            ])
+            ->with([
+                'merchants' => function ($builder) use ($merchantId) {
+                    $builder->where('merchants.id', $merchantId)->select('merchants.id');
+                }
+            ])
+            ->findOrFail($id);
+
+        $merchant = $event->merchants->first();
+        $event->invitation_status = $merchant?->pivot?->status;
+        $event->responded_at = $merchant?->pivot?->responded_at;
+
+        if (($event->invitation_status ?? null) !== 'accepted') {
+            $event->vouchers = [];
+        }
+
+        unset($event->merchants);
+
+        return response()->json([
+            'data' => $event,
+        ]);
+    }
+
+    public function approvalByMerchant(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'merchant_id' => 'required|integer',
+            'status' => 'required|in:accepted,rejected',
+        ]);
+
+        $merchantId = (int) $validated['merchant_id'];
+
+        $ownsMerchant = $request->user()
+                ?->merchants()
+            ->whereKey($merchantId)
+            ->exists();
+
+        if (!$ownsMerchant) {
+            return response()->json([
+                'message' => 'Unauthorized merchant',
+            ], 403);
+        }
+
+        $eventId = (int) $id;
+
+        $event = Event::whereHas('merchants', function ($q) use ($merchantId) {
+            $q->where('merchants.id', $merchantId);
+        })->findOrFail($eventId);
+
+        $event->merchants()->updateExistingPivot($merchantId, [
+            'status' => $validated['status'],
+            'responded_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Event invitation ' . $validated['status'] . ' successfully',
+        ]);
+    }
+
     /**
      * PUBLIC: Get active events
      */
@@ -43,31 +225,31 @@ class EventController extends Controller
             'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:5120',
             'status' => 'sometimes|required|in:draft,published,archived',
         ], [
-            'event_name.unique' => 'Nama event sudah digunakan. Gunakan nama yang berbeda.', 
+            'event_name.unique' => 'Nama event sudah digunakan. Gunakan nama yang berbeda.',
             'banner_img.mimes' => 'Format banner harus JPG, PNG, WebP, atau SVG',
             'banner_img.max' => 'Ukuran banner maksimal 5MB',
         ]);
 
         if ($request->hasFile('banner_img')) {
             $file = $request->file('banner_img');
-            
+
             // Sanitize SVG files
             if ($file->getClientOriginalExtension() === 'svg') {
                 $sanitizer = new Sanitizer();
                 $dirtySVG = file_get_contents($file->getRealPath());
                 $cleanSVG = $sanitizer->sanitize($dirtySVG);
-                
+
                 if ($cleanSVG === false) {
                     return response()->json([
                         'message' => 'File SVG tidak valid atau berbahaya',
                     ], 422);
                 }
-                
+
                 // Delete old banner
                 if ($event->banner_img_path) {
                     Storage::disk('public')->delete($event->banner_img_path);
                 }
-                
+
                 // Save sanitized SVG
                 $path = 'events/banners/' . uniqid() . '.svg';
                 Storage::disk('public')->put($path, $cleanSVG);
@@ -77,7 +259,7 @@ class EventController extends Controller
                 if ($event->banner_img_path) {
                     Storage::disk('public')->delete($event->banner_img_path);
                 }
-                
+
                 $validated['banner_img_path'] = $file->store('events/banners', 'public');
             }
         }
@@ -136,19 +318,19 @@ class EventController extends Controller
 
         if ($request->hasFile('banner_img')) {
             $file = $request->file('banner_img');
-            
+
             // Sanitize SVG files
             if ($file->getClientOriginalExtension() === 'svg') {
                 $sanitizer = new Sanitizer();
                 $dirtySVG = file_get_contents($file->getRealPath());
                 $cleanSVG = $sanitizer->sanitize($dirtySVG);
-                
+
                 if ($cleanSVG === false) {
                     return response()->json([
                         'message' => 'File SVG tidak valid atau berbahaya',
                     ], 422);
                 }
-                
+
                 // Save sanitized SVG
                 $path = 'events/banners/' . uniqid() . '.svg';
                 Storage::disk('public')->put($path, $cleanSVG);

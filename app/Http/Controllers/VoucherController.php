@@ -24,7 +24,17 @@ class VoucherController extends Controller
 
         // Filter by merchant
         if ($request->has('merchant_id')) {
-            $query->where('merchant_id', $request->merchant_id);
+            $merchantId = (int) $request->merchant_id;
+
+            $acceptedEventIds = DB::table('event_merchants')
+                ->select('event_id')
+                ->where('merchant_id', $merchantId)
+                ->where('status', 'accepted');
+
+            $query->where(function ($q) use ($merchantId, $acceptedEventIds) {
+                $q->where('merchant_id', $merchantId)
+                    ->orWhereIn('event_id', $acceptedEventIds);
+            });
         }
 
         // Filter by event
@@ -571,8 +581,16 @@ class VoucherController extends Controller
     {
         $userId = $request->user()->id;
 
-        $vouchers = Voucher::query()
+        $acceptedEventIds = DB::table('event_merchants')
+            ->select('event_id')
             ->where('merchant_id', $merchant->id)
+            ->where('status', 'accepted');
+
+        $vouchers = Voucher::query()
+            ->where(function ($q) use ($merchant, $acceptedEventIds) {
+                $q->where('merchant_id', $merchant->id)
+                    ->orWhereIn('event_id', $acceptedEventIds);
+            })
             ->active()
 
             // ⬅️ hitung total pemakaian
@@ -587,6 +605,7 @@ class VoucherController extends Controller
 
             ->get([
                 'id',
+                'event_id',
                 'voucher_name',
                 'voucher_code',
                 'voucher_type',

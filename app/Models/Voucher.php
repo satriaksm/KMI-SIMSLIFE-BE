@@ -55,4 +55,14 @@ class Voucher extends Model
             ->withPivot(['status', 'voucher_type', 'discount_value', 'activated_at'])
             ->withTimestamps();
     }
+
+    public function scopeActive($query)
+    {
+        $today = Carbon::today();
+
+        return $query
+            ->where('voucher_status', 'active')
+            ->whereDate('voucher_start_date', '<=', $today)
+            ->whereDate('voucher_end_date', '>=', $today);
+    }
 }
