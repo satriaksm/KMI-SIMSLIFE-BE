@@ -8,11 +8,11 @@ return new class extends Migration {
     {
         Schema::create('events', function (Blueprint $table) {
             $table->id();
-            $table->string('event_name', 255);
+            $table->string('event_name', 255)->unique(); 
             $table->text('event_description')->nullable();
             $table->date('event_start_date');
             $table->date('event_end_date');
-            $table->string('banner_img_path')->nullable();
+            $table->string('banner_img_path'); 
             $table->enum('status', ['draft', 'published', 'archived'])->default('draft');
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
             $table->timestamps();
