@@ -76,7 +76,7 @@ Route::prefix('public')->name('public.')->group(function () {
     // Public Merchants
     Route::prefix('merchants')->name('merchants.')->group(function () {
         // List merchants (with pagination & filters)
-        // Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
+        Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
 
         // // Random merchants for homepage
         // Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
@@ -520,7 +520,7 @@ Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
 
 Route::get('/merchant-logo/{merchant}', [AdminMerchantController::class, 'showLogo'])
     ->name('merchant.logo');
- 
-// ✅ User profile picture streaming route  
+
+// ✅ User profile picture streaming route
 Route::get('/user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])
     ->name('user.profile');
