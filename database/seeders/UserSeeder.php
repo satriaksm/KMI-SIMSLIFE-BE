@@ -1,56 +1,44 @@
 <?php
-namespace Database\Seeders;
-use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
-use App\Models\User;
-use App\Models\Merchant;
-use App\Models\Segmentation;
-use App\Models\Role;
 
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use App\Models\User;
+use App\Models\Role;
 
 class UserSeeder extends Seeder
 {
     public function run(): void
     {
-        // Admin user
-        User::firstOrCreate(
-            ['email' => 'admin@example.com'],
-            [
-                'name' => 'Admin',
-                'password' => bcrypt('123123123'),
-                'email_verified_at' => now(),
-            ]
-        );
+        $admin = User::factory()->create([
+            'name' => 'Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('123123123'),
+            'status' => 'active',
+        ]);
 
-        // Main user with merchant
-        $user = User::firstOrCreate(
-            ['email' => 'atallabem@gmail.com'],
-            [
-                'name' => 'Atta Lab',
-                'password' => bcrypt('Sa171278@'),
-                'email_verified_at' => now(),
-            ]
-        );
+        $adminRole = Role::where('name', 'admin')->first();
+        if ($adminRole) {
+            $admin->roles()->syncWithoutDetaching([$adminRole->id]);
+        }
 
-        // Create segmentation 3 if not exists (with correct UMKM Jasa name)
-        $segmentation = Segmentation::firstOrCreate(
-            ['id' => 3],
-            ['name' => 'UMKM Jasa']
-        );
 
-        // Create merchant untuk user with segmentation 3
-        Merchant::firstOrCreate(
-            ['user_id' => $user->id],
-            [
-                'name' => 'Atta Lab Store',
-                'segmentation_id' => 3,
-                'status' => 'approved',
-            ]
-        );
+        // $this->command->info('Creating sample customers (30)...');
+        // $customers = User::factory()->count(30)->create([
+        //     'status' => 'active',
+        // ]);
 
-        // Assign umkm-owner role to user
-        $umkmRole = Role::firstOrCreate(['name' => 'umkm-owner']);
-        $user->roles()->syncWithoutDetaching([$umkmRole->id]);
+        // // Assign role 'customer' ke semua user (kecuali admin)
+        // $customerRole = Role::where('name', 'customer')->first();
+        // if ($customerRole) {
+        //     // Assign ke semua user yang bukan admin
+        //     User::where('id', '!=', $admin->id)->each(function ($user) use ($customerRole) {
+        //         $user->roles()->syncWithoutDetaching([$customerRole->id]);
+        //     });
+        // }
+
+        // $this->command->info('Users seeded successfully!');
+        // $this->command->info('   Admin: 1');
+        // $this->command->info('   Customers: 30');
     }
 }

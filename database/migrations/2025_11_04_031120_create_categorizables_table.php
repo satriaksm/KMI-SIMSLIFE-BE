@@ -19,7 +19,7 @@ return new class extends Migration
             $table->timestamps();
 
             // Unique untuk prevent duplikat category per entity
-            $table->unique(['category_id', 'categorizable_id', 'categorizable_type'], 'categorizables_unique');
+            $table->unique(['categorizable_id', 'categorizable_type', 'category_id'], 'categorizables_unique');
 
             // Reverse lookup: entity → categories (sudah di-cover morphs, tapi tambah untuk explicit)
             $table->index(['categorizable_type', 'categorizable_id', 'category_id'], 'categorizables_morph_idx');

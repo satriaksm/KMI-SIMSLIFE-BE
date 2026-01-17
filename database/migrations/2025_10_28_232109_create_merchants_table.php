@@ -17,12 +17,17 @@ return new class extends Migration {
             $table->foreignId('segmentation_id')->constrained('segmentations')->cascadeOnUpdate()->restrictOnDelete();
             $table->string('name');
             $table->string('slug')->unique()->index();
-            $table->string('description')->nullable();
+            $table->text('description')->nullable();
             $table->string('logo_path')->nullable();
+            $table->string('cover_path')->nullable();
             $table->string('phone')->nullable();
+            $table->json('operational_hours')->nullable();
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');
+            $table->text('rejection_reason')->nullable();
+            $table->foreignId('reviewed_by')->nullable()->constrained('users')->onDelete('set null');
             $table->timestamp('response_at')->nullable();
             $table->timestamps();
+            
         });
     }
 

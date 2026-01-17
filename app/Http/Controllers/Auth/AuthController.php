@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Routing\Controller as Controller;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class AuthController extends Controller
 {
@@ -20,9 +21,9 @@ class AuthController extends Controller
             $request->all(),
             [
                 'name' => ['required', 'string', 'max:255'],
-                'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+                'email' => ['required', 'string', 'email', 'max:255'],
                 'phone' => ['nullable', 'string', 'max:13'],
-                'nik' => ['required', 'string', 'size:16', 'unique:users,nik'],
+                'nik' => ['required', 'string', 'size:16'],
                 'password' => [
                     'required',
                     'confirmed',
@@ -34,7 +35,6 @@ class AuthController extends Controller
                 'name.required' => 'Nama wajib diisi.',
                 'email.required' => 'Email wajib diisi.',
                 'email.email' => 'Format email tidak valid.',
-                'email.unique' => 'Email sudah terdaftar.',
                 'password.required' => 'Password wajib diisi.',
                 'password.confirmed' => 'Konfirmasi password tidak cocok.',
                 'password.min' => 'Password minimal 8 karakter.',
@@ -51,6 +51,66 @@ class AuthController extends Controller
         }
 
         $data = $validator->validated();
+
+        // Cek manual email
+        $existingUserByEmail = User::where('email', $data['email'])->first();
+        if ($existingUserByEmail) {
+            if ($existingUserByEmail->hasVerifiedEmail()) {
+                return response()->json([
+                    'message' => 'Email sudah terdaftar.',
+                    'errors' => ['email' => ['Email sudah terdaftar.']],
+                ], 422);
+            } else {
+                // Update existing user yang belum verifikasi
+                $existingUserByEmail->update([
+                    'name' => $data['name'],
+                    'phone' => $data['phone'] ?? null,
+                    'nik' => $data['nik'],
+                    'password' => Hash::make($data['password']),
+                    'status' => 'active',
+                ]);
+
+                // Tetapkan role default 'customer'
+                $role = Role::firstOrCreate(['name' => 'customer']);
+                $existingUserByEmail->roles()->syncWithoutDetaching([$role->id]);
+
+                event(new Registered($existingUserByEmail)); // kirim email verifikasi
+
+                return response()->json([
+                    'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',
+                ], 201);
+            }
+        }
+
+        // Cek manual NIK
+        $existingUserByNIK = User::where('nik', $data['nik'])->first();
+        if ($existingUserByNIK) {
+            if ($existingUserByNIK->hasVerifiedEmail()) {
+                return response()->json([
+                    'message' => 'NIK sudah terdaftar.',
+                    'errors' => ['nik' => ['NIK sudah terdaftar.']],
+                ], 422);
+            } else {
+                // Update existing user yang belum verifikasi
+                $existingUserByNIK->update([
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'phone' => $data['phone'] ?? null,
+                    'password' => Hash::make($data['password']),
+                    'status' => 'active',
+                ]);
+
+                // Tetapkan role default 'customer'
+                $role = Role::firstOrCreate(['name' => 'customer']);
+                $existingUserByNIK->roles()->syncWithoutDetaching([$role->id]);
+
+                event(new Registered($existingUserByNIK)); // kirim email verifikasi
+
+                return response()->json([
+                    'message' => 'Registrasi berhasil. Silakan verifikasi email Anda sebelum login.',
+                ], 201);
+            }
+        }
 
         $user = User::create([
             'name' => $data['name'],
@@ -98,8 +158,29 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // ✅ For SPA/API: Use Sanctum token instead of session
-        $token = $user->createToken('auth-token')->plainTextToken;
+        if ($user->isBlocked()) {
+            $message = match($user->status) {
+                'suspended' => 'Akun Anda telah di-suspend. Hubungi admin untuk informasi lebih lanjut.',
+                'inactive' => 'Akun Anda tidak aktif. Hubungi admin untuk mengaktifkan kembali.',
+                default => 'Akses ditolak',
+            };
+            
+            return response()->json([
+                'message' => $message,
+                'status' => $user->status,
+            ], 403);
+        }
+
+        Auth::login($user);
+        $request->session()->regenerate();
+
+        // Log login event
+        DB::table('user_login_events')->insert([
+            'user_id' => $user->id,
+            'logged_in_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         return response()->json([
             'message' => 'Login berhasil.',
@@ -129,23 +210,29 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = $request->user()->load([
-            'roles:id,name', // ✅ Only select needed columns
+            'roles:id,name',
             'merchants' => function ($query) {
-                $query->select('id', 'user_id', 'name', 'status', 'segmentation_id')
+                $query->select('id', 'slug', 'user_id', 'name', 'status', 'segmentation_id')
                     ->where('status', 'approved')
                     ->with('segmentation:id,name');
             }
         ]);
 
+        // Ensure profile picture is a usable absolute URL for the frontend
+        // (User model accessor returns a signed route; make it absolute defensively)
+        $profilePictureUrl = $user->profile_picture ? url($user->profile_picture) : null;
+
         return response()->json([
             'id' => $user->id,
             'name' => $user->name,
+            'profile_picture' => $profilePictureUrl,
             'email' => $user->email,
             'phone' => $user->phone,
             'roles' => $user->roles->pluck('name'),
             'merchants' => $user->merchants->map(function ($merchant) {
                 return [
                     'id' => $merchant->id,
+                    'slug' => $merchant->slug,
                     'name' => $merchant->name,
                     'status' => $merchant->status,
                     'segmentation_id' => $merchant->segmentation_id,

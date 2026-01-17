@@ -20,6 +20,6 @@ class Village extends Model
     // ✅ Tambahkan relasi ke addresses
     public function addresses(): HasMany
     {
-        return $this->hasMany(Adrress::class, 'village_id');
+        return $this->hasMany(Address::class, 'village_id');
     }
 }

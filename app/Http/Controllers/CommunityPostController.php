@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Response;
 
 class CommunityPostController
 {
@@ -558,6 +559,45 @@ class CommunityPostController
     }
 
     /**
+     * Stream community post image
+     * 
+     * @param CommunityPostImage $image
+     * @return \Illuminate\Http\Response
+     */
+    public function showImage(CommunityPostImage $image)
+    {
+        if (empty($image->post_image_path)) {
+            abort(404);
+        }
+
+        $disk = 'public';
+        $path = ltrim($image->post_image_path, '/');
+
+        if (!Storage::disk($disk)->exists($path)) {
+            abort(404);
+        }
+
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'svg' => 'image/svg+xml',
+            'webp' => 'image/webp',
+            'jpg', 'jpeg' => 'image/jpeg',
+            default => 'application/octet-stream',
+        };
+
+        $stream = Storage::disk($disk)->readStream($path);
+
+        return Response::stream(function () use ($stream) {
+            fpassthru($stream);
+        }, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=31536000',
+        ]);
+    }
+
+    /**
      * Upload images for a post.
      *
      * @param CommunityPost $post
@@ -621,7 +661,7 @@ class CommunityPostController
             'post_status' => $post->post_status,
             'views_count' => $post->views_count,
             'images_count' => $post->images_count,
-            'thumbnail_url' => $post->thumbnail_url, // First image
+            'thumbnail_url' => $post->thumbnail_url,
             'created_at' => $post->created_at->toISOString(),
             'updated_at' => $post->updated_at->toISOString(),
             'author' => [
@@ -634,14 +674,13 @@ class CommunityPostController
             ],
         ];
 
-        // Include all images (for detail view)
+        // ✅ UPDATED: Return image IDs for streaming API
         if ($includeAllImages || $post->relationLoaded('images')) {
             $resource['images'] = $post->images->map(function ($image, $index) {
                 return [
                     'id' => $image->id,
-                    'image_url' => $image->image_url,
                     'alt_text' => $image->alt_text,
-                    'is_primary' => $index === 0, // First image is primary/thumbnail
+                    'is_primary' => $index === 0,
                     'created_at' => $image->created_at->toISOString(),
                 ];
             })->toArray();

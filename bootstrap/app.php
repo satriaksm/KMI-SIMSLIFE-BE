@@ -6,6 +6,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
+use App\Http\Middleware\AllowOptions;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -15,10 +16,14 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Middleware aliases
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
+            'audit' => \App\Http\Middleware\AuditLogMiddleware::class,
+            'sanitize' => \App\Http\Middleware\SanitizeInputMiddleware::class,
         ]);
-        $middleware->api(prepend: [
+        $middleware->append([
+            AllowOptions::class,
             HandleCors::class,
         ]);
         $middleware->api(prepend: [
@@ -26,6 +31,10 @@ return Application::configure(basePath: dirname(__DIR__))
             VerifyCsrfToken::class
         ]);
         $middleware->statefulApi();
+        // 🆕 ADDED from feat/rating-system: Global middleware untuk OPTIONS request
+        $middleware->append([
+            AllowOptions::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

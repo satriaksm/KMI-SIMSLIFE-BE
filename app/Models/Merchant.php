@@ -3,7 +3,9 @@
 namespace App\Models;
 
 use App\Models\Addon;
+use App\Models\Jasa;
 use App\Models\Product;
+use Carbon\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -25,29 +27,36 @@ class Merchant extends Model
         'phone',
         'description',
         'logo_path',
+        'cover_path',
         'status',
         'response_at',
+        'operational_hours',
+    ];
+
+    protected $guarded = [
+        'id',
     ];
 
     protected $casts = [
         'response_at' => 'datetime',
+        'operational_hours' => 'array',
     ];
 
-    protected $appends = ['logo_url'];
+    protected $appends = ['logo_url', 'banner_url', 'is_open_now'];
 
     protected static function boot()
     {
         parent::boot();
 
         static::creating(function ($merchant) {
-            // ✅ Generate slug on create
+            // Generate slug on create
             if (empty($merchant->slug)) {
                 $merchant->slug = static::generateUniqueSlug($merchant->name);
             }
         });
 
         static::updating(function ($merchant) {
-            // ✅ Update slug only if name changed and slug is empty or being manually set
+            // Update slug only if name changed and slug is empty or being manually set
             if ($merchant->isDirty('name') && !$merchant->isDirty('slug')) {
                 $merchant->slug = static::generateUniqueSlug($merchant->name, $merchant->id);
             }
@@ -55,7 +64,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Generate unique slug
+     * Generate unique slug
      *
      * @param string $name
      * @param int|null $ignoreId - ID to ignore (for updates)
@@ -67,7 +76,7 @@ class Merchant extends Model
         $originalSlug = $slug;
         $count = 1;
 
-        // ✅ Loop until we find unique slug
+        // Loop until we find unique slug
         while (static::slugExists($slug, $ignoreId)) {
             $slug = $originalSlug . '-' . $count;
             $count++;
@@ -77,7 +86,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Check if slug exists
+     * Check if slug exists
      *
      * @param string $slug
      * @param int|null $ignoreId
@@ -94,22 +103,36 @@ class Merchant extends Model
         return $query->exists();
     }
 
-    // ✅ Relasi ke Products
+    // Relasi ke Products
     public function products(): HasMany
     {
         return $this->hasMany(Product::class, 'merchant_id');
     }
 
-    // Relasi ke user
+    // Relasi ke Jasa
+    public function jasas(): HasMany
+    {
+        return $this->hasMany(Jasa::class, 'merchant_id');
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    // ✅ Relasi ke Addons
     public function addons(): HasMany
     {
         return $this->hasMany(Addon::class, 'merchant_id');
+    }
+
+    public function events()
+    {
+        return $this->belongsToMany(Event::class, 'event_merchants', 'merchant_id', 'event_id');
+    }
+
+    public function vouchers()
+    {
+        return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
     // Relasi ke paguyuban
@@ -124,35 +147,83 @@ class Merchant extends Model
         return $this->belongsTo(Segmentation::class);
     }
 
-    // Banyak alamat (polimorfik)
+    // Banyak alamat
     public function addresses(): MorphMany
     {
-        return $this->morphMany(\App\Models\Adrress::class, 'addressable');
+        return $this->morphMany(Address::class, 'addressable');
     }
 
-    // Alamat utama (opsional)
+    // Alamat utama
     public function primaryAddress(): MorphOne
     {
-        return $this->morphOne(\App\Models\Adrress::class, 'addressable')
+        return $this->morphOne(Address::class, 'addressable')
             ->where('label', 'utama')
             ->latest();
     }
 
-    // ✅ Accessor untuk Logo URL
+    // Accessor untuk Logo URL
     public function getLogoUrlAttribute()
     {
-        if ($this->logo_path) {
-            // Jika menggunakan storage public
-            if (str_starts_with($this->logo_path, 'http')) {
-                return $this->logo_path;
-            }
-            return url('storage/' . $this->logo_path);
+        if (empty($this->logo_path)) {
+            return null;
         }
-        return null;
+
+        return url('api/merchant-profile-pictures/' . $this->id);
+    }
+
+    // Accessor untuk Banner/Cover URL
+    public function getBannerUrlAttribute()
+    {
+        if (empty($this->cover_path)) {
+            return null;
+        }
+
+        return url('api/merchant-banner/' . $this->id);
+    }
+
+    public function getIsOpenNowAttribute(): bool
+    {
+        $operationalHours = $this->operational_hours;
+        if (!is_array($operationalHours) || empty($operationalHours)) {
+            return false;
+        }
+
+        $timezone = config('app.timezone') ?: 'UTC';
+        $now = Carbon::now($timezone);
+        $dayKey = strtolower($now->format('l')); // monday..sunday
+
+        $today = $operationalHours[$dayKey] ?? null;
+        if (!is_array($today)) {
+            return false;
+        }
+
+        if (empty($today['is_open'])) {
+            return false;
+        }
+
+        $open = $today['open'] ?? null;
+        $close = $today['close'] ?? null;
+        if (!is_string($open) || !is_string($close) || $open === '' || $close === '') {
+            return false;
+        }
+
+        try {
+            $start = Carbon::parse($now->toDateString() . ' ' . $open, $timezone);
+            $end = Carbon::parse($now->toDateString() . ' ' . $close, $timezone);
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        // Handle overnight schedules (e.g., 20:00 - 02:00)
+        if ($end->lessThan($start)) {
+            $end->addDay();
+        }
+
+        return $now->betweenIncluded($start, $end);
     }
 
     /**
-     * ✅ Scope: Only approved merchants
+     * Scope: Only approved merchants
      */
     public function scopeApproved($query)
     {
@@ -160,7 +231,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Scope: Only pending merchants
+     * Scope: Only pending merchants
      */
     public function scopePending($query)
     {
@@ -168,7 +239,7 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ Scope: Only rejected merchants
+     * Scope: Only rejected merchants
      */
     public function scopeRejected($query)
     {

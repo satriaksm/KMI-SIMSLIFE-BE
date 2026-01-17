@@ -26,6 +26,6 @@ class District extends Model
     // ✅ Tambahkan relasi ke addresses
     public function addresses(): HasMany
     {
-        return $this->hasMany(Adrress::class, 'district_id');
+        return $this->hasMany(Address::class, 'district_id');
     }
 }

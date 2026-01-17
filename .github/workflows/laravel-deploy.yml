@@ -42,6 +42,8 @@ jobs:
             --exclude='tests' \
             --exclude='public' \
             --exclude='.env' \
+            --exclude='/.scribe' \
+            --exclude='/.scribe/**' \
             --exclude='storage/logs/*' \
             --exclude='storage/framework/cache/*' \
             --exclude='storage/framework/sessions/*' \
@@ -67,13 +69,14 @@ jobs:
           password: ${{ secrets.FTP_PASS }}
           port: ${{ secrets.FTP_PORT || 21 }}
           protocol: ftps
-          passive: true
           local-dir: release/
           server-dir: ${{ secrets.FTP_PATH_LARAVEL }}/
           dangerous-clean-slate: false
           exclude: |
             **/.git*
             **/.git*/**
+            **/.scribe
+            **/.scribe/**
             **/node_modules/**
             /vendor/**
             **/tests/**

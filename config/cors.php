@@ -7,8 +7,11 @@ return [
         'login',
         'logout',
         'me',
+        'admin/*',
         'broadcasting/auth',
-        'auth/*'
+        'auth/*',
+        'profile',
+        'profile/*'
     ],
 
     'allowed_methods' => ['*'],
@@ -17,6 +20,8 @@ return [
         'http://localhost:5173',
         'http://127.0.0.1:5173',
     ],
+
+    'allowed_origins_patterns' => [],
 
     'allowed_headers' => ['*'],
 

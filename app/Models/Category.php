@@ -5,10 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\MorphToMany; // changed
+use Illuminate\Database\Eloquent\Relations\MorphToMany;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class Category extends Model
 {
+    use HasFactory;
     protected $table = 'categories';
 
     protected $fillable = [
@@ -28,14 +30,36 @@ class Category extends Model
         return $this->hasMany(self::class, 'parent_id');
     }
 
-    public function products(): MorphToMany // changed
+    public function products(): MorphToMany
     {
-        return $this->morphedByMany(Product::class, 'categorizable')->withTimestamps();
+        return $this->morphedByMany(
+            Product::class,
+            'categorizable',
+            'categorizables',
+            'category_id',
+            'categorizable_id'
+        )->withTimestamps();
     }
 
-    // Contoh untuk model lain (Service), aktifkan jika modelnya ada
+    public function jasas(): MorphToMany
+    {
+        return $this->morphedByMany(
+            Jasa::class,
+            'categorizable',
+            'categorizables',
+            'category_id',
+            'categorizable_id'
+        )->withTimestamps();
+    }
+
     // public function services(): MorphToMany
     // {
-    //     return $this->morphedByMany(Service::class, 'categorizable')->withTimestamps();
+    //     return $this->morphedByMany(
+    //         Service::class,
+    //         'categorizable',
+    //         'categorizables',
+    //         'category_id',
+    //         'categorizable_id'
+    //     )->withTimestamps();
     // }
 }
