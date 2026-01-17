@@ -139,7 +139,6 @@ Route::prefix('community')->name('community.')->group(function () {
     Route::get('/posts/{postId}/comments/{commentId}/replies', [PostCommentController::class, 'getReplies'])->name('comments.replies');
 });
 
-
 // ============================================================
 // API SERVED IMAGES
 // ============================================================
@@ -163,7 +162,6 @@ Route::get('merchant-profile-pictures/{merchant}', [MerchantController::class, '
     ->name('merchant_profile_pictures.show');
 Route::get('merchant-banner/{merchant}', [MerchantController::class, 'merchantBannerShow'])
     ->name('merchant_banner.show');
-
 
 // ============================================================
 // AUTH ROUTES
@@ -391,7 +389,6 @@ Route::prefix('orders')->group(function () {
     Route::post('/', [OrderController::class, 'store']);
 });
 
-
 // ============================================================
 // ADMIN ROUTES (Protected)
 // ============================================================
@@ -532,3 +529,11 @@ Route::get('/merchant-logo/{merchant}', [AdminMerchantController::class, 'showLo
 // ✅ User profile picture streaming route
 Route::get('/user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])
     ->name('user.profile');
+
+// ✅ ADD: Community post image streaming route
+Route::get('community-images/{image}', [CommunityPostController::class, 'showImage'])
+    ->name('community-images.show');
+
+// Backward compatibility (underscore naming)
+Route::get('community_images/{image}', [CommunityPostController::class, 'showImage'])
+    ->name('community_images.show');
