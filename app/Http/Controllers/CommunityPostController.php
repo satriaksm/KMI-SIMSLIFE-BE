@@ -634,12 +634,19 @@ class CommunityPostController
             ],
         ];
 
-        // Include all images (for detail view)
+        // ✅ UPDATED: Include all images with proper URL generation
         if ($includeAllImages || $post->relationLoaded('images')) {
-            $resource['images'] = $post->images->map(function ($image, $index) {
+            $apiBaseUrl = config('app.url');
+            
+            $resource['images'] = $post->images->map(function ($image, $index) use ($apiBaseUrl) {
+                // ✅ Generate proper image URL via API endpoint
+                $imageUrl = $image->post_image_path 
+                    ? "{$apiBaseUrl}/storage/{$image->post_image_path}"
+                    : null;
+
                 return [
                     'id' => $image->id,
-                    'image_url' => $image->image_url,
+                    'image_url' => $imageUrl,
                     'alt_text' => $image->alt_text,
                     'is_primary' => $index === 0, // First image is primary/thumbnail
                     'created_at' => $image->created_at->toISOString(),
