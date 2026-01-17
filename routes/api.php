@@ -19,8 +19,6 @@ use App\Http\Controllers\PackageController;
 // Controllers baru
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
-use App\Http\Controllers\OrderController;
-use App\Http\Controllers\PromoController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\VoucherController;
 use App\Http\Controllers\CategoryController;
