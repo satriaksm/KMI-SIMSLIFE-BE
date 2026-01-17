@@ -139,7 +139,13 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        $user = User::with('roles')->where('email', $credentials['email'])->first();
+        // ✅ Load merchants with segmentation relationship
+        $user = User::with([
+            'roles:id,name',
+            'merchants' => function ($query) {
+                $query->with('segmentation:id,name');
+            }
+        ])->where('email', $credentials['email'])->first();
 
         if (!$user || !Hash::check($credentials['password'], $user->password)) {
             return response()->json(['message' => 'Kredensial tidak valid.'], 422);
@@ -178,7 +184,26 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Login berhasil.',
-            'user' => $user,
+            'token' => $token,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'roles' => $user->roles->pluck('name'),
+                'merchants' => $user->merchants ? $user->merchants->map(function ($merchant) {
+                    return [
+                        'id' => $merchant->id,
+                        'name' => $merchant->name,
+                        'status' => $merchant->status,
+                        'segmentation_id' => $merchant->segmentation_id,
+                        'segmentation' => $merchant->segmentation ? [
+                            'id' => $merchant->segmentation->id,
+                            'name' => $merchant->segmentation->name,
+                        ] : null,
+                    ];
+                }) : [],
+            ],
         ]);
     }
 
@@ -210,6 +235,7 @@ class AuthController extends Controller
                     'slug' => $merchant->slug,
                     'name' => $merchant->name,
                     'status' => $merchant->status,
+                    'segmentation_id' => $merchant->segmentation_id,
                     'segmentation' => $merchant->segmentation ? [
                         'id' => $merchant->segmentation->id,
                         'name' => $merchant->segmentation->name,

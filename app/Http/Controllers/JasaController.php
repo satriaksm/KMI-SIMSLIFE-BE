@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Jasa;
+use App\Models\Package;
+use App\Models\JasaImage;
+use Illuminate\Support\Facades\Storage;
 use App\Models\Merchant;
-use App\Models\Image;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -12,6 +14,51 @@ use Illuminate\Support\Facades\URL;
 
 class JasaController extends Controller
 {
+    private const JASA_SEGMENT_ID = 3; // ✅ sesuaikan jika id segmentasi UMKM Jasa berbeda
+
+    // ============================================================
+    // PUBLIC (CUSTOMER)
+    // ============================================================
+
+    // GET /api/jasa
+    public function index(Request $request)
+    {
+        $query = Jasa::query()
+            ->with(['packages','images','category','subcategory'])
+            ->where('is_active', true)
+            ->whereHas('merchant', function ($q) {
+                $q->where('status', 'approved')
+                  ->where('segmentation_id', self::JASA_SEGMENT_ID);
+            });
+
+        // Filter by merchant_id jika ada
+        if ($request->filled('merchant_id')) {
+            $query->where('merchant_id', $request->merchant_id);
+        }
+
+        $jasas = $query->orderByDesc('id')->get();
+
+        return response()->json($jasas);
+    }
+
+    // GET /api/jasa/{id}
+    public function show($id)
+    {
+        $jasa = Jasa::query()
+            ->with([
+                'packages',
+                'images', 
+                'category', 
+                'subcategory',
+                'merchant:id,name,logo_path,status,segmentation_id',
+                'merchant.segmentation:id,name'
+            ])
+            ->where('is_active', true)
+            ->whereHas('merchant', function ($q) {
+                $q->where('status', 'approved')
+                  ->where('segmentation_id', self::JASA_SEGMENT_ID);
+            })
+            ->find($id);
     protected function attachCoverImg(Jasa $jasa, bool $isPublic): void
     {
         if (!$jasa->relationLoaded('images')) {
@@ -365,27 +412,147 @@ class JasaController extends Controller
         return response()->json($jasa);
     }
 
-    /**
-     * POST /api/jasa
-     * Tambah data jasa baru (admin input)
-     */
+    // ============================================================
+    // OWNER (ADMIN UMKM JASA)
+    // ============================================================
+
+    // GET /api/jasas/owner
+    public function ownerIndex(Request $request)
+    {
+        $merchant = $this->getOwnerMerchantOrAbort($request);
+
+        // Build query dengan pagination dan filtering
+        $query = Jasa::with(['packages', 'images', 'category', 'subcategory'])
+            ->where('merchant_id', $merchant->id);
+
+        // Search by title
+        if ($request->filled('q')) {
+            $query->where('title', 'like', '%' . $request->q . '%');
+        }
+
+        // Filter by status (is_active)
+        if ($request->filled('status')) {
+            $status = $request->status;
+            if ($status === 'published') {
+                $query->where('is_active', true);
+            } elseif ($status === 'archived' || $status === 'draft') {
+                $query->where('is_active', false);
+            }
+        }
+
+        // Filter by price range
+        if ($request->filled('min_price')) {
+            $query->where('price', '>=', $request->min_price);
+        }
+        if ($request->filled('max_price')) {
+            $query->where('price', '<=', $request->max_price);
+        }
+
+        // Sorting
+        $sortBy = $request->input('sort_by', 'newest');
+        switch ($sortBy) {
+            case 'oldest':
+                $query->orderBy('id', 'asc');
+                break;
+            case 'name_asc':
+                $query->orderBy('title', 'asc');
+                break;
+            case 'name_desc':
+                $query->orderBy('title', 'desc');
+                break;
+            case 'price_asc':
+                $query->orderBy('price', 'asc');
+                break;
+            case 'price_desc':
+                $query->orderBy('price', 'desc');
+                break;
+            case 'newest':
+            default:
+                $query->orderByDesc('id');
+                break;
+        }
+
+        // Pagination
+        $perPage = $request->input('per_page', 15);
+        $jasas = $query->paginate($perPage);
+
+        return response()->json([
+            'data' => $jasas->items(),
+            'meta' => [
+                'current_page' => $jasas->currentPage(),
+                'last_page' => $jasas->lastPage(),
+                'per_page' => $jasas->perPage(),
+                'total' => $jasas->total(),
+                'from' => $jasas->firstItem(),
+                'to' => $jasas->lastItem(),
+            ]
+        ]);
+    }
+
+    // GET /api/jasas/owner/{id}
+    public function ownerShow(Request $request, $id)
+    {
+        $merchant = $this->getOwnerMerchantOrAbort($request);
+
+        $jasa = Jasa::with(['packages', 'images', 'category', 'subcategory'])
+            ->where('merchant_id', $merchant->id)
+            ->find($id);
+
+        if (!$jasa) {
+            return response()->json(['message' => 'Jasa tidak ditemukan'], 404);
+        }
+
+        // Bungkus dalam key "data" dan pastikan dikonversi ke array
+        // untuk menghindari masalah serialisasi JSON yang sempat muncul di log.
+        return response()->json([
+            'data' => $jasa->toArray(),
+        ]);
+    }
+
+    // POST /api/jasas (owner create)
     public function store(Request $request)
     {
+        $merchant = $this->getOwnerMerchantOrAbort($request);
+
+        $validated = $request->validate([
+            // Basic Info
         $user = $request->user();
 
         $validated = $request->validate([
             'merchant_id' => 'required|integer|exists:merchants,id',
             'title' => 'required|string|max:255',
-            'vendor' => 'nullable|string|max:255',
-            'price' => 'required|integer|min:0',
-            'image' => 'nullable|string|max:500',
-            'rating' => 'nullable|numeric|min:0|max:5',
-            'distance_km' => 'nullable|numeric|min:0',
-            'duration_hours' => 'nullable|numeric|min:0',
             'description' => 'nullable|string',
-            'is_active' => 'boolean',
+            
+            // Category & Subcategory
+            'jasa_category_id' => 'required|exists:jasa_categories,id',
+            'jasa_subcategory_id' => 'nullable|exists:jasa_subcategories,id',
+            
+            // Pricing
+            'fixed_price' => 'required|integer|min:0',
+            'base_price' => 'required|integer|min:0',
+            
+            // Location & Service Area
+            'service_type' => 'required|in:on_site,at_location,online',
+            'location_address' => 'nullable|string',
+            'service_area' => 'nullable|string',
+            
+            // Operating Days & Times
+            'operating_days' => 'nullable|string',
+            'operating_times' => 'nullable|string',
+            
+            // Special Notes
+            'special_notes' => 'nullable|string',
+            
+            // Payment
+            'payment_methods' => 'nullable|string',
+            
+            // Admin
+            'status' => 'nullable|in:draft,active,inactive',
         ]);
 
+        $validated['merchant_id'] = $merchant->id;
+        $validated['status'] = $validated['status'] ?? 'draft';
+        $validated['is_featured'] = $request->boolean('is_featured', false);
         // Pastikan merchant dimiliki oleh user yang login
         Merchant::where('id', (int) $validated['merchant_id'])
             ->where('user_id', $user->id)
@@ -393,20 +560,39 @@ class JasaController extends Controller
 
         $jasa = Jasa::create($validated);
 
+        // Handle images (optional) - accept multiple files under key 'images'
+        // Simpan ke folder "public/jasa" (tanpa s) agar konsisten dengan struktur existing
+        \Log::info('[JasaController@store] Incoming images info', [
+            'content_type' => $request->header('Content-Type'),
+            'has_images' => $request->hasFile('images'),
+            'all_files_keys' => array_keys($request->allFiles()),
+            'all_input_keys' => array_keys($request->all()),
+        ]);
+
+        if ($request->hasFile('images')) {
+            foreach ($request->file('images') as $index => $file) {
+                if (!$file->isValid()) continue;
+                $path = $file->store('jasa', 'public');
+                JasaImage::create([
+                    'jasa_id' => $jasa->id,
+                    'path' => '/storage/' . $path,
+                    'is_cover' => $index === 0,
+                ]);
+            }
+        }
+
         return response()->json([
             'message' => 'Data jasa berhasil ditambahkan',
-            'data' => $jasa
+            'data' => $jasa->load(['category', 'subcategory', 'packages', 'images'])
         ], 201);
     }
 
-    /**
-     * PUT /api/jasa/{id}
-     * Update data jasa (admin edit)
-     */
+    // PUT /api/jasas/{id} (owner update)
     public function update(Request $request, $id)
     {
-        $jasa = Jasa::find($id);
+        $merchant = $this->getOwnerMerchantOrAbort($request);
 
+        $jasa = Jasa::where('merchant_id', $merchant->id)->find($id);
         if (!$jasa) {
             return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
         }
@@ -414,32 +600,39 @@ class JasaController extends Controller
         // Validasi field lama + field baru yang dipakai di MerchantJasa (kategori, status, jadwal, dll)
         // Status mendukung skema lama (active/inactive) dan baru (published/archived)
         $validated = $request->validate([
+            // Basic Info
             'title' => 'sometimes|required|string|max:255',
-            'vendor' => 'nullable|string|max:255',
-            'price' => 'sometimes|required|integer|min:0',
-            'image' => 'nullable|string|max:500',
-            'rating' => 'nullable|numeric|min:0|max:5',
-            'distance_km' => 'nullable|numeric|min:0',
-            'duration_hours' => 'nullable|numeric|min:0',
             'description' => 'nullable|string',
-            'is_active' => 'boolean',
-
-            // Field baru jasa merchant
-            'fixed_price' => 'nullable|integer|min:0',
-            'base_price' => 'nullable|integer|min:0',
-            'service_type' => 'nullable|string|in:at_location,on_site,online',
-            'location_address' => 'nullable|string|max:255',
-            'service_area' => 'nullable|string|max:255',
+            
+            // Category & Subcategory
+            'jasa_category_id' => 'sometimes|required|exists:jasa_categories,id',
+            'jasa_subcategory_id' => 'nullable|exists:jasa_subcategories,id',
+            
+            // Pricing
+            'fixed_price' => 'sometimes|required|integer|min:0',
+            'base_price' => 'sometimes|required|integer|min:0',
+            
+            // Location & Service Area
+            'service_type' => 'sometimes|required|in:on_site,at_location,online',
+            'location_address' => 'nullable|string',
+            'service_area' => 'nullable|string',
+            
+            // Operating Days & Times
+            'operating_days' => 'nullable|string',
+            'operating_times' => 'nullable|string',
+            
+            // Special Notes
             'special_notes' => 'nullable|string',
-            'payment_methods' => 'nullable|string|max:255',
-            'status' => 'nullable|string|in:draft,active,inactive,published,archived',
-            'operating_days' => 'nullable|string|max:255',
-            'operating_times' => 'nullable|string|max:255',
-            'jasa_category_id' => 'nullable|integer|exists:categories,id',
-            'jasa_subcategory_id' => 'nullable|integer|exists:categories,id',
+            
+            // Admin
+            'status' => 'nullable|in:draft,active,inactive',
+        ]);
 
-            // Gambar layanan (multiple file) dari Editjasa.vue (opsional)
-            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
+        \Log::info('[JasaController@update] Before update', [
+            'jasa_id' => $jasa->id,
+            'old_status' => $jasa->status,
+            'old_is_active' => $jasa->is_active,
+            'validated_status' => $validated['status'] ?? 'not set',
         ]);
 
         $data = $validated;
@@ -534,138 +727,43 @@ class JasaController extends Controller
             }
         }
 
-        return response()->json([
-            'message' => 'Data jasa berhasil diperbarui',
-            'data' => $jasa
-        ]);
-    }
+        // Sync is_active based on status
+        if (isset($validated['status'])) {
+            $jasa->is_active = ($validated['status'] === 'active');
+            $jasa->save();
+            
+            \Log::info('[JasaController@update] After status sync', [
+                'jasa_id' => $jasa->id,
+                'new_status' => $jasa->status,
+                'new_is_active' => $jasa->is_active,
+            ]);
+        }
 
-    /**
-     * OWNER / MERCHANT: Tambah jasa untuk merchant tertentu
-     * Endpoint: POST /api/merchants/{merchantId}/jasas
-     */
-    public function storeForMerchant(Request $request, int $merchantId)
-    {
-        $user = $request->user();
-
-        // Pastikan merchant dimiliki oleh user yang login
-        $merchant = Merchant::where('id', $merchantId)
-            ->where('user_id', $user->id)
-            ->firstOrFail();
-
-        // Validasi field sesuai form Createjasa.vue
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-
-            // Harga
-            'fixed_price' => 'nullable|integer|min:0',
-            'base_price' => 'nullable|integer|min:0',
-
-            // Tipe & lokasi layanan
-            'service_type' => 'required|string|in:at_location,on_site,online',
-            'location_address' => 'nullable|string|max:255',
-            'service_area' => 'nullable|string|max:255',
-            'special_notes' => 'nullable|string',
-
-            // Pembayaran & status
-            'payment_methods' => 'nullable|string|max:255',
-            'status' => 'required|string|in:draft,active,inactive,published,archived',
-            'operating_days' => 'required|string|max:255',
-            'operating_times' => 'nullable|string|max:255',
-
-            // Kategori (nama field yang dipakai FE)
-            'jasa_category_id' => 'nullable|integer|exists:categories,id',
-            'jasa_subcategory_id' => 'nullable|integer|exists:categories,id',
-
-            // Gambar layanan (multiple file) dari Createjasa.vue
-            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
-        ]);
-
-        $data = $validated;
-
-        // Sinkronkan legacy price untuk kompatibilitas listing lama
-        $fixed = $data['fixed_price'] ?? null;
-        $base = $data['base_price'] ?? null;
-        $data['price'] = $fixed ?? $base ?? 0;
-
-        // Set merchant_id dari path parameter
-        $data['merchant_id'] = $merchant->id;
-
-        // Atur is_active mengikuti status
-        $status = $data['status'] ?? null;
-        $data['is_active'] = in_array($status, ['active', 'published']);
-
-        $jasa = Jasa::create($data);
-
-        // Sync categories via pivot
-        $this->syncJasaCategoriesFromRequest($jasa, $request);
-
-        // Simpan file gambar (jika ada) ke storage/app/public/jasa/{jasa_id}
-        // dan gunakan file pertama sebagai cover ke kolom legacy `image`
+        // Append new images if provided
+        // Simpan ke folder "jasa" di disk public
         if ($request->hasFile('images')) {
-            $files = $request->file('images');
-            if (!empty($files)) {
-                $now = now();
-                $imagesToInsert = [];
-
-                foreach ($files as $index => $file) {
-                    $path = $file->store("jasa/{$jasa->id}", 'public');
-
-                    $imagesToInsert[] = [
-                        'imageable_type' => 'jasa',
-                        'imageable_id' => $jasa->id,
-                        'image_path' => $path,
-                        'display_order' => $index,
-                        'is_cover' => $index === 0,
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ];
-
-                    if ($index === 0) {
-                        // sinkronkan legacy cover path
-                        $jasa->image = $path;
-                    }
-                }
-
-                if (!empty($imagesToInsert)) {
-                    DB::table('images')->insert($imagesToInsert);
-                }
-
-                $jasa->save();
+            foreach ($request->file('images') as $index => $file) {
+                if (!$file->isValid()) continue;
+                $path = $file->store('jasa', 'public');
+                $jasa->images()->create([
+                    'path' => '/storage/' . $path,
+                    'is_cover' => false,
+                ]);
             }
         }
 
-        // Muat relasi yang dipakai di Indexjasa.vue
-        $jasa->load(['categories']);
-        $this->attachCategoryAliases($jasa);
-
         return response()->json([
-            'message' => 'Jasa berhasil dibuat',
-            'data' => $jasa,
-        ], 201);
+            'message' => 'Data jasa berhasil diperbarui',
+            'data' => $jasa->fresh()->load(['category', 'subcategory', 'packages', 'images'])
+        ]);
     }
 
-    /**
-     * OWNER / MERCHANT: Tambah jasa untuk merchant tertentu (slug-based)
-     * Endpoint: POST /api/merchants/{merchantSlug}/jasas
-     */
-    public function storeForMerchantBySlug(Request $request, string $merchantSlug)
+    // DELETE /api/jasas/{id} (owner delete)
+    public function destroy(Request $request, $id)
     {
-        $merchant = Merchant::where('slug', $merchantSlug)->firstOrFail();
+        $merchant = $this->getOwnerMerchantOrAbort($request);
 
-        // Delegate to the id-based method (keeps ownership checks in one place)
-        return $this->storeForMerchant($request, (int) $merchant->id);
-    }
-
-    /**
-     * DELETE /api/jasa/{id}
-     * Hapus data jasa (admin)
-     */
-    public function destroy($id)
-    {
-        $jasa = Jasa::find($id);
-
+        $jasa = Jasa::where('merchant_id', $merchant->id)->find($id);
         if (!$jasa) {
             return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
         }
@@ -673,5 +771,114 @@ class JasaController extends Controller
         $jasa->delete();
 
         return response()->json(['message' => 'Data jasa berhasil dihapus']);
+    }
+
+    // ============================================================
+    // OWNER PACKAGES (Paket Jasa)
+    // ============================================================
+
+    // POST /api/jasas/{jasaId}/packages
+    public function addPackage(Request $request, $jasaId)
+    {
+        $merchant = $this->getOwnerMerchantOrAbort($request);
+
+        $jasa = Jasa::where('merchant_id', $merchant->id)->find($jasaId);
+        if (!$jasa) {
+            return response()->json(['message' => 'Jasa tidak ditemukan'], 404);
+        }
+
+        $data = $request->validate([
+            'name' => 'required|string|max:255',
+            'price' => 'required|integer|min:0',
+            'image' => 'nullable|string|max:500',
+        ]);
+
+        $pkg = $jasa->packages()->create($data);
+
+        return response()->json([
+            'message' => 'Paket berhasil ditambahkan',
+            'data' => $pkg
+        ], 201);
+    }
+
+    // PUT /api/packages/{id}
+    public function updatePackage(Request $request, $id)
+    {
+        $merchant = $this->getOwnerMerchantOrAbort($request);
+
+        $pkg = Package::query()
+            ->whereHas('jasa', fn($q) => $q->where('merchant_id', $merchant->id))
+            ->find($id);
+
+        if (!$pkg) {
+            return response()->json(['message' => 'Paket tidak ditemukan'], 404);
+        }
+
+        $data = $request->validate([
+            'name' => 'sometimes|required|string|max:255',
+            'price' => 'sometimes|required|integer|min:0',
+            'image' => 'nullable|string|max:500',
+        ]);
+
+        $pkg->update($data);
+
+        return response()->json([
+            'message' => 'Paket berhasil diperbarui',
+            'data' => $pkg
+        ]);
+    }
+
+    // DELETE /api/packages/{id}
+    public function deletePackage(Request $request, $id)
+    {
+        $merchant = $this->getOwnerMerchantOrAbort($request);
+
+        $pkg = Package::query()
+            ->whereHas('jasa', fn($q) => $q->where('merchant_id', $merchant->id))
+            ->find($id);
+
+        if (!$pkg) {
+            return response()->json(['message' => 'Paket tidak ditemukan'], 404);
+        }
+
+        $pkg->delete();
+
+        return response()->json(['message' => 'Paket berhasil dihapus']);
+    }
+
+    // ============================================================
+    // HELPER
+    // ============================================================
+
+    private function getOwnerMerchantOrAbort(Request $request): Merchant
+    {
+        $user = $request->user();
+
+        // minimal check role umkm-owner (sesuai implementasi kamu)
+        $isOwner = $user->roles()->whereRaw('LOWER(name) = ?', ['umkm-owner'])->exists();
+        if (!$isOwner) {
+            abort(403, 'Akses ditolak. Hanya UMKM Owner.');
+        }
+
+        // If merchantId is provided in request (from query param or route), validate that merchant
+        $merchantId = $request->input('merchantId') ?? $request->route('merchantId');
+        
+        $query = Merchant::query()
+            ->where('user_id', $user->id)
+            ->where('status', 'approved')
+            ->where('segmentation_id', self::JASA_SEGMENT_ID);
+
+        // If specific merchantId requested, filter by it
+        if ($merchantId) {
+            $query->where('id', $merchantId);
+        }
+
+        $merchant = $query->first();
+
+        if (!$merchant) {
+            abort(403, 'UMKM Jasa belum tersedia/approved untuk user ini.');
+        }
+
+        return $merchant;
     }
 }

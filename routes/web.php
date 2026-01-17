@@ -14,3 +14,6 @@ Route::get('/sanctum/csrf-cookie', [CsrfCookieController::class, 'show']);
 // Auth routes (SPA)
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
+
+// ✅ Tambahkan route untuk mendapatkan data user yang sedang login
+

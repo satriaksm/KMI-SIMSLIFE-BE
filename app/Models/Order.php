@@ -12,6 +12,7 @@ class Order extends Model
     protected $fillable = [
         'jasa_id',
         'user_id',
+        'package_id',
         'nama',
         'tel',
         'alamat',
@@ -22,21 +23,21 @@ class Order extends Model
         'metode_pembayaran',
         'promo_code',
         'total',
+        'status',
     ];
 
     public function jasa()
     {
-        return $this->belongsTo(Jasa::class, 'jasa_id');
+        return $this->belongsTo(\App\Models\Jasa::class);
     }
 
-    public function merchant()
+    public function package()
     {
-        return $this->belongsTo(Merchant::class);
+        return $this->belongsTo(\App\Models\Package::class);
     }
 
-    public function items()
+    public function user()
     {
-        return $this->hasMany(OrderItem::class);
+        return $this->belongsTo(\App\Models\User::class);
     }
 }
-

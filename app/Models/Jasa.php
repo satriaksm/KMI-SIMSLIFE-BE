@@ -10,20 +10,11 @@ class Jasa extends Model
     use HasFactory;
 
     protected $fillable = [
-        // Ownership
         'merchant_id',
-
-        // Core fields
+        'jasa_category_id',
+        'jasa_subcategory_id',
         'title',
-        'vendor',
-        'price',
-        'image',
-        'rating',
-        'distance_km',
-        'duration_hours',
         'description',
-
-        // Merchant jasa fields
         'fixed_price',
         'base_price',
         'service_type',
@@ -31,42 +22,33 @@ class Jasa extends Model
         'service_area',
         'special_notes',
         'payment_methods',
-        'status',
         'operating_days',
         'operating_times',
-
-        // Flags
-        'is_active', // 🆕 tambahkan untuk kontrol aktif/tidak
+        'status',
+        'is_active',
     ];
 
-    /**
-     * Keep polymorphic type compatible with legacy inserts that use 'jasa'
-     * in images.imageable_type.
-     */
-    public function getMorphClass()
-    {
-        return 'jasa';
-    }
+    protected $casts = [
+        'is_active' => 'boolean',
+        'is_featured' => 'boolean',
+        // Removed legacy casts that may decode non-JSON values
+        // 'operating_days' => 'array',
+        // 'social_media' => 'array',
+    ];
 
     public function merchant()
     {
         return $this->belongsTo(Merchant::class);
     }
 
-    public function categories()
+    public function category()
     {
-        return $this->morphToMany(
-            Category::class,
-            'categorizable',
-            'categorizables',
-            'categorizable_id',
-            'category_id'
-        )->withTimestamps();
+        return $this->belongsTo(JasaCategory::class, 'jasa_category_id');
     }
 
-    public function images()
+    public function subcategory()
     {
-        return $this->morphMany(Image::class, 'imageable');
+        return $this->belongsTo(JasaSubcategory::class, 'jasa_subcategory_id');
     }
 
     public function packages()
@@ -77,5 +59,10 @@ class Jasa extends Model
     public function orders()
     {
         return $this->hasMany(Order::class);
+    }
+
+    public function images()
+    {
+        return $this->hasMany(JasaImage::class);
     }
 }
