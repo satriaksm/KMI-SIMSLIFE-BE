@@ -168,7 +168,12 @@ class Merchant extends Model
             return null;
         }
 
-        return url('api/merchant-profile-pictures/' . $this->id);
+        // Include a version segment derived from the stored filename.
+        // This makes the URL change whenever the file changes, so clients can cache safely.
+        return route('merchant_profile_pictures.show', [
+            'merchant' => $this->id,
+            'v' => basename((string) $this->logo_path),
+        ]);
     }
 
     // Accessor untuk Banner/Cover URL
@@ -178,7 +183,10 @@ class Merchant extends Model
             return null;
         }
 
-        return url('api/merchant-banner/' . $this->id);
+        return route('merchant_banner.show', [
+            'merchant' => $this->id,
+            'v' => basename((string) $this->cover_path),
+        ]);
     }
 
     public function getIsOpenNowAttribute(): bool

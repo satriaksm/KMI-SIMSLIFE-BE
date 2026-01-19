@@ -139,13 +139,7 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        // ✅ Load merchants with segmentation relationship
-        $user = User::with([
-            'roles:id,name',
-            'merchants' => function ($query) {
-                $query->with('segmentation:id,name');
-            }
-        ])->where('email', $credentials['email'])->first();
+        $user = User::with('roles')->where('email', $credentials['email'])->first();
 
         if (!$user || !Hash::check($credentials['password'], $user->password)) {
             return response()->json(['message' => 'Kredensial tidak valid.'], 422);
@@ -159,12 +153,12 @@ class AuthController extends Controller
         }
 
         if ($user->isBlocked()) {
-            $message = match($user->status) {
+            $message = match ($user->status) {
                 'suspended' => 'Akun Anda telah di-suspend. Hubungi admin untuk informasi lebih lanjut.',
                 'inactive' => 'Akun Anda tidak aktif. Hubungi admin untuk mengaktifkan kembali.',
                 default => 'Akses ditolak',
             };
-            
+
             return response()->json([
                 'message' => $message,
                 'status' => $user->status,
@@ -184,26 +178,7 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Login berhasil.',
-            'token' => $token,
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'phone' => $user->phone,
-                'roles' => $user->roles->pluck('name'),
-                'merchants' => $user->merchants ? $user->merchants->map(function ($merchant) {
-                    return [
-                        'id' => $merchant->id,
-                        'name' => $merchant->name,
-                        'status' => $merchant->status,
-                        'segmentation_id' => $merchant->segmentation_id,
-                        'segmentation' => $merchant->segmentation ? [
-                            'id' => $merchant->segmentation->id,
-                            'name' => $merchant->segmentation->name,
-                        ] : null,
-                    ];
-                }) : [],
-            ],
+            'user' => $user,
         ]);
     }
 
@@ -235,7 +210,6 @@ class AuthController extends Controller
                     'slug' => $merchant->slug,
                     'name' => $merchant->name,
                     'status' => $merchant->status,
-                    'segmentation_id' => $merchant->segmentation_id,
                     'segmentation' => $merchant->segmentation ? [
                         'id' => $merchant->segmentation->id,
                         'name' => $merchant->segmentation->name,

@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Validator;
 class MerchantController extends Controller
 {
 
-    public function merchantProfilePictureShow(Request $request, Merchant $merchant)
+    public function merchantProfilePictureShow(Request $request, Merchant $merchant, ?string $v = null)
     {
         if ($request->hasValidSignature()) {
             return $this->streamMerchantAsset($merchant->logo_path);
@@ -24,7 +24,7 @@ class MerchantController extends Controller
         return $this->streamMerchantAsset($merchant->logo_path);
     }
 
-    public function merchantBannerShow(Request $request, Merchant $merchant)
+    public function merchantBannerShow(Request $request, Merchant $merchant, ?string $v = null)
     {
         if ($request->hasValidSignature()) {
             return $this->streamMerchantAsset($merchant->cover_path);
@@ -43,13 +43,13 @@ class MerchantController extends Controller
         $merchants = Merchant::query()
             ->where('user_id', $user->id)
             ->with([
-                    'segmentation:id,name',
-                    'primaryAddress',
-                    'primaryAddress.province:id,name',
-                    'primaryAddress.city:id,name',
-                    'primaryAddress.district:id,name',
-                    'primaryAddress.village:id,name',
-                ])
+                'segmentation:id,name',
+                'primaryAddress',
+                'primaryAddress.province:id,name',
+                'primaryAddress.city:id,name',
+                'primaryAddress.district:id,name',
+                'primaryAddress.village:id,name',
+            ])
             ->orderByDesc('id')
             ->get();
 
@@ -114,10 +114,10 @@ class MerchantController extends Controller
             ->where('status', 'approved')
             ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
             ->with([
-                    'segmentation:id,name',
-                    'primaryAddress:id,addressable_id,addressable_type,latitude,longitude,label',
-                    'addresses:id,addressable_id,addressable_type,latitude,longitude,label',
-                ])
+                'segmentation:id,name',
+                'primaryAddress:id,addressable_id,addressable_type,latitude,longitude,label',
+                'addresses:id,addressable_id,addressable_type,latitude,longitude,label',
+            ])
             ->get();
 
         $data = $merchants->map(function (Merchant $merchant) {
@@ -127,9 +127,7 @@ class MerchantController extends Controller
                 'id' => $merchant->id,
                 'name' => $merchant->name,
                 'slug' => $merchant->slug,
-                'logo_url' => $merchant->logo_path
-                    ? route('merchant_profile_pictures.show', ['merchant' => $merchant->id])
-                    : null,
+                'logo_url' => $merchant->logo_url,
                 'latitude' => $addr?->latitude,
                 'longitude' => $addr?->longitude,
                 'segmentation' => $merchant->segmentation
@@ -248,13 +246,13 @@ class MerchantController extends Controller
 
         $merchant = DB::transaction(function () use ($validated, $user) {
             $operationalHours = [
-                'monday' => ['is_open' => true, 'open' => '09:00', 'close' => '20:07'],
-                'tuesday' => ['is_open' => true, 'open' => '06:02', 'close' => '22:00'],
-                'wednesday' => ['is_open' => true, 'open' => '06:02', 'close' => '23:02'],
-                'thursday' => ['is_open' => true, 'open' => '06:00', 'close' => '22:00'],
+                'monday' => ['is_open' => false],
+                'tuesday' => ['is_open' => false],
+                'wednesday' => ['is_open' => false],
+                'thursday' => ['is_open' => false],
                 'friday' => ['is_open' => false],
-                'saturday' => ['is_open' => true, 'open' => '06:01', 'close' => '23:00'],
-                'sunday' => ['is_open' => true, 'open' => '06:00', 'close' => '18:00'],
+                'saturday' => ['is_open' => false],
+                'sunday' => ['is_open' => false],
             ];
 
             $merchant = Merchant::create([
@@ -321,11 +319,11 @@ class MerchantController extends Controller
         if (!$merchant->primaryAddress) {
             $fallback = $merchant->addresses()
                 ->with([
-                        'province:id,name',
-                        'city:id,name',
-                        'district:id,name',
-                        'village:id,name',
-                    ])
+                    'province:id,name',
+                    'city:id,name',
+                    'district:id,name',
+                    'village:id,name',
+                ])
                 ->latest('id')
                 ->first();
 
@@ -376,16 +374,16 @@ class MerchantController extends Controller
             'longitude' => ['nullable', 'numeric'],
 
             // images - more permissive validation
-            'logo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,gif,webp', 'max:2048'],
-            'cover' => ['nullable', 'file', 'mimes:jpg,jpeg,png,gif,webp', 'max:4096'],
+            'logo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,gif,webp', 'max:5120'],
+            'cover' => ['nullable', 'file', 'mimes:jpg,jpeg,png,gif,webp', 'max:5120'],
 
             // operational hours
             'operational_hours' => ['nullable', 'string'], // JSON string
         ], [
             'logo.mimes' => 'Logo harus berupa file gambar (jpg, jpeg, png, gif, webp)',
-            'logo.max' => 'Ukuran logo maksimal 2MB',
+            'logo.max' => 'Ukuran logo maksimal 5MB',
             'cover.mimes' => 'Cover harus berupa file gambar (jpg, jpeg, png, gif, webp)',
-            'cover.max' => 'Ukuran cover maksimal 4MB',
+            'cover.max' => 'Ukuran cover maksimal 5MB',
         ]);
 
         DB::beginTransaction();
@@ -534,9 +532,13 @@ class MerchantController extends Controller
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
         }, 200, [
             'Content-Type' => $mime,
-            'Cache-Control' => 'public, max-age=31536000',
+            // URLs are versioned (see {v?} in routes), so we can cache aggressively.
+            'Cache-Control' => 'public, max-age=31536000, immutable',
         ]);
     }
 

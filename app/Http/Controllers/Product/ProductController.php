@@ -347,11 +347,8 @@ class ProductController
         }
 
         // ✅ Logo merchant: expose sebagai URL API (hindari akses langsung /storage)
+        // URL sudah versioned dari accessor Merchant::getLogoUrlAttribute().
         if ($product->merchant) {
-            $product->merchant->logo_url = !empty($product->merchant->logo_path)
-                ? route('merchant_profile_pictures.show', ['merchant' => $product->merchant->id])
-                : null;
-
             // Optional: sembunyikan path mentah agar FE konsisten pakai logo_url
             $product->merchant->makeHidden(['logo_path']);
         }

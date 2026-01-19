@@ -9,9 +9,13 @@ use Illuminate\Support\Facades\Http;
 class MasterDataSeeder extends Seeder
 {
     private const BASE = 'https://www.emsifa.com/api-wilayah-indonesia/api';
+    private const CHUNK_SIZE = 500;
+    private const HTTP_TIMEOUT_SECONDS = 60;
 
     public function run(): void
     {
+        DB::disableQueryLog();
+
         DB::statement('SET FOREIGN_KEY_CHECKS=0;');
         DB::table('villages')->truncate();
         DB::table('districts')->truncate();
@@ -21,132 +25,146 @@ class MasterDataSeeder extends Seeder
 
         $now = now();
 
-        DB::beginTransaction();
-        try {
-            // Province
-            $provinceId = DB::table('provinces')->insertGetId([
-                'name' => 'Jawa Tengah',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
+        // 1) Provinces
+        $this->info('Seeding provinces...');
+        $provinces = $this->fetchJson(self::BASE . '/provinces.json');
+        $provinceRows = array_map(fn($p) => [
+            'id' => (int) $p['id'],
+            'name' => $p['name'],
+            'created_at' => $now,
+            'updated_at' => $now,
+        ], $provinces);
 
-            // City (Kota Surakarta)
-            $cityId = DB::table('cities')->insertGetId([
-                'province_id' => $provinceId,
-                'name' => 'Kota Surakarta',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            // District (Banjarsari)
-            $districtId = DB::table('districts')->insertGetId([
-                'city_id' => $cityId,
-                'name' => 'Banjarsari',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            // Village (Banyuanyar)
-            DB::table('villages')->insert([
-                'district_id' => $districtId,
-                'name' => 'Banyuanyar',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            DB::commit();
-            $this->info('Master wilayah minimal (Jateng/Surakarta/Banjarsari/Banyuanyar) tersimpan.');
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            throw $e;
+        foreach (array_chunk($provinceRows, self::CHUNK_SIZE) as $chunk) {
+            DB::table('provinces')->insert($chunk);
         }
-        // Hapus data lama dengan urutan aman FK
-        // DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-        // DB::table('villages')->truncate();
-        // DB::table('districts')->truncate();
-        // DB::table('cities')->truncate();
-        // DB::table('provinces')->truncate();
-        // DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+        $this->info('Provinces seeded: ' . count($provinceRows));
 
-        // $now = now();
+        // 2) Cities (Kab/Kota) from "regencies"
+        $this->info('Seeding cities (kab/kota)...');
+        foreach ($provinceRows as $prov) {
+            $regencies = $this->fetchJson(self::BASE . '/regencies/' . $prov['id'] . '.json');
+            $cityRows = array_map(fn($r) => [
+                'id' => (int) $r['id'],
+                'province_id' => (int) $prov['id'],
+                'name' => $r['name'],
+                'created_at' => $now,
+                'updated_at' => $now,
+            ], $regencies);
 
-        // // 1) Provinces
-        // $provinces = $this->fetchJson(self::BASE . '/provinces.json');
-        // $provinceRows = array_map(fn($p) => [
-        //     'id' => (int) $p['id'],
-        //     'name' => $p['name'],
-        //     'created_at' => $now,
-        //     'updated_at' => $now,
-        // ], $provinces);
+            foreach (array_chunk($cityRows, self::CHUNK_SIZE) as $chunk) {
+                DB::table('cities')->insert($chunk);
+            }
+            $this->info("Cities seeded for province {$prov['id']}: " . count($cityRows));
+        }
+        $this->info('Cities total: ' . DB::table('cities')->count());
 
-        // foreach (array_chunk($provinceRows, 500) as $chunk) {
-        //     DB::table('provinces')->insert($chunk);
-        // }
-        // $this->info('Provinces seeded: ' . count($provinceRows));
+        // 3) Districts (Kecamatan)
+        $this->info('Seeding districts (kecamatan)...');
+        $cityIds = DB::table('cities')->pluck('id')->all();
+        $seenDistrictIds = [];
+        foreach ($cityIds as $cityId) {
+            $districts = $this->fetchJson(self::BASE . '/districts/' . $cityId . '.json');
+            $districtRows = [];
+            foreach ($districts as $d) {
+                $districtId = (int) ($d['id'] ?? 0);
+                if (!$districtId) {
+                    continue;
+                }
+                if (isset($seenDistrictIds[$districtId])) {
+                    continue;
+                }
+                $seenDistrictIds[$districtId] = true;
+                $districtRows[] = [
+                    'id' => $districtId,
+                    'city_id' => (int) $cityId,
+                    'name' => $d['name'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
 
-        // // 2) Cities (pakai data "regencies" dari Emsifa)
-        // foreach ($provinceRows as $prov) {
-        //     $regencies = $this->fetchJson(self::BASE . '/regencies/' . $prov['id'] . '.json');
-        //     $cityRows = array_map(fn($r) => [
-        //         'id' => (int) $r['id'],      // gunakan ID Emsifa
-        //         'province_id' => (int) $prov['id'],
-        //         'name' => $r['name'],
-        //         'created_at' => $now,
-        //         'updated_at' => $now,
-        //     ], $regencies);
+            foreach (array_chunk($districtRows, self::CHUNK_SIZE) as $chunk) {
+                DB::table('districts')->insert($chunk);
+            }
+            $this->info("Districts seeded for city {$cityId}: " . count($districtRows));
+        }
+        $this->info('Districts total: ' . DB::table('districts')->count());
 
-        //     foreach (array_chunk($cityRows, 500) as $chunk) {
-        //         DB::table('cities')->insert($chunk);
-        //     }
-        //     $this->info("Cities seeded for province {$prov['id']}: " . count($cityRows));
-        // }
+        // 4) Villages (Kelurahan/Desa)
+        $this->info('Seeding villages (kelurahan/desa)...');
+        $districtIds = DB::table('districts')->pluck('id')->all();
+        $seenVillageIds = [];
+        $villageProgress = 0;
+        foreach ($districtIds as $districtId) {
+            $villages = $this->fetchJson(self::BASE . '/villages/' . $districtId . '.json');
+            $villageRows = [];
+            $duplicateCount = 0;
+            foreach ($villages as $v) {
+                $villageId = (int) ($v['id'] ?? 0);
+                if (!$villageId) {
+                    continue;
+                }
+                if (isset($seenVillageIds[$villageId])) {
+                    $duplicateCount++;
+                    continue;
+                }
+                $seenVillageIds[$villageId] = true;
+                $villageRows[] = [
+                    'id' => $villageId,
+                    'district_id' => (int) $districtId,
+                    'name' => $v['name'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
 
-        // // 3) Districts (pakai "districts/{regencyId}")
-        // $cityIds = DB::table('cities')->pluck('id')->all();
-        // foreach ($cityIds as $cityId) {
-        //     $districts = $this->fetchJson(self::BASE . '/districts/' . $cityId . '.json');
-        //     $districtRows = array_map(fn($d) => [
-        //         'id' => (int) $d['id'],
-        //         'city_id' => (int) $cityId,        // catatan: di schema Anda kolomnya city_id
-        //         'name' => $d['name'],
-        //         'created_at' => $now,
-        //         'updated_at' => $now,
-        //     ], $districts);
+            foreach (array_chunk($villageRows, self::CHUNK_SIZE) as $chunk) {
+                DB::table('villages')->insert($chunk);
+            }
 
-        //     foreach (array_chunk($districtRows, 500) as $chunk) {
-        //         DB::table('districts')->insert($chunk);
-        //     }
-        //     $this->info("Districts seeded for city {$cityId}: " . count($districtRows));
-        // }
+            $villageProgress++;
+            if ($duplicateCount > 0) {
+                $this->info("Duplicate village IDs skipped for district {$districtId}: {$duplicateCount}");
+            }
 
-        // // 4) Villages (pakai "villages/{districtId}")
-        // $districtIds = DB::table('districts')->pluck('id')->all();
-        // foreach ($districtIds as $districtId) {
-        //     $villages = $this->fetchJson(self::BASE . '/villages/' . $districtId . '.json');
-        //     $villageRows = array_map(fn($v) => [
-        //         'id' => (int) $v['id'],
-        //         'district_id' => (int) $districtId,
-        //         'name' => $v['name'],
-        //         'created_at' => $now,
-        //         'updated_at' => $now,
-        //     ], $villages);
+            // avoid too chatty output
+            if (($villageProgress % 100) === 0) {
+                $this->info("Villages progress... processed districts: {$villageProgress}");
+            }
+        }
+        $this->info('Villages total: ' . DB::table('villages')->count());
 
-        //     foreach (array_chunk($villageRows, 500) as $chunk) {
-        //         DB::table('villages')->insert($chunk);
-        //     }
-        //     $this->info("Villages seeded for district {$districtId}: " . count($villageRows));
-        // }
-
-        // $this->info('Wilayah seeding completed.');
+        $this->info('Wilayah seeding completed.');
     }
 
     private function fetchJson(string $url): array
     {
-        $resp = Http::retry(5, 500)->get($url);
+        $cacheDir = storage_path('app/wilayah-cache');
+        if (!is_dir($cacheDir)) {
+            @mkdir($cacheDir, 0777, true);
+        }
+
+        $cacheKey = preg_replace('/[^a-zA-Z0-9._-]+/', '_', $url);
+        $cacheFile = $cacheDir . DIRECTORY_SEPARATOR . $cacheKey . '.json';
+
+        if (is_file($cacheFile)) {
+            $json = json_decode((string) file_get_contents($cacheFile), true);
+            return is_array($json) ? $json : [];
+        }
+
+        /** @var \Illuminate\Http\Client\Response $resp */
+        $resp = Http::timeout(self::HTTP_TIMEOUT_SECONDS)->retry(5, 500)->get($url);
         if ($resp->failed()) {
             throw new \RuntimeException("Failed requesting: {$url}");
         }
-        return $resp->json() ?? [];
+
+        $json = $resp->json() ?? [];
+        if (is_array($json)) {
+            @file_put_contents($cacheFile, json_encode($json));
+        }
+
+        return $json;
     }
 
     private function info(string $message): void

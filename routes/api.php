@@ -1,22 +1,11 @@
-
 <?php
 
 use Illuminate\Support\Facades\Route;
-
-
-// Legacy (Jasa / Promo / Orders)
-use Illuminate\Support\Facades\Request;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
 use App\Http\Controllers\JasaCategoryController;
-use App\Http\Controllers\PromoController;
 use App\Http\Controllers\OrderController;
-use App\Models\Jasa;
-
-// ✅ NEW: Packages (Jasa paket)
 use App\Http\Controllers\PackageController;
-
-// Controllers baru
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\SearchController;
@@ -41,14 +30,12 @@ use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\ProductOptionValueImageController;
 use App\Http\Controllers\ChatController;
-
-// 🆕 ADDED FROM feat/rating-system: Profile Controller
 use App\Http\Controllers\ProfileController;
 
 // ============================================================
 // HEALTH CHECK
 // ============================================================
-Route::get('/', fn () => response()->json(['status' => 'API is running']));
+Route::get('/', fn() => response()->json(['status' => 'API is running']));
 
 // Compatibility: define a lightweight `login` route for API middleware
 // Some auth middleware calls `route('login')` when redirecting unauthenticated
@@ -70,9 +57,6 @@ Route::prefix('public')->name('public.')->group(function () {
     Route::get('/jasas/{id}', [JasaController::class, 'publicShow']);    // Public Products
     Route::prefix('products')->name('products.')->group(function () {
         // Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
-        // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
-
-        // 🆕 FROM feat/rating-system: Featured products endpoint
         // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
 
         // ✅ Public show by slug (only published)
@@ -172,9 +156,11 @@ Route::get('profile_pictures/{user}', [ProfileController::class, 'profilePicture
     ->name('profile_pictures.show');
 
 // Merchant media (logo & banner) served via API
-Route::get('merchant-profile-pictures/{merchant}', [MerchantController::class, 'merchantProfilePictureShow'])
+// NOTE: Optional {v} is a cache-busting/version segment derived from stored filename.
+// Old clients can still call the URL without {v}.
+Route::get('merchant-profile-pictures/{merchant}/{v?}', [MerchantController::class, 'merchantProfilePictureShow'])
     ->name('merchant_profile_pictures.show');
-Route::get('merchant-banner/{merchant}', [MerchantController::class, 'merchantBannerShow'])
+Route::get('merchant-banner/{merchant}/{v?}', [MerchantController::class, 'merchantBannerShow'])
     ->name('merchant_banner.show');
 
 // ============================================================
@@ -236,6 +222,32 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     Route::prefix('profile')->controller(ProfileController::class)->group(function () {
         Route::get('/address', 'addressShow')->name('profile.address.show');
         Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
+    });
+
+    // PROTECTED Community Actions (require auth)
+    Route::prefix('community')->group(function () {
+
+        // My Posts (auth required)
+        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
+            ->name('community.posts.my');
+
+        // Create, Update, Delete Posts (auth required)
+        Route::post('/posts', [CommunityPostController::class, 'store'])
+            ->name('community.posts.store');
+        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
+            ->name('community.posts.update');
+        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
+            ->name('community.posts.destroy');
+
+        // Comments CRUD (auth required)
+        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
+            ->name('community.comments.store');
+        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
+            ->name('community.comments.reply');
+        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
+            ->name('community.comments.destroy');
+        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
+            ->name('community.comments.my-comments');
     });
 
     // CUSTOMER ONLY: Register Merchant
@@ -349,182 +361,136 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
             Route::patch('{merchant:slug}/vouchers/{voucher}/status', [VoucherController::class, 'updateStatus'])
                 ->name('merchant.update-status');
         });
-
-
-
-
-
     });
 
-    // PROTECTED Community Actions (require auth)
-    Route::prefix('community')->group(function () {
+    // ============================================================
+    // ADMIN ROUTES (Protected)
+    // ============================================================
+    Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(function () {
 
-        // My Posts (auth required)
-        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
-            ->name('community.posts.my');
+        // ===== DASHBOARD STATISTICS =====
+        Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
+        Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']);
+        Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']); // ✅ NEW
 
-        // Create, Update, Delete Posts (auth required)
-        Route::post('/posts', [CommunityPostController::class, 'store'])
-            ->name('community.posts.store');
-        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
-            ->name('community.posts.update');
-        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
-            ->name('community.posts.destroy');
+        // ===== DASHBOARD USER MANA0GEMENT (NEW) =====
+        Route::get('/dashboard', [AdminUserController::class, 'dashboard'])->name('dashboard');
 
-        // Comments CRUD (auth required)
-        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
-            ->name('community.comments.store');
-        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
-            ->name('community.comments.reply');
-        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
-            ->name('community.comments.destroy');
-        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
-            ->name('community.comments.my-comments');
-    });
-});
+        // ===== USER MANAGEMENT =====
+        Route::prefix('users')->name('users.')->group(function () {
+            Route::get('/', [AdminUserController::class, 'index'])->name('index');
+            Route::post('/', [AdminUserController::class, 'store'])->name('store');
+            Route::get('/roles', [AdminUserController::class, 'getRoles'])->name('roles');
+            Route::get('/{id}/login-trend', [AdminUserController::class, 'loginTrend'])->name('login-trend');
+            Route::get('/overview-stats', [AdminUserController::class, 'overviewStats'])->name('overview-stats');
+            Route::get('/{id}/export-pdf', [AdminUserController::class, 'exportUserDetailPdf'])->name('exportUserDetailPdf');
+            Route::get('/export-pdf', [AdminUserController::class, 'exportPdf'])->name('export-pdf');
 
-// ============================================================
-// PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
-// ============================================================
-// Keep legacy FE paths working by redirecting to the new
-// public-prefixed endpoints. These are simple HTTP redirects
-// and avoid duplicating controller logic.
-Route::redirect('jasa', 'public/jasas');
-Route::redirect('jasa/{id}', 'public/jasas/{id}');
+            Route::get('/{id}', [AdminUserController::class, 'show'])->name('show');
+            Route::put('/{id}', [AdminUserController::class, 'update'])->name('update');
+            Route::delete('/{id}', [AdminUserController::class, 'destroy'])->name('destroy');
+            Route::post('/bulk-status', [AdminUserController::class, 'bulkUpdateStatus'])->name('bulk-status');
 
+            // ===== USER ACTIONS (NEW) =====
+            Route::post('/{id}/warn', [AdminUserController::class, 'warn'])->name('warn');
+            Route::post('/{id}/suspend', [AdminUserController::class, 'suspend'])->name('suspend');
+            Route::post('/{id}/unsuspend', [AdminUserController::class, 'unsuspend'])->name('unsuspend');
+            Route::patch('/{id}/status', [AdminUserController::class, 'changeStatus'])->name('change-status');
+            Route::post('/{id}/notify', [AdminUserController::class, 'notify'])->name('notify');
+        });
 
-// ---------- PROMO ----------
-Route::prefix('promos')->group(function () {
-    Route::get('/', [PromoController::class, 'index']);
-    Route::get('/{id}', [PromoController::class, 'show'])->name('promos.show');
-});
+        // ===== MERCHANT MANAGEMENT =====
+        Route::prefix('merchants')->name('merchants.')->group(function () {
+            Route::get('/', [AdminMerchantController::class, 'index'])->name('index');
+            Route::post('/', [AdminMerchantController::class, 'store'])->name('store');
+            Route::get('/{id}/export-pdf', [AdminMerchantController::class, 'exportMerchantDetailPdf'])->name('exportMerchantDetailPdf');
+            Route::get('/export-pdf', [AdminMerchantController::class, 'exportPdf'])->name('export-pdf');
+            Route::get('/{id}', [AdminMerchantController::class, 'show'])->name('show');
+            Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
+            Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
+            Route::patch('/{id}/toggle-status', [AdminMerchantController::class, 'toggleStatus'])->name('toggle-status');
+            Route::get('/{id}/statistics', [AdminMerchantController::class, 'statistics'])->name('statistics');
+        });
 
-// ============================================================
-// ADMIN ROUTES (Protected)
-// ============================================================
-Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(function () {
+        // ===== PAGUYUBAN MANAGEMENT =====
+        Route::prefix('paguyubans')->name('paguyubans.')->group(function () {
+            Route::get('/', [PaguyubanController::class, 'index'])->name('index');
+            Route::post('/', [PaguyubanController::class, 'store'])->name('store');
+            Route::get('/{id}', [PaguyubanController::class, 'show'])->name('show');
+            Route::put('/{id}', [PaguyubanController::class, 'update'])->name('update');
+            Route::delete('/{id}', [PaguyubanController::class, 'destroy'])->name('destroy');
+            Route::patch('/{id}/toggle-status', [PaguyubanController::class, 'toggleStatus'])->name('toggle-status');
+        });
 
-    // ===== DASHBOARD STATISTICS =====
-    Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
-    Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']);
-    Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']); // ✅ NEW
+        // ===== CATEGORY MANAGEMENT =====
+        Route::prefix('categories')->name('categories.')->group(function () {
+            Route::get('/', [CategoryController::class, 'adminIndex'])->name('index');
+            Route::post('/', [CategoryController::class, 'store'])->name('store');
+            Route::get('/{id}', [CategoryController::class, 'show'])->name('show');
+            Route::put('/{id}', [CategoryController::class, 'update'])->name('update');
+            Route::delete('/{id}', [CategoryController::class, 'destroy'])->name('destroy');
+        });
 
-    // ===== DASHBOARD USER MANA0GEMENT (NEW) =====
-    Route::get('/dashboard', [AdminUserController::class, 'dashboard'])->name('dashboard');
+        // ===== EVENT MANAGEMENT =====
+        Route::prefix('events')->name('events.')->group(function () {
+            Route::get('/', [AdminEventController::class, 'index'])->name('index');
+            Route::post('/', [AdminEventController::class, 'store'])->name('store');
+            Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf');
 
-    // ===== USER MANAGEMENT =====
-    Route::prefix('users')->name('users.')->group(function () {
-        Route::get('/', [AdminUserController::class, 'index'])->name('index');
-        Route::post('/', [AdminUserController::class, 'store'])->name('store');
-        Route::get('/roles', [AdminUserController::class, 'getRoles'])->name('roles');
-        Route::get('/{id}/login-trend', [AdminUserController::class, 'loginTrend'])->name('login-trend');
-        Route::get('/overview-stats', [AdminUserController::class, 'overviewStats'])->name('overview-stats');
-        Route::get('/{id}/export-pdf', [AdminUserController::class, 'exportUserDetailPdf'])->name('exportUserDetailPdf');
-        Route::get('/export-pdf', [AdminUserController::class, 'exportPdf'])->name('export-pdf');
+            //  Manual trigger auto-archive
+            Route::post('/auto-archive', [AdminEventController::class, 'triggerAutoArchive'])->name('auto-archive');
 
-        Route::get('/{id}', [AdminUserController::class, 'show'])->name('show');
-        Route::put('/{id}', [AdminUserController::class, 'update'])->name('update');
-        Route::delete('/{id}', [AdminUserController::class, 'destroy'])->name('destroy');
-        Route::post('/bulk-status', [AdminUserController::class, 'bulkUpdateStatus'])->name('bulk-status');
+            Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
+            Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
+            Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
+            Route::post('/{event}/invite-merchants', [AdminEventController::class, 'inviteMerchants'])->name('invite-merchants');
+            Route::post('/{event}/vouchers/attach', [AdminEventController::class, 'attachVoucher']);
+            Route::delete('/{event}/vouchers/{voucher}', [AdminEventController::class, 'detachVoucher']);
+            Route::get('/vouchers/available', [AdminEventController::class, 'availableVouchers']);
+            Route::delete('/{event}/merchants/{merchant}', [AdminEventController::class, 'removeMerchant']);
+            Route::post('/{event}/merchants/{merchant}/restore', [AdminEventController::class, 'restoreMerchant']);
+            Route::get('/{event}/merchants/removed', [AdminEventController::class, 'removedMerchants']);
+        });
 
-        // ===== USER ACTIONS (NEW) =====
-        Route::post('/{id}/warn', [AdminUserController::class, 'warn'])->name('warn');
-        Route::post('/{id}/suspend', [AdminUserController::class, 'suspend'])->name('suspend');
-        Route::post('/{id}/unsuspend', [AdminUserController::class, 'unsuspend'])->name('unsuspend');
-        Route::patch('/{id}/status', [AdminUserController::class, 'changeStatus'])->name('change-status');
-        Route::post('/{id}/notify', [AdminUserController::class, 'notify'])->name('notify');
-    });
+        // ===== VOUCHER MANAGEMENT =====
+        Route::prefix('vouchers')->name('vouchers.')->group(function () {
+            Route::get('/', [AdminVoucherController::class, 'index']);
+            Route::post('/', [AdminVoucherController::class, 'store']);
+            Route::get('/export-pdf', [AdminVoucherController::class, 'exportPdf'])->name('export-pdf'); // ✅ NEW
+            Route::get('/{id}', [AdminVoucherController::class, 'show']);
+            Route::post('/{voucher}/assign-merchants', [AdminVoucherController::class, 'assignMerchants']);
+            Route::post('/{id}/activate', [AdminVoucherController::class, 'activate'])->name('activate');
+            Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
+        });
 
-    // ===== MERCHANT MANAGEMENT =====
-    Route::prefix('merchants')->name('merchants.')->group(function () {
-        Route::get('/', [AdminMerchantController::class, 'index'])->name('index');
-        Route::post('/', [AdminMerchantController::class, 'store'])->name('store');
-        Route::get('/{id}/export-pdf', [AdminMerchantController::class, 'exportMerchantDetailPdf'])->name('exportMerchantDetailPdf');
-        Route::get('/export-pdf', [AdminMerchantController::class, 'exportPdf'])->name('export-pdf');
-        Route::get('/{id}', [AdminMerchantController::class, 'show'])->name('show');
-        Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
-        Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
-        Route::patch('/{id}/toggle-status', [AdminMerchantController::class, 'toggleStatus'])->name('toggle-status');
-        Route::get('/{id}/statistics', [AdminMerchantController::class, 'statistics'])->name('statistics');
-    });
+        // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
+        Route::prefix('reports')->name('reports.')->group(function () {
+            Route::get('/', [ContentReportController::class, 'index'])->name('index');
+            Route::get('/{id}', [ContentReportController::class, 'show'])->name('show');
+            Route::put('/{id}', [ContentReportController::class, 'update'])->name('update');
+            Route::patch('/{id}/review', [ContentReportController::class, 'review'])->name('review');
+            Route::delete('/{id}', [ContentReportController::class, 'destroy'])->name('destroy');
+        });
 
-    // ===== PAGUYUBAN MANAGEMENT =====
-    Route::prefix('paguyubans')->name('paguyubans.')->group(function () {
-        Route::get('/', [PaguyubanController::class, 'index'])->name('index');
-        Route::post('/', [PaguyubanController::class, 'store'])->name('store');
-        Route::get('/{id}', [PaguyubanController::class, 'show'])->name('show');
-        Route::put('/{id}', [PaguyubanController::class, 'update'])->name('update');
-        Route::delete('/{id}', [PaguyubanController::class, 'destroy'])->name('destroy');
-        Route::patch('/{id}/toggle-status', [PaguyubanController::class, 'toggleStatus'])->name('toggle-status');
-    });
+        // Report Reasons
+        Route::get('/report-reasons', [ContentReportController::class, 'reasons'])->name('report-reasons');
 
-    // ===== CATEGORY MANAGEMENT =====
-    Route::prefix('categories')->name('categories.')->group(function () {
-        Route::get('/', [CategoryController::class, 'adminIndex'])->name('index');
-        Route::post('/', [CategoryController::class, 'store'])->name('store');
-        Route::get('/{id}', [CategoryController::class, 'show'])->name('show');
-        Route::put('/{id}', [CategoryController::class, 'update'])->name('update');
-        Route::delete('/{id}', [CategoryController::class, 'destroy'])->name('destroy');
-    });
+        // ===== COMMUNITY MODERATION =====
+        Route::prefix('community')->name('community.')->group(function () {
+            Route::get('/posts', [CommunityPostController::class, 'adminIndex'])->name('posts.index');
+            Route::delete('/posts/{id}', [CommunityPostController::class, 'adminDestroy'])->name('posts.destroy');
+            Route::get('/comments', [PostCommentController::class, 'adminIndex'])->name('comments.index');
+            Route::delete('/comments/{id}', [PostCommentController::class, 'adminDestroy'])->name('comments.destroy');
+        });
 
-    // ===== EVENT MANAGEMENT =====
-    Route::prefix('events')->name('events.')->group(function () {
-        Route::get('/', [AdminEventController::class, 'index'])->name('index');
-        Route::post('/', [AdminEventController::class, 'store'])->name('store');
-        Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf');
-
-        //  Manual trigger auto-archive
-        Route::post('/auto-archive', [AdminEventController::class, 'triggerAutoArchive'])->name('auto-archive');
-
-        Route::get('/{id}', [AdminEventController::class, 'show'])->name('show');
-        Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
-        Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
-        Route::post('/{event}/invite-merchants', [AdminEventController::class, 'inviteMerchants'])->name('invite-merchants');
-        Route::post('/{event}/vouchers/attach', [AdminEventController::class, 'attachVoucher']);
-        Route::delete('/{event}/vouchers/{voucher}', [AdminEventController::class, 'detachVoucher']);
-        Route::get('/vouchers/available', [AdminEventController::class, 'availableVouchers']);
-        Route::delete('/{event}/merchants/{merchant}', [AdminEventController::class, 'removeMerchant']);
-        Route::post('/{event}/merchants/{merchant}/restore', [AdminEventController::class, 'restoreMerchant']);
-        Route::get('/{event}/merchants/removed', [AdminEventController::class, 'removedMerchants']);
-    });
-
-    // ===== VOUCHER MANAGEMENT =====
-    Route::prefix('vouchers')->name('vouchers.')->group(function () {
-        Route::get('/', [AdminVoucherController::class, 'index']);
-        Route::post('/', [AdminVoucherController::class, 'store']);
-        Route::get('/export-pdf', [AdminVoucherController::class, 'exportPdf'])->name('export-pdf'); // ✅ NEW
-        Route::get('/{id}', [AdminVoucherController::class, 'show']);
-        Route::post('/{voucher}/assign-merchants', [AdminVoucherController::class, 'assignMerchants']);
-        Route::post('/{id}/activate', [AdminVoucherController::class, 'activate'])->name('activate');
-        Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
-    });
-
-    // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
-    Route::prefix('reports')->name('reports.')->group(function () {
-        Route::get('/', [ContentReportController::class, 'index'])->name('index');
-        Route::get('/{id}', [ContentReportController::class, 'show'])->name('show');
-        Route::put('/{id}', [ContentReportController::class, 'update'])->name('update');
-        Route::patch('/{id}/review', [ContentReportController::class, 'review'])->name('review');
-        Route::delete('/{id}', [ContentReportController::class, 'destroy'])->name('destroy');
-    });
-
-    // Report Reasons
-    Route::get('/report-reasons', [ContentReportController::class, 'reasons'])->name('report-reasons');
-
-    // ===== COMMUNITY MODERATION =====
-    Route::prefix('community')->name('community.')->group(function () {
-        Route::get('/posts', [CommunityPostController::class, 'adminIndex'])->name('posts.index');
-        Route::delete('/posts/{id}', [CommunityPostController::class, 'adminDestroy'])->name('posts.destroy');
-        Route::get('/comments', [PostCommentController::class, 'adminIndex'])->name('comments.index');
-        Route::delete('/comments/{id}', [PostCommentController::class, 'adminDestroy'])->name('comments.destroy');
-    });
-
-    // ===== PRODUCT MODERATION =====
-    Route::prefix('products')->name('products.')->group(function () {
-        Route::get('/', [ProductController::class, 'adminIndex'])->name('index');
-        Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
+        // ===== PRODUCT MODERATION =====
+        Route::prefix('products')->name('products.')->group(function () {
+            Route::get('/', [ProductController::class, 'adminIndex'])->name('index');
+            Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
+        });
     });
 });
+
 
 // ✅ Event banner streaming route (should already exist)
 Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])

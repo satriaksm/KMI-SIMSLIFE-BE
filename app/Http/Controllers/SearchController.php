@@ -703,9 +703,7 @@ class SearchController extends Controller
                 $payload['products_count'] = (int) ($merchant->products_count ?? 0)
                     + (int) ($merchant->jasas_count ?? 0);
 
-                $payload['logo_url'] = !empty($merchant->logo_path)
-                    ? route('merchant_profile_pictures.show', ['merchant' => $merchant->id])
-                    : null;
+                $payload['logo_url'] = $merchant->logo_url;
 
                 unset($payload['logo_path']);
                 unset($payload['operational_hours']);
