@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use App\Helpers\ApiResponse;
+
 
 class CartController extends Controller
 {
@@ -274,10 +276,10 @@ class CartController extends Controller
             ];
         });
 
-        return response()->json([
-            'success' => true,
-            'data' => $cartStores
-        ]);
+        return ApiResponse::success(
+            $cartStores,
+            'Cart fetched'
+        );
     }
     public function updateQuantity(Request $request, $id)
     {
@@ -309,12 +311,10 @@ class CartController extends Controller
         $totalAfterUpdate = $otherItemsQty + $request->quantity;
 
         if ($totalAfterUpdate > $availableStock) {
-            return response()->json([
-                'message' => 'Stok tidak mencukupi. Total di keranjang akan melebihi stok tersedia.',
-                'available_stock' => $availableStock,
-                'current_other_items_qty' => $otherItemsQty,
-                'requested' => $request->quantity,
-            ], 422);
+            return ApiResponse::error(
+                'Stok tidak mencukupi. Total di keranjang akan melebihi stok tersedia.',
+                422
+            );
         }
 
         $cartItem->update([
@@ -354,17 +354,21 @@ class CartController extends Controller
             if ($cart->items()->count() === 0) {
                 $cart->delete();
 
-                return response()->json([
-                    'message' => 'Item removed and cart deleted',
-                    'cart_deleted' => true,
-                ]);
+                return ApiResponse::success(
+                    [
+                        'cart_deleted' => true,
+                    ],
+                    'Item removed and cart deleted'
+                );
             }
 
-            return response()->json([
-                'message' => 'Item removed from cart',
-                'cart_item_id' => $cartItem->id,
-                'cart_deleted' => false,
-            ]);
+            return ApiResponse::success(
+                [
+                    'cart_item_id' => $cartItem->id,
+                    'cart_deleted' => false,
+                ],
+                'Item removed from cart'
+            );
         });
     }
 
@@ -459,21 +463,21 @@ class CartController extends Controller
             $totalAfterAdd = $currentQtyInCart + $requestedQty;
 
             if ($totalAfterAdd > $availableStock) {
-                return response()->json([
-                    'message' => 'Stok tidak mencukupi',
-                    'available_stock' => $availableStock,
-                    'current_in_cart' => $currentQtyInCart,
-                    'requested' => $requestedQty,
-                ], 422);
+                return ApiResponse::error(
+                    'Stok tidak mencukupi',
+                    422
+                );
             }
 
             if ($existingItem) {
                 $existingItem->increment('quantity', $requestedQty);
 
-                return response()->json([
-                    'message' => 'Cart item quantity updated',
-                    'cart_item_id' => $existingItem->id,
-                ]);
+                return ApiResponse::success(
+                    [
+                        'cart_item_id' => $existingItem->id,
+                    ],
+                    'Cart item quantity updated'
+                );
             }
 
 
@@ -526,10 +530,12 @@ class CartController extends Controller
                 $cartItem->addons()->createMany($addonData->toArray());
             }
 
-            return response()->json([
-                'message' => 'Added to cart',
-                'cart_item_id' => $cartItem->id,
-            ]);
+            return ApiResponse::success(
+                [
+                    'cart_item_id' => $cartItem->id,
+                ],
+                'Added to cart'
+            );
         });
     }
 
@@ -633,10 +639,12 @@ class CartController extends Controller
                 $cartItem->addons()->createMany($addonData->toArray());
             }
 
-            return response()->json([
-                'message' => 'Varian berhasil diperbarui',
-                'cart_item_id' => $cartItem->id,
-            ]);
+            return ApiResponse::success(
+                [
+                    'cart_item_id' => $cartItem->id,
+                ],
+                'Varian berhasil diperbarui'
+            );
         });
     }
 
@@ -659,9 +667,10 @@ class CartController extends Controller
             $cart->delete();
         });
 
-        return response()->json([
-            'message' => 'Cart berhasil dikosongkan',
-        ]);
+        return ApiResponse::success(
+            null,
+            'Cart berhasil dikosongkan'
+        );
     }
 
 
@@ -671,17 +680,19 @@ class CartController extends Controller
         $userId = Auth::id();
 
         if (!$userId) {
-            return response()->json([
-                'count' => 0,
-            ]);
+            return ApiResponse::success(
+                ['count' => 0],
+                'Cart item count retrieved successfully.'
+            );
         }
 
         $count = Cart::where('user_id', $userId)
             ->withSum('items as total_quantity', 'quantity')
             ->value('total_quantity');
 
-        return response()->json([
-            'count' => (int) ($count ?? 0),
-        ]);
+        return ApiResponse::success(
+            ['count' => (int) ($count ?? 0)],
+            'Cart item count retrieved successfully.'
+        );
     }
 }

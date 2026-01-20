@@ -3,12 +3,14 @@
 namespace App\Http\Controllers;
 
 use Carbon\Carbon;
-use App\Models\Merchant;
 use App\Models\Address;
+use App\Models\Merchant;
+use Illuminate\Support\Arr;
+use App\Helpers\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
@@ -42,70 +44,12 @@ class MerchantController extends Controller
 
         $merchants = Merchant::query()
             ->where('user_id', $user->id)
-            ->with([
-                'segmentation:id,name',
-                'primaryAddress',
-                'primaryAddress.province:id,name',
-                'primaryAddress.city:id,name',
-                'primaryAddress.district:id,name',
-                'primaryAddress.village:id,name',
-            ])
+            ->where('status', '!=', 'rejected')
+            ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
             ->orderByDesc('id')
             ->get();
 
-        return response()->json([
-            'data' => $merchants,
-        ]);
-    }
-    /**
-     * ✅ NEW: Public endpoint untuk list merchants
-     * Menampilkan merchant yang sudah approved
-     */
-    public function publicIndex(Request $request)
-    {
-        $perPage = $request->input('per_page', 12);
-        $search = $request->input('search');
-        $segmentationId = $request->input('segmentation_id');
-        $cityId = $request->input('city_id');
-        $random = $request->boolean('random', false); // Default false
-
-        $query = Merchant::with([
-            'segmentation:id,name',
-            'primaryAddress', // ✅ Load full address relation
-            'primaryAddress.province:id,name',
-            'primaryAddress.city:id,name', // ✅ Ini akan load dari Regency
-            'primaryAddress.district:id,name',
-        ])
-            ->where('status', 'approved')
-            ->withCount('products'); // Hitung jumlah produk
-
-        // Filter by search (nama merchant)
-        if ($search) {
-            $query->where('name', 'like', "%{$search}%");
-        }
-
-        // Filter by segmentation
-        if ($segmentationId) {
-            $query->where('segmentation_id', $segmentationId);
-        }
-
-        // Filter by city
-        if ($cityId) {
-            $query->whereHas('primaryAddress', function ($q) use ($cityId) {
-                $q->where('city_id', $cityId);
-            });
-        }
-
-        // ✅ Random order jika diminta
-        if ($random) {
-            $query->inRandomOrder();
-        } else {
-            $query->latest(); // Default: newest first
-        }
-
-        $merchants = $query->paginate($perPage);
-
-        return response()->json($merchants);
+        return ApiResponse::success($merchants, 'Berhasil mengambil data merchant milik pengguna.');
     }
 
     public function mapIndex()
@@ -136,8 +80,10 @@ class MerchantController extends Controller
             ];
         });
 
-        return response()->json($data);
+        return ApiResponse::success($data, 'Berhasil mengambil data merchant untuk peta.');
+
     }
+
     public function publicShow(Request $request, $merchantSlug)
     {
         // Cari berdasarkan slug atau id
@@ -173,12 +119,29 @@ class MerchantController extends Controller
         }
 
         $data = $merchant->toArray();
+
+        if (isset($data['primary_address'])) {
+            $data['primary_address'] = Arr::except($data['primary_address'], [
+                'label',
+                'created_at',
+                'updated_at',
+            ]);
+        }
+
         $data['latitude'] = $lat;
         $data['longitude'] = $lng;
 
-        return response()->json([
-            'data' => $data,
+        // Hapus field yang tidak ingin ditampilkan
+        $data = Arr::except($data, [
+            'status',
+            'rejection_reason',
+            'reviewed_by',
+            'response_at',
+            'created_at',
+            'updated_at',
         ]);
+
+        return ApiResponse::success($data, 'success');
     }
 
     // Customer mendaftar UMKM -> status pending
@@ -188,9 +151,10 @@ class MerchantController extends Controller
 
         // Wajib punya role "customer" - Using hasRole helper for safety
         if (!$user->hasRole('customer')) {
-            return response()->json([
-                'message' => 'Akses ditolak. Hanya pengguna dengan role customer yang dapat mendaftar UMKM.',
-            ], 403);
+            return ApiResponse::error(
+                'Akses ditolak. Hanya pengguna dengan role customer yang dapat mendaftar UMKM.',
+                403
+            );
         }
 
         $already = Merchant::query()
@@ -198,9 +162,10 @@ class MerchantController extends Controller
             ->whereIn('status', ['pending'])
             ->exists();
         if ($already) {
-            return response()->json([
-                'message' => 'Anda sudah memiliki pendaftaran UMKM yang menunggu.',
-            ], 422);
+            return ApiResponse::error(
+                'Anda sudah memiliki pendaftaran UMKM yang menunggu.',
+                422
+            );
         }
 
         $validator = Validator::make(
@@ -236,10 +201,11 @@ class MerchantController extends Controller
         );
 
         if ($validator->fails()) {
-            return response()->json([
-                'message' => 'Data yang diberikan tidak valid.',
-                'errors' => $validator->errors(),
-            ], 422);
+            return ApiResponse::error(
+                'Data yang diberikan tidak valid.',
+                422,
+                $validator->errors()
+            );
         }
 
         $validated = $validator->validated();
@@ -264,7 +230,6 @@ class MerchantController extends Controller
                 'phone' => $validated['phone'],
                 'logo_path' => null,
                 'operational_hours' => $operationalHours,
-                // 'status' default 'pending' dari migration
             ]);
 
             $addr = $validated['address'];
@@ -282,14 +247,10 @@ class MerchantController extends Controller
             return $merchant;
         });
 
-        return response()->json([
-            'message' => 'Pendaftaran UMKM berhasil dikirim. Menunggu persetujuan admin.',
+        return ApiResponse::success([
             'merchant' => $merchant->load(['segmentation', 'primaryAddress']),
-        ], 201);
+        ], 'Pendaftaran UMKM berhasil dikirim. Menunggu persetujuan admin.');
     }
-
-
-
 
     // 🆕 ADDED from feat/rating-system: UMKM owner lihat profile sendiri
     /**
@@ -300,9 +261,7 @@ class MerchantController extends Controller
     {
         $user = $request->user();
 
-        if ((int) $merchant->user_id !== (int) $user->id) {
-            abort(404);
-        }
+        $this->authorize('view', $merchant);
 
         $merchant->load([
             'segmentation',
@@ -332,9 +291,8 @@ class MerchantController extends Controller
             }
         }
 
-        return response()->json([
-            'data' => $merchant,
-        ]);
+        return ApiResponse::success($merchant, 'success');
+
     }
 
     // 🆕 ADDED from feat/rating-system: UMKM owner update profile
@@ -344,6 +302,8 @@ class MerchantController extends Controller
      */
     public function updateMyMerchant(Request $request, Merchant $merchant)
     {
+        $this->authorize('update', $merchant);
+
         $user = $request->user();
         Log::info('Merchant update request:', [
             'merchant_id' => $merchant->id,
@@ -484,19 +444,20 @@ class MerchantController extends Controller
 
             DB::commit();
 
-            return response()->json([
-                'message' => 'Profil UMKM berhasil diperbarui',
-                'data' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-            ]);
+            return ApiResponse::success([
+                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+            ], 'Profil UMKM berhasil diperbarui.');
+
         } catch (\Throwable $e) {
             DB::rollBack();
 
             Log::error('Error updating merchant profile: ' . $e->getMessage());
 
-            return response()->json([
-                'message' => 'Gagal memperbarui profil',
-                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
-            ], 500);
+            return ApiResponse::error(
+                'Gagal memperbarui profil',
+                500,
+                config('app.debug') ? $e->getMessage() : null
+            );
         }
     }
 

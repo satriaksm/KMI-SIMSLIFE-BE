@@ -4,12 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\Voucher;
 use App\Models\Merchant;
+use App\Helpers\ApiResponse;
 use App\Models\VoucherUsage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Carbon;
 
 class VoucherController extends Controller
 {
@@ -80,7 +81,7 @@ class VoucherController extends Controller
         if ($request->order_amount < $voucher->min_purchase_amount) {
             return response()->json([
                 'valid' => false,
-                'message' => "Minimum purchase amount is Rp " . number_format($voucher->min_purchase_amount, 0, ',', '.'),
+                'message' => "Minimum purchase amount is Rp " . number_format((float) $voucher->min_purchase_amount, 0, ',', '.'),
             ], 422);
         }
 
@@ -277,17 +278,9 @@ class VoucherController extends Controller
         ]);
     }
 
-    protected function authorizeMerchant(Merchant $merchant): void
-    {
-        $userId = request()->user()?->id ?? Auth::id();
-
-        abort_if(!$userId, 401, 'Unauthenticated');
-        abort_if((int) $merchant->user_id !== (int) $userId, 403, 'Forbidden');
-    }
-
     public function merchantStore(Request $request, Merchant $merchant)
     {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('manageMerchant', [Voucher::class, $merchant]);
 
         $data = $request->validate([
             'voucher_name' => 'required|string|max:100',
@@ -308,7 +301,7 @@ class VoucherController extends Controller
 
     public function merchantIndex(Request $request, Merchant $merchant)
     {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('manageMerchant', [Voucher::class, $merchant]);
 
         $data = $request->validate([
             'q' => ['nullable', 'string', 'max:255'],
@@ -418,20 +411,22 @@ class VoucherController extends Controller
             return $voucher;
         });
 
-        return response()->json([
-            'data' => $vouchers->items(),
-            'meta' => [
+        return ApiResponse::success(
+            $vouchers->items(),
+            'Daftar voucher tersedia',
+            200,
+            [
                 'total' => $vouchers->total(),
                 'per_page' => $vouchers->perPage(),
                 'current_page' => $vouchers->currentPage(),
                 'last_page' => $vouchers->lastPage(),
-            ],
-        ]);
+            ]
+        );
     }
 
     public function merchantShow(Merchant $merchant, Voucher $voucher)
     {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('view', [$voucher, $merchant]);
 
         abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
@@ -442,7 +437,9 @@ class VoucherController extends Controller
         // Pastikan usages_count selalu integer (default 0)
         $usagesCount = $voucher->usages_count ?? 0;
         $voucher->usage = "{$usagesCount} / {$voucher->usage_limit}";
-        $voucher->is_expired = $voucher->voucher_end_date->isPast();
+        $voucher->is_expired = $voucher->voucher_end_date
+            ? Carbon::parse($voucher->voucher_end_date)->isPast()
+            : false;
 
         $voucher->makeHidden([
             'created_at',
@@ -451,12 +448,12 @@ class VoucherController extends Controller
             'usages_count'
         ]);
 
-        return response()->json(['data' => $voucher]);
+        return ApiResponse::success($voucher, 'Detail voucher berhasil dimuat.');
     }
 
     public function merchantUpdate(Request $request, Merchant $merchant, Voucher $voucher)
     {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('update', [$voucher, $merchant]);
 
         abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
@@ -484,19 +481,19 @@ class VoucherController extends Controller
 
         $voucher->update($validated);
 
-        return $voucher;
+        return ApiResponse::success($voucher->fresh(), 'Voucher berhasil diperbarui.');
     }
 
     public function merchantDestroy(Merchant $merchant, Voucher $voucher)
     {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('delete', [$voucher, $merchant]);
 
         abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
 
         $voucher->delete();
 
-        return response()->noContent();
+        return ApiResponse::success(null, 'Voucher berhasil dihapus.');
 
     }
 
@@ -505,7 +502,7 @@ class VoucherController extends Controller
         Merchant $merchant,
         Voucher $voucher
     ) {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('update', [$voucher, $merchant]);
 
         $data = $request->validate([
             'voucher_status' => ['required', 'in:active,inactive'],
@@ -515,16 +512,13 @@ class VoucherController extends Controller
             'voucher_status' => $data['voucher_status'],
         ]);
 
-        return response()->json([
-            'message' => 'Status voucher berhasil diperbarui.',
-            'voucher' => $voucher->fresh(),
-        ]);
+        return ApiResponse::success($voucher->fresh(), 'Status voucher berhasil diperbarui.');
     }
 
 
     public function bulkDelete(Request $request, Merchant $merchant)
     {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('manageMerchant', [Voucher::class, $merchant]);
 
         $data = $request->validate([
             'voucher_ids' => ['required', 'array', 'min:1'],
@@ -536,9 +530,7 @@ class VoucherController extends Controller
             ->get();
 
         if ($vouchers->isEmpty()) {
-            return response()->json([
-                'message' => 'Voucher tidak ditemukan',
-            ], 404);
+            return ApiResponse::error('Voucher tidak ditemukan', 404);
         }
 
         DB::transaction(function () use ($vouchers) {
@@ -547,16 +539,14 @@ class VoucherController extends Controller
             }
         });
 
-        return response()->json([
-            'message' => "Berhasil menghapus {$vouchers->count()} voucher",
-            'deleted_count' => $vouchers->count(),
-        ]);
+
+        return ApiResponse::success(null, "Berhasil menghapus {$vouchers->count()} voucher", );
     }
 
 
     public function bulkUpdateStatus(Request $request, Merchant $merchant)
     {
-        $this->authorizeMerchant($merchant);
+        $this->authorize('manageMerchant', [Voucher::class, $merchant]);
 
         $data = $request->validate([
             'voucher_ids' => ['required', 'array', 'min:1'],
@@ -570,11 +560,7 @@ class VoucherController extends Controller
                 'voucher_status' => $data['voucher_status'],
             ]);
 
-        return response()->json([
-            'message' => "Berhasil mengubah status {$updated} voucher",
-            'updated_count' => $updated,
-            'new_status' => $data['voucher_status'],
-        ]);
+        return ApiResponse::success(null, "Berhasil mengubah status {$updated} voucher", );
     }
 
     public function customerVouchersByMerchant(Request $request, Merchant $merchant)
@@ -651,7 +637,7 @@ class VoucherController extends Controller
         $vouchers->each(function ($voucher) {
             $voucher->usage = ($voucher->usages_count ?? 0) . ' / ' . $voucher->usage_limit;
             $voucher->is_expired = $voucher->voucher_end_date
-                ? $voucher->voucher_end_date->isPast()
+                ? Carbon::parse($voucher->voucher_end_date)->isPast()
                 : false;
 
             $voucher->makeHidden([
@@ -663,9 +649,7 @@ class VoucherController extends Controller
             ]);
         });
 
-        return response()->json([
-            'data' => $vouchers,
-        ]);
+        return ApiResponse::success($vouchers, 'Daftar voucher tersedia');
     }
 
 

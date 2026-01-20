@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\ApiResponse;
 use App\Models\Product;
 use App\Models\Category;
 use App\Models\Merchant;
@@ -102,11 +103,11 @@ class DashboardController extends Controller
                     ->where('status', 'published');
             })
                 ->withCount([
-                        'products as total' => function ($q) use ($merchantId) {
-                            $q->where('merchant_id', $merchantId)
-                                ->where('status', 'published');
-                        }
-                    ])
+                    'products as total' => function ($q) use ($merchantId) {
+                        $q->where('merchant_id', $merchantId)
+                            ->where('status', 'published');
+                    }
+                ])
                 ->orderByDesc('total')
                 ->get();
 
@@ -122,40 +123,43 @@ class DashboardController extends Controller
             }
         }
 
-        return response()->json([
-            'merchant' => [
-                'id' => $merchant->id,
-                'slug' => $merchant->slug,
-                'name' => $merchant->name,
-            ],
-            'stats' => [
-                'total' => $totalProducts,
-                'published' => $published,
-                'draft' => $draft,
-                'archived' => $archived,
-                'low_stock' => $lowStock,
-                'out_of_stock' => $outOfStock,
-            ],
-            'voucher_stats' => [
-                'total' => $totalVouchers,
-                'active' => $activeVouchers,
-                'inactive' => $inactiveVouchers,
-                'expired' => $expiredVouchers,
-                'used' => $voucherUsedCount,
-            ],
-            'charts' => [
-                'status' => [
-                    'labels' => ['Published', 'Draft', 'Archived'],
-                    'data' => [$published, $draft, $archived],
+        return ApiResponse::success(
+            [
+                'merchant' => [
+                    'id' => $merchant->id,
+                    'slug' => $merchant->slug,
+                    'name' => $merchant->name,
                 ],
-                'category' => [
-                    'labels' => $labels,
-                    'datasets' => [
-                        ['data' => $data]
+                'stats' => [
+                    'total' => $totalProducts,
+                    'published' => $published,
+                    'draft' => $draft,
+                    'archived' => $archived,
+                    'low_stock' => $lowStock,
+                    'out_of_stock' => $outOfStock,
+                ],
+                'voucher_stats' => [
+                    'total' => $totalVouchers,
+                    'active' => $activeVouchers,
+                    'inactive' => $inactiveVouchers,
+                    'expired' => $expiredVouchers,
+                    'used' => $voucherUsedCount,
+                ],
+                'charts' => [
+                    'status' => [
+                        'labels' => ['Published', 'Draft', 'Archived'],
+                        'data' => [$published, $draft, $archived],
+                    ],
+                    'category' => [
+                        'labels' => $labels,
+                        'datasets' => [
+                            ['data' => $data]
+                        ]
                     ]
                 ]
-            ]
-        ]);
+            ],
+            'Merchant dashboard data retrieved successfully.',
+            200
+        );
     }
 }
-

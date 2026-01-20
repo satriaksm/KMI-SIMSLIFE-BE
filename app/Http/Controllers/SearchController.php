@@ -8,6 +8,7 @@ use App\Models\Merchant;
 use Illuminate\Http\Request;
 use App\Models\ProductVariant;
 use Illuminate\Support\Facades\DB;
+use App\Helpers\ApiResponse;
 
 class SearchController extends Controller
 {
@@ -476,18 +477,19 @@ class SearchController extends Controller
             ];
         }
 
-        return response()->json([
-            'data' => $items,
-            'meta' => [
+        return ApiResponse::success(
+            $items,
+            'Products retrieved successfully.',
+            200,
+            [
                 'current_page' => $result->currentPage(),
                 'last_page' => $result->lastPage(),
                 'total' => $result->total(),
-            ],
-
-            // Additional results
-            'jasas' => $jasasItems,
-            'jasas_meta' => $jasasMeta,
-        ]);
+                // Additional results
+                'jasas' => $jasasItems,
+                'jasas_meta' => $jasasMeta,
+            ]
+        );
     }
 
     public function searchMerchants(Request $request)
@@ -713,14 +715,11 @@ class SearchController extends Controller
             })
             ->values();
 
-        return response()->json([
-            'data' => $items,
-            'meta' => [
-                'current_page' => $result->currentPage(),
-                'last_page' => $result->lastPage(),
-                'total' => $result->total(),
-            ],
+
+        return ApiResponse::success($items, 'Merchants retrieved successfully.', 200, [
+            'current_page' => $result->currentPage(),
+            'last_page' => $result->lastPage(),
+            'total' => $result->total(),
         ]);
     }
-
 }

@@ -4,9 +4,11 @@ namespace App\Providers;
 
 use App\Models\Product;
 use App\Models\Merchant;
+use App\Models\Voucher;
 use Illuminate\Support\Carbon;
 use App\Policies\ProductPolicy;
 use App\Policies\MerchantPolicy;
+use App\Policies\VoucherPolicy;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Auth\Notifications\VerifyEmail;
@@ -18,6 +20,7 @@ class AuthServiceProvider extends ServiceProvider
     protected $policies = [
         Product::class => ProductPolicy::class,
         Merchant::class => MerchantPolicy::class,
+        Voucher::class => VoucherPolicy::class,
     ];
 
     public function boot(): void

@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers\Product;
 
+use App\Http\Controllers\Controller;
 use App\Models\Image;
 use App\Models\Product;
-use App\Models\CartItem;
 use App\Models\ProductVariant;
 use App\Models\ProductOption;
 use App\Models\ProductOptionValue;
@@ -14,18 +14,16 @@ use Illuminate\Http\Request;
 use App\Exports\ProductsExport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
-use Intervention\Image\Drivers\Imagick\Driver;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Intervention\Image\ImageManager as ImageIntervention;
+use App\Helpers\ApiResponse;
 
-class ProductController
+class ProductController extends Controller
 {
-    private const ALLOWED_SEGMENT_IDS = [1, 2];
     private const MAX_VARIANT_COMBINATIONS = 50;
     private const MAX_VARIANTS = 2;
     private const MAX_ADDON_GROUPS = 10;
@@ -36,131 +34,10 @@ class ProductController
     // ============================================================
 
     /**
-     * Public: List published products (e-commerce catalog)
-     * No authentication required
-     */
-    public function publicIndex(Request $request)
-    {
-        $data = $request->validate([
-            'q' => ['nullable', 'string', 'max:255'],
-            'merchant_id' => ['nullable', 'integer', 'exists:merchants,id'],
-            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
-            'segments' => ['nullable', 'array'],
-            'segments.*' => ['in:UMKM Toko,UMKM Kuliner'],
-            'min_price' => ['nullable', 'numeric', 'min:0'],
-            'max_price' => ['nullable', 'numeric', 'min:0'],
-            'sort' => ['nullable', 'in:newest,price_asc,price_desc,name_asc,name_desc'],
-            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
-        ]);
-
-        $query = Product::query()
-            ->select([
-                'products.id',
-                'products.merchant_id',
-                'products.name',
-                'products.slug',
-            ])
-            ->whereHas('variants', function ($q) {
-                $q->where('stock', '>', 0);
-            })->where('products.status', 'published')
-            ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
-            ->with([
-                'coverImage:id,imageable_id,imageable_type,image_path',
-                'merchant:id,name,slug,segmentation_id',
-                'merchant.segmentation:id,name',
-                'variants:id,product_id,price',
-            ]);
-
-        if (!empty($data['segments'])) {
-            $query->whereHas('merchant.segmentation', function ($q) use ($data) {
-                $q->whereIn('name', $data['segments']);
-            });
-        }
-
-
-        // Filter by price range (from cheapest variant)
-        if (isset($data['min_price']) || isset($data['max_price'])) {
-            $query->whereHas('variants', function ($q) use ($data) {
-                if (isset($data['min_price'])) {
-                    $q->where('price', '>=', $data['min_price']);
-                }
-                if (isset($data['max_price'])) {
-                    $q->where('price', '<=', $data['max_price']);
-                }
-            });
-        }
-
-        // Sorting
-        switch ($data['sort'] ?? 'newest') {
-            case 'price_asc':
-                $query->leftJoin('product_variants as pv', 'products.id', '=', 'pv.product_id')
-                    ->selectRaw('products.*, MIN(pv.price) as min_price')
-                    ->groupBy('products.id')
-                    ->orderBy('min_price', 'asc');
-                break;
-            case 'price_desc':
-                $query->leftJoin('product_variants as pv', 'products.id', '=', 'pv.product_id')
-                    ->selectRaw('products.*, MAX(pv.price) as max_price')
-                    ->groupBy('products.id')
-                    ->orderBy('max_price', 'desc');
-                break;
-            case 'name_asc':
-                $query->orderBy('name', 'asc');
-                break;
-            case 'name_desc':
-                $query->orderBy('name', 'desc');
-                break;
-            case 'newest':
-            default:
-                $query->orderBy('created_at', 'desc');
-                break;
-        }
-
-        $perPage = $data['per_page'] ?? 20;
-
-        return response()->json(
-            $query->paginate($perPage)->through(function ($product) {
-
-                $cover = $product->coverImage
-                    ? route('images.show', ['image' => $product->coverImage->id])
-                    : null;
-
-                return [
-                    'id' => $product->id,
-                    'name' => $product->name,
-                    'min_price' => $product->variants->min('price'),
-                    'max_price' => $product->variants->max('price'),
-                    'slug' => $product->slug,
-
-                    'cover_image' => $product->coverImage ? [
-                        'id' => $product->coverImage->id,
-                        'src_url' => $cover,
-                    ] : null,
-
-                    'merchant' => [
-                        'id' => $product->merchant->id,
-                        'name' => $product->merchant->name,
-                        'slug' => $product->merchant->slug,
-                        'segmentation' => [
-                            'name' => $product->merchant->segmentation?->name,
-                        ],
-                    ],
-
-                    'categories' => $product->categories->map(fn($c) => [
-                        'id' => $c->id,
-                        'name' => $c->name,
-                    ])->values(),
-                ];
-            })
-        );
-    }
-
-
-    /**
      * Public: Get product detail by slug (PDP - Product Detail Page)
      * No authentication required
      */
-    public function publicShow(string $slug)
+    public function publicShow(Product $product)
     {
         // 1. QUERY PRODUCT
         $product = Product::select([
@@ -168,20 +45,15 @@ class ProductController
             'merchant_id',
             'name',
             'description',
-            'status',
             'min_purchase',
         ])
-            ->where('slug', $slug)
-            ->whereIn('status', ['published', 'archived']) // Public usually only allows these
+            // Public endpoint: only published products should be visible
+            ->where('status', 'published')
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
                 // Images
-                'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
+                // 'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
                 'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
-
-                // Merchant & categories
-                'merchant.addresses.district.city.province',
-                'categories:id,name,slug',
 
                 // Options
                 'options' => function ($q) {
@@ -326,32 +198,25 @@ class ProductController
         // Minimal pembelian
         $minPurchase = (int) ($product->min_purchase ?? 1);
 
-        // ✅ Format Alamat Merchant dan tambahkan ke merchant object
-        if ($product->merchant && $product->merchant->addresses) {
-            $address = $product->merchant->addresses->first();
-            if ($address) {
-                $parts = array_filter([
-                    $address->detail,
-                    $address->district?->name,
-                    $address->city?->name,
-                    $address->province?->name
-                ]);
-                $product->merchant->address = implode(', ', $parts);
-            } else {
-                $product->merchant->address = null;
-            }
-        } else {
-            if ($product->merchant) {
-                $product->merchant->address = null;
-            }
-        }
+        // ============================================================
+        // 4. RESPONSE SHAPE (attach computed fields into product)
+        // ============================================================
 
-        // ✅ Logo merchant: expose sebagai URL API (hindari akses langsung /storage)
-        // URL sudah versioned dari accessor Merchant::getLogoUrlAttribute().
-        if ($product->merchant) {
-            // Optional: sembunyikan path mentah agar FE konsisten pakai logo_url
-            $product->merchant->makeHidden(['logo_path']);
-        }
+        // Normalize min_purchase to int for FE
+        $product->min_purchase = $minPurchase;
+
+        $product->setAttribute('price_range', $priceRange);
+        $product->setAttribute('total_stock', (int) $variants->sum('stock'));
+        $product->setAttribute('has_variants', $variants->isNotEmpty());
+        $product->setAttribute('has_addons', $product->addonGroups->isNotEmpty());
+        $product->setAttribute('combinations', $combinations);
+        $product->setAttribute('option_labels', [
+            'option1' => $option1 ? $option1->option_name : null,
+            'option2' => $option2 ? $option2->option_name : null,
+        ]);
+
+        // ✅ Public product payload: merchant relation intentionally excluded
+        $product->makeHidden(['merchant']);
 
         // ✅ Ambil 5 produk lain dari merchant yang sama, acak, exclude produk ini
         $relatedProducts = Product::where('merchant_id', $product->merchant_id)
@@ -402,84 +267,22 @@ class ProductController
             })
             ->values();
 
-        return response()->json([
-            'product' => $product,
-            'price_range' => $priceRange,
-            'total_stock' => $variants->sum('stock'),
-            'has_variants' => $variants->isNotEmpty(),
-            'has_addons' => $product->addonGroups->isNotEmpty(),
-            'combinations' => $combinations,
-            'option_labels' => [
-                'option1' => $option1 ? $option1->option_name : null,
-                'option2' => $option2 ? $option2->option_name : null,
+        return ApiResponse::success(
+            [
+                'product' => $product,
+                'merchant' => [
+                    'id' => $product->merchant->id,
+                    'name' => $product->merchant->name,
+                    'slug' => $product->merchant->slug,
+                    'is_open_now' => $product->merchant->is_open_now,
+                    'logo_url' => $product->merchant->logo_url,
+                ],
+                'related_products' => $relatedProducts,
             ],
-            'min_purchase' => $minPurchase,
-            'related_products' => $relatedProducts,
-        ]);
+            'success',
+            200
+        );
     }
-
-    /**
-     * Public: Get variant by selected option values
-     * Real-time availability check when user selects options
-     */
-    // public function publicGetVariant(Request $request, string $slug)
-    // {
-    //     $product = Product::where('slug', $slug)
-    //         ->whereIn('status', ['published', 'archived']) // boleh cek varian walau produk di-archive
-    //         ->firstOrFail();
-
-    //     $data = $request->validate([
-    //         'option_value_ids' => ['required', 'array', 'min:1'],
-    //         'option_value_ids.*' => ['integer', 'exists:product_option_values,id'],
-    //     ]);
-
-    //     $optionValueIds = $data['option_value_ids'];
-    //     sort($optionValueIds);
-
-    //     // Find exact combination
-    //     $variant = $product->variants()
-    //         ->select('product_variants.*')
-    //         ->join('product_variant_option_values as pvov', 'product_variants.id', '=', 'pvov.product_variant_id')
-    //         ->whereIn('pvov.product_option_value_id', $optionValueIds)
-    //         ->groupBy('product_variants.id')
-    //         ->havingRaw('COUNT(DISTINCT pvov.product_option_value_id) = ?', [count($optionValueIds)])
-    //         ->with('optionValues:id,option_value,image_path')
-    //         ->first();
-
-    //     // always include product-level min_purchase so frontend knows the rule
-    //     $minPurchase = (int) ($product->min_purchase ?? 1);
-
-    //     if (!$variant) {
-    //         return response()->json([
-    //             'message' => 'Variant dengan kombinasi ini tidak tersedia.',
-    //             'available' => false,
-    //             'min_purchase' => $minPurchase,
-    //         ], 404);
-    //     }
-
-    //     if ($variant->stock <= 0) {
-    //         return response()->json([
-    //             'message' => 'Variant ini sedang habis.',
-    //             'available' => false,
-    //             'variant' => $variant->only(['id', 'price', 'stock', 'sku']),
-    //             'min_purchase' => $minPurchase,
-    //         ], 200);
-    //     }
-
-    //     return response()->json([
-    //         'available' => true,
-    //         'variant' => [
-    //             'id' => $variant->id,
-    //             'price' => $variant->price,
-    //             'stock' => $variant->stock,
-    //             'sku' => $variant->sku,
-    //             'option_values' => $variant->optionValues,
-    //         ],
-    //         // sertakan min_purchase di response utama
-    //         'min_purchase' => $minPurchase,
-    //     ]);
-    // }
-
 
     /**
      * Public: Get products by merchant slug (merchant catalog)
@@ -492,7 +295,6 @@ class ProductController
 
         $data = $request->validate([
             'q' => ['nullable', 'string', 'max:255'],
-            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'sort' => ['nullable', 'in:newest,price_asc,price_desc,name_asc'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
@@ -513,15 +315,10 @@ class ProductController
             ->with([
 
                 'coverImage:id,imageable_id,imageable_type,image_path',
-                'categories:id,name',
             ]);
 
         if (!empty($data['q'])) {
             $query->where('name', 'like', '%' . $data['q'] . '%');
-        }
-
-        if (!empty($data['category_id'])) {
-            $query->whereHas('categories', fn($q) => $q->where('categories.id', $data['category_id']));
         }
 
         // Match SearchController::searchProducts output (min/max price fields)
@@ -565,56 +362,22 @@ class ProductController
             })
             ->values();
 
-        return response()->json([
-            'data' => $items,
-            'meta' => [
+        return ApiResponse::success(
+            $items,
+            'success',
+            200,
+            [
                 'current_page' => $result->currentPage(),
                 'last_page' => $result->lastPage(),
                 'total' => $result->total(),
-            ],
-        ]);
+            ]
+        );
     }
 
-    /**
-     * Public: Get featured products (for homepage)
-     */
-    // public function publicFeatured()
-    // {
-    //     $products = Product::whereIn('status', ['published', 'archived'])
-    //         ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
-    //         ->with(['coverImage', 'merchant:id,name'])
-    //         ->inRandomOrder()
-    //         ->limit(12)
-    //         ->get();
-
-    //     return response()->json($products);
-    // }
 
     // ============================================================
     // PROTECTED ENDPOINTS (Auth Required - Merchant Owner)
     // ============================================================
-
-    private function abortIfNotOwnerOrNotAllowedMerchant(int $userId, Merchant $merchant)
-    {
-        if ((int) ($merchant->user_id ?? 0) !== (int) $userId) {
-            return response()->json(['message' => 'UMKM tidak sah. Anda bukan pemilik UMKM ini.'], 403);
-        }
-
-        if (($merchant->status ?? null) !== 'approved') {
-            return response()->json(['message' => 'UMKM belum disetujui oleh admin.'], 403);
-        }
-
-        $segmentId = $merchant->segmentation_id
-            ?? $merchant->segment_id
-            ?? optional($merchant->segmentation)->id
-            ?? null;
-
-        if (!in_array((int) $segmentId, self::ALLOWED_SEGMENT_IDS, true)) {
-            return response()->json(['message' => 'Segment UMKM tidak diizinkan untuk mengelola produk.'], 403);
-        }
-
-        return null;
-    }
 
     /**
      * ✅ UPDATED: List products by merchant (auto-detect merchant dari user)
@@ -633,10 +396,8 @@ class ProductController
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
+        $this->authorize('manageProduct', $merchant);
+
 
         $merchantId = $merchant->id;
 
@@ -711,34 +472,17 @@ class ProductController
 
             return $product;
         });
-
-        return response()->json([
-            'data' => $result->items(),
-            'meta' => [
+        return ApiResponse::success(
+            $result->items(),
+            'success',
+            200,
+            [
                 'current_page' => $result->currentPage(),
-                'from' => $result->firstItem(),
                 'last_page' => $result->lastPage(),
                 'per_page' => $result->perPage(),
-                'to' => $result->lastItem(),
                 'total' => $result->total(),
-            ],
-            'links' => [
-                'first' => $result->url(1),
-                'last' => $result->url($result->lastPage()),
-                'prev' => $result->previousPageUrl(),
-                'next' => $result->nextPageUrl(),
-            ],
-            'applied_filters' => [
-                'search' => $data['q'] ?? null,
-                'status' => $data['status'] ?? null,
-                'category_id' => $data['category_id'] ?? null,
-                'min_price' => $data['min_price'] ?? null,
-                'max_price' => $data['max_price'] ?? null,
-                'min_stock' => $data['min_stock'] ?? null,
-                'max_stock' => $data['max_stock'] ?? null,
-                'sort_by' => $data['sort_by'] ?? 'newest',
-            ],
-        ]);
+            ]
+        );
     }
 
     public function store(Request $request, Merchant $merchant)
@@ -797,10 +541,8 @@ class ProductController
                 'message' => 'Maksimal upload 6 foto produk.',
             ], 422);
         }
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
+
+        $this->authorize('manageProduct', $merchant);
 
         if (!empty($data['variants'])) {
             $variantNames = collect($data['variants'])
@@ -1122,7 +864,7 @@ class ProductController
                 ->exists();
 
             if ($groupExists) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'add_on_groups' => "Nama grup add-on '{$groupName}' tidak boleh sama.",
                 ]);
             }
@@ -1143,7 +885,7 @@ class ProductController
 
                 // ✅ EXTRA SAFETY: cek option duplikat dalam group
                 if (in_array($optionName, $usedOptionNames)) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                    throw ValidationException::withMessages([
                         'add_on_groups' =>
                             "Nama opsi '{$optionData['name']}' pada grup '{$groupName}' tidak boleh sama.",
                     ]);
@@ -1166,78 +908,20 @@ class ProductController
 
 
     /**
-     * HELPER: Generate unique slug
-     */
-    private function generateUniqueSlug(string $name): string
-    {
-        $slug = Str::slug($name);
-        $count = 1;
-
-        while (Product::where('slug', $slug)->exists()) {
-            $slug = Str::slug($name) . '-' . $count;
-            $count++;
-        }
-
-        return $slug;
-    }
-
-    /**
-     * HELPER: Cleanup uploaded files on error
-     */
-    private function cleanupProductFiles(Product $product): void
-    {
-        $disk = config('filesystems.product_disk', 'public');
-        // gunakan morphClass
-        $imageableType = $product->getMorphClass();
-
-        $images = Image::where('imageable_type', $imageableType)
-            ->where('imageable_id', $product->id)
-            ->get();
-
-        foreach ($images as $image) {
-            $this->deleteImageFileIfExists($image->image_path);
-            $image->delete();
-        }
-
-        // Delete option value images
-        $optionValues = $product->options()
-            ->with('values')
-            ->get()
-            ->pluck('values')
-            ->flatten();
-
-        foreach ($optionValues as $value) {
-            if ($value->image_path) {
-                $this->deleteImageFileIfExists($value->image_path);
-                // Optionally: $value->update(['image_path' => null]);
-            }
-        }
-
-        // Delete product folder (if using local disk)
-        if (Storage::disk($disk)->exists("products/{$product->id}")) {
-            Storage::disk($disk)->deleteDirectory("products/{$product->id}");
-        }
-    }
-
-
-    // ============================================================
-    // PROTECTED ENDPOINTS (Auth Required - Merchant Owner)
-    // ============================================================
-
-    /**
      * ✅ FIXED: Get product (owner only) - WITH ADDONS COMPLETE
      * Use slug instead of id
      */
     public function show(Request $request, Merchant $merchant, Product $product)
     {
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
+        // 1) Merchant-level permission (owner/approved/segment)
+        $this->authorize('manageProduct', $merchant);
 
         if ((int) $product->merchant_id !== (int) $merchant->id) {
             return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
         }
+
+        // 2) Product-level permission (delegates to MerchantPolicy via ProductPolicy::manage)
+        $this->authorize('manage', $product);
 
         // 1. QUERY UTAMA: Pilih kolom tabel 'products' saja
         // WAJIB: 'id' (untuk relasi), 'merchant_id' (untuk cek permission), 'status' (untuk logic signed url)
@@ -1357,7 +1041,8 @@ class ProductController
             });
         }
 
-        return response()->json($product);
+        return ApiResponse::success($product, 'success', 200);
+
     }
 
     /**
@@ -1366,14 +1051,15 @@ class ProductController
      */
     public function update(Request $request, Merchant $merchant, Product $product)
     {
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
+        // 1) Merchant-level permission (owner/approved/segment)
+        $this->authorize('manageProduct', $merchant);
 
         if ((int) $product->merchant_id !== (int) $merchant->id) {
             return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
         }
+
+        // 2) Product-level permission
+        $this->authorize('manage', $product);
 
         // Validasi (Sama seperti sebelumnya)
         $data = $request->validate([
@@ -1503,7 +1189,7 @@ class ProductController
             ], 422);
         }
         // Validasi: combinations tidak boleh duplikat
-// ✅ VALIDASI: kombinasi tidak boleh duplikat (BERDASARKAN name + value)
+        // ✅ VALIDASI: kombinasi tidak boleh duplikat (BERDASARKAN name + value)
         if ($useVariants) {
             $uniqueCombinations = collect($data['combinations'])
                 ->map(function ($combo) {
@@ -1648,7 +1334,6 @@ class ProductController
         }
     }
 
-
     /**
      * HELPER: Update product images
      */
@@ -1787,7 +1472,6 @@ class ProductController
             });
     }
 
-
     /**
      * LOGIKA UPDATE ADDONS YANG AMAN
      */
@@ -1806,7 +1490,7 @@ class ProductController
             $groupName = strtolower(trim($groupData['name']));
 
             if (isset($groupNameMap[$groupName])) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'add_on_groups' => 'Nama grup add-on tidak boleh sama.',
                 ]);
             }
@@ -1859,7 +1543,7 @@ class ProductController
 
                 // ❌ DUPLIKAT NAMA OPTION
                 if (isset($optionNameMap[$optionName])) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                    throw ValidationException::withMessages([
                         'add_on_groups' =>
                             "Nama opsi '{$optionData['name']}' pada grup '{$groupData['name']}' tidak boleh sama.",
                     ]);
@@ -1913,8 +1597,6 @@ class ProductController
             ->whereNotIn('id', $submittedGroupIds)
             ->delete();
     }
-
-
 
     private function generateUniqueSlugForUpdate(string $name, int $currentProductId): string
     {
@@ -2031,8 +1713,6 @@ class ProductController
         }
     }
 
-
-
     /**
      * ✅ HELPER: Update product variants
      */
@@ -2044,27 +1724,21 @@ class ProductController
             'status' => ['required', 'in:published,archived'],
         ]);
 
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
+        // 1) Merchant-level permission
+        $this->authorize('manageProduct', $merchant);
 
         if ((int) $product->merchant_id !== (int) $merchant->id) {
             return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
         }
 
+        // 2) Product-level permission
+        $this->authorize('manage', $product);
+
         try {
             $product->update(['status' => $data['status']]);
-
-            return response()->json([
-                'message' => 'Status produk berhasil diperbarui.',
-                'product' => $product,
-            ]);
+            return ApiResponse::success(null, 'Status produk diperbarui.', 200);
         } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Gagal memperbarui status produk.',
-                'error' => $e->getMessage(),
-            ], 500);
+            return ApiResponse::error('Gagal memperbarui status produk.', 500, [$e->getMessage()]);
         }
     }
 
@@ -2072,209 +1746,21 @@ class ProductController
     // Use slug instead of id
     public function destroy(Request $request, Merchant $merchant, Product $product)
     {
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
+        // 1) Merchant-level permission
+        $this->authorize('manage', $merchant);
 
         if ((int) $product->merchant_id !== (int) $merchant->id) {
-            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
+            return ApiResponse::error('Produk tidak ditemukan.', 404);
         }
+
+        // 2) Product-level permission
+        $this->authorize('manage', $product);
 
         foreach ($product->images as $img) {
             $this->deleteImageFileIfExists($img->image_path);
         }
         $product->delete();
-
-        return response()->json(['message' => 'Produk dihapus']);
-    }
-
-    // Add images to product
-    // Use slug instead of id
-    public function storeImage(Request $request, Merchant $merchant, Product $product)
-    {
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
-
-        if ((int) $product->merchant_id !== (int) $merchant->id) {
-            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
-        }
-
-        $data = $request->validate([
-            'images' => ['required', 'array', 'min:1'],
-            'images.*' => ['file', 'image', 'max:5120'],
-        ]);
-
-        $created = $this->storeUploadedImages($product, $data['images'], 0);
-
-        return response()->json(['images' => $created, 'cover' => $product->fresh()->coverImage], 201);
-    }
-
-    /**
-     * Get total possible combinations
-     * Use slug instead of id
-     */
-    public function getCombinationCount(Request $request, Merchant $merchant, Product $product)
-    {
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
-
-        if ((int) $product->merchant_id !== (int) $merchant->id) {
-            return response()->json(['message' => 'Produk tidak ditemukan.'], 404);
-        }
-
-        $options = $product->options()->with('values')->get();
-
-        if ($options->isEmpty()) {
-            return response()->json(['total_combinations' => 0]);
-        }
-
-        $totalCombinations = $options->reduce(function ($carry, $option) {
-            return $carry * $option->values->count();
-        }, 1);
-
-        return response()->json([
-            'total_combinations' => $totalCombinations,
-            'max_allowed' => 50,
-            'exceeds_limit' => $totalCombinations > 50,
-        ]);
-    }
-
-    // ============================================================
-    // PRIVATE HELPERS
-    // ============================================================
-
-    private function findOwnedMerchantOrAbort(int $userId, int $merchantId): Merchant|array
-    {
-        try {
-            $merchant = Merchant::query()->findOrFail($merchantId);
-        } catch (ModelNotFoundException $e) {
-            return ['error' => response()->json(['message' => 'UMKM tidak ditemukan.'], 404)];
-        }
-
-        if ((int) ($merchant->user_id ?? 0) !== $userId) {
-            return ['error' => response()->json(['message' => 'UMKM tidak sah. Anda bukan pemilik UMKM ini.'], 403)];
-        }
-
-        // ✅ WAJIB approved
-        if ($merchant->status !== 'approved') {
-            return ['error' => response()->json(['message' => 'UMKM belum disetujui oleh admin.'], 403)];
-        }
-
-        $segmentId = $merchant->segmentation_id
-            ?? $merchant->segment_id
-            ?? optional($merchant->segmentation)->id
-            ?? null;
-
-        if (!in_array((int) $segmentId, self::ALLOWED_SEGMENT_IDS, true)) {
-            return ['error' => response()->json(['message' => 'Segment UMKM tidak diizinkan untuk mengelola produk.'], 403)];
-        }
-
-        return $merchant;
-    }
-
-    private function abortIfNotOwnerOrNotAllowed(int $userId, int $merchantId)
-    {
-        $result = $this->findOwnedMerchantOrAbort($userId, $merchantId);
-
-        if (is_array($result) && isset($result['error'])) {
-            return $result['error'];
-        }
-
-        return null;
-    }
-
-    private function storeUploadedImages(Product $product, array $files, ?int $coverIndex = null): array
-    {
-        $disk = config('filesystems.product_disk', 'public'); // ✅ Ubah ke 'public' jika perlu
-        $now = now();
-        $savedPaths = [];
-        $rows = [];
-
-        $imageableType = $product->getMorphClass();
-
-        try {
-            $manager = new ImageIntervention(new Driver());
-
-            foreach ($files as $file) {
-                $uniq = uniqid('', true);
-                $path = "products/{$product->id}/{$uniq}.webp";
-
-                // ✅ PERBAIKAN: Gunakan Intervention Image v3
-                $img = $manager->read($file->getRealPath()); // v3 pakai read()
-
-                // Resize ke medium max width 1200px
-                $img->scale(width: 1200); // v3 pakai scale()
-
-                // Encode ke WebP
-                $encoded = $img->toWebp(quality: 85);
-
-                // Save ke storage
-                Storage::disk($disk)->put($path, (string) $encoded);
-                $savedPaths[] = $path;
-
-                $displayOrder = (int) ($product->images()->max('display_order') ?? -1) + 1;
-
-                $rows[] = [
-                    'imageable_type' => $imageableType,
-                    'imageable_id' => $product->id,
-                    'image_path' => $path,
-                    'display_order' => $displayOrder,
-                    'is_cover' => false,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ];
-            }
-
-            // batch insert
-            DB::table('images')->insert($rows);
-
-            // fetch created
-            $created = $product->images()->where('created_at', '>=', $now)->orderBy('id')->get();
-
-            // set cover
-            if ($coverIndex !== null && isset($created[$coverIndex])) {
-                $this->reorderAfterSetCover($product, $created[$coverIndex]);
-            }
-
-            return $created->toArray();
-        } catch (\Throwable $e) {
-            // cleanup
-            foreach ($savedPaths as $p) {
-                if (Storage::disk($disk)->exists($p)) {
-                    Storage::disk($disk)->delete($p);
-                }
-            }
-            Log::error("Upload gagal: " . $e->getMessage());
-            throw $e;
-        }
-    }
-
-
-
-    /**
-     * Set image sebagai cover dan pindahkan display_order ke 0, geser sisanya +1
-     */
-    private function reorderAfterSetCover(Product $product, Image $newCover): void
-    {
-        // Reset cover lama
-        $product->images()->where('is_cover', true)->update(['is_cover' => false]);
-
-        // Geser semua image (kecuali newCover) yang display_order >= 0
-        $product->images()
-            ->where('id', '!=', $newCover->id)
-            ->where('display_order', '>=', 0)
-            ->increment('display_order');
-
-        // Set newCover ke display_order 0 dan is_cover true
-        $newCover->update([
-            'display_order' => 0,
-            'is_cover' => true,
-        ]);
+        return ApiResponse::success(null, 'Produk dihapus.', 200);
     }
 
     private function deleteImageFileIfExists(?string $path): void
@@ -2288,16 +1774,198 @@ class ProductController
         }
     }
 
+    public function exportExcel(Request $request, Merchant $merchant)
+    {
+        $data = $request->validate([
+            'q' => ['nullable', 'string', 'max:255'],
+            'status' => ['nullable', 'in:draft,published,archived'],
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+            'min_price' => ['nullable', 'numeric', 'min:0'],
+            'max_price' => ['nullable', 'numeric', 'min:0', 'gte:min_price'],
+            'min_stock' => ['nullable', 'integer', 'min:0'],
+            'max_stock' => ['nullable', 'integer', 'min:0', 'gte:min_stock'],
+            'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
+        ]);
+
+        $this->authorize('manageProduct', $merchant);
+
+        $merchantId = $merchant->id;
+
+        // Build same query and get full collection (no pagination for export)
+        $query = $this->buildFilteredProductQuery($merchantId, $data);
+
+        // Eager load any relations as needed and get results
+        $products = $query->get();
+
+        $fileName = 'products-' . now()->format('Ymd-His') . '.xlsx';
+
+        // ProductsExport expects merchantId (int), not collection
+        return Excel::download(new ProductsExport($merchantId, $data), $fileName);
+    }
+
+
+    public function exportPdf(Request $request, Merchant $merchant)
+    {
+        $data = $request->validate([
+            'q' => ['nullable', 'string', 'max:255'],
+            'status' => ['nullable', 'in:draft,published,archived'],
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+            'min_price' => ['nullable', 'numeric', 'min:0'],
+            'max_price' => ['nullable', 'numeric', 'min:0', 'gte:min_price'],
+            'min_stock' => ['nullable', 'integer', 'min:0'],
+            'max_stock' => ['nullable', 'integer', 'min:0', 'gte:min_stock'],
+            'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
+        ]);
+
+        $this->authorize('manageProduct', $merchant);
+
+        $merchantId = $merchant->id;
+
+        // Use helper to build variant query with same filters
+        $variantsQuery = $this->buildFilteredVariantQuery($merchantId, $data);
+
+
+
+        $rows = $variantsQuery->get();
+
+        return Pdf::loadView('exports.products', ['variants' => $rows])
+            ->setPaper('a4', 'landscape')
+            ->download('products-' . now()->format('Ymd-His') . '.pdf');
+    }
+
+    /**
+     * Bulk delete products
+     * DELETE /api/products/bulk-delete
+     */
+    public function bulkDelete(Request $request, Merchant $merchant)
+    {
+        $data = $request->validate([
+            'product_slugs' => ['required', 'array', 'min:1'],
+            'product_slugs.*' => ['required', 'string', 'exists:products,slug'],
+        ]);
+
+        $user = $request->user();
+        $slugs = $data['product_slugs'];
+
+        $this->authorize('manageProduct', $merchant);
+
+        $merchantId = $merchant->id;
+
+        // Get products that belong to this merchant
+        $products = Product::where('merchant_id', $merchantId)
+            ->whereIn('slug', $slugs)
+            ->get();
+
+        // Slugs that exist but not belong to this merchant will be excluded above.
+        $unauthorizedCount = max(0, count($slugs) - $products->count());
+        $deletedCount = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($products as $product) {
+                // Product-level permission (policy) without throwing mid-loop
+                $ability = Gate::forUser($user)->inspect('manage', $product);
+                if ($ability->denied()) {
+                    $unauthorizedCount++;
+                    continue;
+                }
+
+                // Delete product files
+                $this->cleanupProductFiles($product);
+
+                // Delete product record
+                $product->delete();
+                $deletedCount++;
+            }
+
+            DB::commit();
+
+            return ApiResponse::success([
+                'deleted_count' => $deletedCount,
+                'unauthorized_count' => $unauthorizedCount,
+            ], "Berhasil menghapus {$deletedCount} produk", 200);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Bulk delete products failed', [
+                'error' => $e->getMessage(),
+                'slugs' => $slugs,
+            ]);
+
+            return ApiResponse::error('Gagal menghapus produk.', 500, [$e->getMessage()]);
+        }
+    }
+
+    /**
+     * Bulk update product status
+     * POST /api/products/bulk-update-status
+     */
+    public function bulkUpdateStatus(Request $request, Merchant $merchant)
+    {
+        $data = $request->validate([
+            'product_slugs' => ['required', 'array', 'min:1'],
+            'product_slugs.*' => ['required', 'string', 'exists:products,slug'],
+            'status' => ['required', 'in:draft,published,archived'],
+        ]);
+
+        $user = $request->user();
+        $slugs = $data['product_slugs'];
+        $newStatus = $data['status'];
+
+
+        $this->authorize('manageProduct', $merchant);
+
+        $merchantId = $merchant->id;
+
+        // Get products that belong to this merchant
+        $products = Product::where('merchant_id', $merchantId)
+            ->whereIn('slug', $slugs)
+            ->get();
+
+        // Slugs that exist but not belong to this merchant will be excluded above.
+        $unauthorizedCount = max(0, count($slugs) - $products->count());
+        $updatedCount = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($products as $product) {
+                // Product-level permission (policy) without throwing mid-loop
+                $ability = Gate::forUser($user)->inspect('manage', $product);
+                if ($ability->denied()) {
+                    $unauthorizedCount++;
+                    continue;
+                }
+
+                // Update status
+                $product->update(['status' => $newStatus]);
+                $updatedCount++;
+            }
+
+            DB::commit();
+
+            return ApiResponse::success([
+                'updated_count' => $updatedCount,
+                'unauthorized_count' => $unauthorizedCount,
+                'new_status' => $newStatus,
+            ], "Berhasil mengubah status {$updatedCount} produk menjadi {$newStatus}", 200);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Bulk update status failed', [
+                'error' => $e->getMessage(),
+                'slugs' => $slugs,
+                'status' => $newStatus,
+            ]);
+
+            return ApiResponse::error('Gagal mengubah status produk.', 500, [$e->getMessage()]);
+        }
+    }
+
     private function buildFilteredProductQuery(int $merchantId, array $data)
     {
         $query = Product::query()
             ->where('merchant_id', $merchantId);
-        // ->with([
-        //     'coverImage',
-        //     'images',
-        //     'categories:id,name,slug',
-        // ])
-        // ->withCount('variants');
+
 
         // add select computed columns
         $query->addSelect([
@@ -2496,201 +2164,57 @@ class ProductController
         return $variants;
     }
 
-    public function exportExcel(Request $request, Merchant $merchant)
+    /**
+     * HELPER: Generate unique slug
+     */
+    private function generateUniqueSlug(string $name): string
     {
-        $data = $request->validate([
-            'q' => ['nullable', 'string', 'max:255'],
-            'status' => ['nullable', 'in:draft,published,archived'],
-            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
-            'min_price' => ['nullable', 'numeric', 'min:0'],
-            'max_price' => ['nullable', 'numeric', 'min:0', 'gte:min_price'],
-            'min_stock' => ['nullable', 'integer', 'min:0'],
-            'max_stock' => ['nullable', 'integer', 'min:0', 'gte:min_stock'],
-            'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
-        ]);
+        $slug = Str::slug($name);
+        $count = 1;
 
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
+        while (Product::where('slug', $slug)->exists()) {
+            $slug = Str::slug($name) . '-' . $count;
+            $count++;
         }
 
-        $merchantId = $merchant->id;
-
-        // Build same query and get full collection (no pagination for export)
-        $query = $this->buildFilteredProductQuery($merchantId, $data);
-
-        // Eager load any relations as needed and get results
-        $products = $query->get();
-
-        $fileName = 'products-' . now()->format('Ymd-His') . '.xlsx';
-
-        // ProductsExport expects merchantId (int), not collection
-        return Excel::download(new ProductsExport($merchantId, $data), $fileName);
-    }
-
-
-    public function exportPdf(Request $request, Merchant $merchant)
-    {
-        $data = $request->validate([
-            'q' => ['nullable', 'string', 'max:255'],
-            'status' => ['nullable', 'in:draft,published,archived'],
-            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
-            'min_price' => ['nullable', 'numeric', 'min:0'],
-            'max_price' => ['nullable', 'numeric', 'min:0', 'gte:min_price'],
-            'min_stock' => ['nullable', 'integer', 'min:0'],
-            'max_stock' => ['nullable', 'integer', 'min:0', 'gte:min_stock'],
-            'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,price_asc,price_desc,stock_asc,stock_desc'],
-        ]);
-
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($request->user()->id, $merchant);
-        if ($error) {
-            return $error;
-        }
-
-        $merchantId = $merchant->id;
-
-        // Use helper to build variant query with same filters
-        $variantsQuery = $this->buildFilteredVariantQuery($merchantId, $data);
-
-
-
-        $rows = $variantsQuery->get();
-
-        return Pdf::loadView('exports.products', ['variants' => $rows])
-            ->setPaper('a4', 'landscape')
-            ->download('products-' . now()->format('Ymd-His') . '.pdf');
+        return $slug;
     }
 
     /**
-     * Bulk delete products
-     * DELETE /api/products/bulk-delete
+     * HELPER: Cleanup uploaded files on error
      */
-    public function bulkDelete(Request $request, Merchant $merchant)
+    private function cleanupProductFiles(Product $product): void
     {
-        $data = $request->validate([
-            'product_slugs' => ['required', 'array', 'min:1'],
-            'product_slugs.*' => ['required', 'string', 'exists:products,slug'],
-        ]);
+        $disk = config('filesystems.product_disk', 'public');
+        // gunakan morphClass
+        $imageableType = $product->getMorphClass();
 
-        $user = $request->user();
-        $slugs = $data['product_slugs'];
+        $images = Image::where('imageable_type', $imageableType)
+            ->where('imageable_id', $product->id)
+            ->get();
 
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($user->id, $merchant);
-        if ($error) {
-            return $error;
+        foreach ($images as $image) {
+            $this->deleteImageFileIfExists($image->image_path);
+            $image->delete();
         }
 
-        $merchantId = $merchant->id;
+        // Delete option value images
+        $optionValues = $product->options()
+            ->with('values')
+            ->get()
+            ->pluck('values')
+            ->flatten();
 
-        // Get products and validate ownership
-        $products = Product::where('merchant_id', $merchantId)->whereIn('slug', $slugs)->get();
-
-        $unauthorizedCount = 0;
-        $deletedCount = 0;
-
-        DB::beginTransaction();
-        try {
-            foreach ($products as $product) {
-                // Check ownership
-                $error = $this->abortIfNotOwnerOrNotAllowed($user->id, $product->merchant_id);
-                if ($error) {
-                    $unauthorizedCount++;
-                    continue;
-                }
-
-                // Delete product files
-                $this->cleanupProductFiles($product);
-
-                // Delete product record
-                $product->delete();
-                $deletedCount++;
+        foreach ($optionValues as $value) {
+            if ($value->image_path) {
+                $this->deleteImageFileIfExists($value->image_path);
+                // Optionally: $value->update(['image_path' => null]);
             }
-
-            DB::commit();
-
-            return response()->json([
-                'message' => "Berhasil menghapus {$deletedCount} produk",
-                'deleted_count' => $deletedCount,
-                'unauthorized_count' => $unauthorizedCount,
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Bulk delete products failed', [
-                'error' => $e->getMessage(),
-                'slugs' => $slugs,
-            ]);
-
-            return response()->json([
-                'message' => 'Gagal menghapus produk',
-                'error' => $e->getMessage(),
-            ], 500);
-        }
-    }
-
-    /**
-     * Bulk update product status
-     * POST /api/products/bulk-update-status
-     */
-    public function bulkUpdateStatus(Request $request, Merchant $merchant)
-    {
-        $data = $request->validate([
-            'product_slugs' => ['required', 'array', 'min:1'],
-            'product_slugs.*' => ['required', 'string', 'exists:products,slug'],
-            'status' => ['required', 'in:draft,published,archived'],
-        ]);
-
-        $user = $request->user();
-        $slugs = $data['product_slugs'];
-        $newStatus = $data['status'];
-
-        $error = $this->abortIfNotOwnerOrNotAllowedMerchant($user->id, $merchant);
-        if ($error) {
-            return $error;
         }
 
-        $merchantId = $merchant->id;
-
-        // Get products and validate ownership
-        $products = Product::where('merchant_id', $merchantId)->whereIn('slug', $slugs)->get();
-
-        $unauthorizedCount = 0;
-        $updatedCount = 0;
-
-        DB::beginTransaction();
-        try {
-            foreach ($products as $product) {
-                // Check ownership
-                $error = $this->abortIfNotOwnerOrNotAllowed($user->id, $product->merchant_id);
-                if ($error) {
-                    $unauthorizedCount++;
-                    continue;
-                }
-
-                // Update status
-                $product->update(['status' => $newStatus]);
-                $updatedCount++;
-            }
-
-            DB::commit();
-
-            return response()->json([
-                'message' => "Berhasil mengubah status {$updatedCount} produk menjadi {$newStatus}",
-                'updated_count' => $updatedCount,
-                'unauthorized_count' => $unauthorizedCount,
-                'new_status' => $newStatus,
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Bulk update status failed', [
-                'error' => $e->getMessage(),
-                'slugs' => $slugs,
-                'status' => $newStatus,
-            ]);
-
-            return response()->json([
-                'message' => 'Gagal mengubah status produk',
-                'error' => $e->getMessage(),
-            ], 500);
+        // Delete product folder (if using local disk)
+        if (Storage::disk($disk)->exists("products/{$product->id}")) {
+            Storage::disk($disk)->deleteDirectory("products/{$product->id}");
         }
     }
 }

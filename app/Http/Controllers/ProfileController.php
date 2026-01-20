@@ -3,12 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Helpers\ApiResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rules\Password;
 
 class ProfileController
 {
@@ -18,13 +20,22 @@ class ProfileController
         if (!$user instanceof User) {
             abort(401);
         }
-
-        return $user->load([
+        $user->load([
             'primaryAddress.province',
             'primaryAddress.city',
             'primaryAddress.district',
             'primaryAddress.village',
         ]);
+
+        // Sembunyikan created_at dan updated_at dari user dan primaryAddress
+        $user->makeHidden(['created_at', 'updated_at']);
+        if ($user->primaryAddress) {
+            $user->primaryAddress->makeHidden(['created_at', 'updated_at']);
+        }
+
+        return ApiResponse::success(
+            $user
+        );
     }
 
     public function update(Request $request)
@@ -43,7 +54,7 @@ class ProfileController
             'nik' => 'sometimes|nullable|string|max:20',
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'profile_picture' => 'sometimes|image|mimes:jpeg,png,jpg,gif,svg|max:5048',
-            // 'full_address' => 'sometimes|string',
+
         ];
 
         if ($request->hasFile('profile_picture')) {
@@ -52,15 +63,16 @@ class ProfileController
             $rules['profile_picture'] = 'sometimes|string';
         }
 
-        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), $rules);
+        $validator = Validator::make($request->all(), $rules);
 
 
         if ($validator->fails()) {
-            Log::warning('Profile update validation failed:', $validator->errors()->toArray());
-            return response()->json([
-                'message' => 'The given data was invalid.',
-                'errors' => $validator->errors(),
-            ], 422);
+            Log::warning('Gagal validasi data profil:', $validator->errors()->toArray());
+            return ApiResponse::error(
+                'Data tidak valid.',
+                422,
+                $validator->errors()->toArray()
+            );
         }
 
         $validatedData = $validator->validated();
@@ -109,10 +121,10 @@ class ProfileController
                 'primaryAddress.village',
             ]);
 
-            return response()->json([
-                'message' => 'Profile updated successfully',
-                'user' => $freshUser,
-            ]);
+            return ApiResponse::success(
+                $freshUser,
+                'Profil berhasil diperbarui.'
+            );
 
         } catch (\Exception $e) {
             Log::error('Profile update failed with exception:', [
@@ -120,10 +132,11 @@ class ProfileController
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'message' => 'Internal server error during profile update.',
-                'error' => $e->getMessage(),
-            ], 500);
+            return ApiResponse::error(
+                'Terjadi kesalahan internal saat memperbarui profil.',
+                500,
+                ['error' => $e->getMessage()]
+            );
         }
     }
 
@@ -140,13 +153,16 @@ class ProfileController
         ]);
 
         if (!Hash::check($request->current_password, $user->password)) {
-            return response()->json(['message' => 'Current password does not match'], 422);
+            return ApiResponse::error('Kata sandi saat ini tidak cocok.', 422);
         }
 
         $user->password = Hash::make($request->new_password);
         $user->save();
 
-        return response()->json(['message' => 'Password changed successfully']);
+        return ApiResponse::success(
+            null,
+            'Kata sandi berhasil diubah.'
+        );
     }
 
     public function addressShow(Request $request)
@@ -157,9 +173,10 @@ class ProfileController
             ->with(['province', 'city', 'district', 'village'])
             ->first();
 
-        return response()->json([
-            'data' => $address,
-        ]);
+        return ApiResponse::success(
+            $address,
+            'Alamat berhasil diambil.'
+        );
     }
 
     public function addressUpsert(Request $request)
@@ -192,10 +209,10 @@ class ProfileController
 
         $address->load(['province', 'city', 'district', 'village']);
 
-        return response()->json([
-            'message' => 'Address updated successfully',
-            'data' => $address,
-        ]);
+        return ApiResponse::success(
+            $address,
+            'Alamat berhasil diperbarui.'
+        );
     }
 
     public function profilePictureShow(Request $request, User $user)
