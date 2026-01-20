@@ -43,6 +43,7 @@ class ProductController extends Controller
         $product = Product::select([
             'id',
             'merchant_id',
+            'slug',
             'name',
             'description',
             'min_purchase',
@@ -87,7 +88,7 @@ class ProductController extends Controller
                         ]);
                 },
             ])
-            ->firstOrFail();
+            ->findOrFail($product->id);
 
         // ============================================================
         // 2. TRANSFORMASI DATA & URL GENERATION
