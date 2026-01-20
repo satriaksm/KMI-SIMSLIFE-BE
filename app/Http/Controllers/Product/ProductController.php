@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Product;
 
 use App\Http\Controllers\Controller;
 use App\Models\Image;
+use App\Models\Addon;
+use App\Models\AddonGroup;
+use App\Models\AddonGroupOption;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\ProductOption;
@@ -43,6 +46,7 @@ class ProductController extends Controller
         $product = Product::select([
             'id',
             'merchant_id',
+            'status',
             'slug',
             'name',
             'description',
@@ -52,6 +56,28 @@ class ProductController extends Controller
             ->where('status', 'published')
             ->whereHas('merchant', fn($q) => $q->where('status', 'approved'))
             ->with([
+                // Merchant (for checkout store address)
+                'merchant.primaryAddress' => function ($q) {
+                    $q->select([
+                        'id',
+                        'addressable_id',
+                        'addressable_type',
+                        'province_id',
+                        'city_id',
+                        'district_id',
+                        'village_id',
+                        'detail',
+                        'label',
+                        'latitude',
+                        'longitude',
+                    ])->with([
+                                'province:id,name',
+                                'city:id,name',
+                                'district:id,name',
+                                'village:id,name',
+                            ]);
+                },
+
                 // Images
                 // 'coverImage' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path'),
                 'images' => fn($q) => $q->select('id', 'imageable_id', 'imageable_type', 'image_path')->orderBy('display_order'),
@@ -268,6 +294,9 @@ class ProductController extends Controller
             })
             ->values();
 
+        $merchantPrimaryAddress = $product->merchant?->primaryAddress;
+        $merchantAddress = $merchantPrimaryAddress?->full_address;
+
         return ApiResponse::success(
             [
                 'product' => $product,
@@ -277,6 +306,16 @@ class ProductController extends Controller
                     'slug' => $product->merchant->slug,
                     'is_open_now' => $product->merchant->is_open_now,
                     'logo_url' => $product->merchant->logo_url,
+                    // Used by FE checkout-from-product-detail
+                    'address' => $merchantAddress,
+                    'primary_address' => $merchantPrimaryAddress ? [
+                        'id' => $merchantPrimaryAddress->id,
+                        'label' => $merchantPrimaryAddress->label,
+                        'detail' => $merchantPrimaryAddress->detail,
+                        'full_address' => $merchantAddress,
+                        'latitude' => $merchantPrimaryAddress->latitude,
+                        'longitude' => $merchantPrimaryAddress->longitude,
+                    ] : null,
                 ],
                 'related_products' => $relatedProducts,
             ],
@@ -524,6 +563,7 @@ class ProductController extends Controller
             'combinations.*.price' => ['required', 'numeric', 'min:0'],
             'combinations.*.stock' => ['required', 'integer', 'min:0', 'max:9999'],
             'combinations.*.attributes' => ['required', 'array'],
+            'combinations.*.attributes.*.option_value_id' => ['nullable', 'integer', 'exists:product_option_values,id'],
             'combinations.*.attributes.*.name' => ['required', 'string'],
             'combinations.*.attributes.*.value' => ['required', 'string'],
 
@@ -647,11 +687,25 @@ class ProductController extends Controller
         }
 
         // Validasi: combinations tidak boleh duplikat
+        // Prefer option_value_id signature (stable), fallback to name:value
         if ($useVariants) {
-            $combinations = collect($data['combinations']);
-            $uniqueCombinations = $combinations->pluck('combination')->unique();
+            $uniqueCombinations = collect($data['combinations'])
+                ->map(function ($combo) {
+                    return collect($combo['attributes'] ?? [])
+                        ->map(function ($a) {
+                            if (!empty($a['option_value_id'])) {
+                                return 'id:' . (int) $a['option_value_id'];
+                            }
+                            $n = strtolower(trim((string) ($a['name'] ?? '')));
+                            $v = strtolower(trim((string) ($a['value'] ?? '')));
+                            return 'nv:' . $n . ':' . $v;
+                        })
+                        ->sort()
+                        ->implode('|');
+                })
+                ->unique();
 
-            if ($combinations->count() !== $uniqueCombinations->count()) {
+            if (count($data['combinations']) !== $uniqueCombinations->count()) {
                 return response()->json([
                     'message' => 'Kombinasi variasi tidak boleh duplikat.',
                 ], 422);
@@ -1107,6 +1161,9 @@ class ProductController extends Controller
             'combinations.*.price' => ['required', 'numeric', 'min:0'],
             'combinations.*.stock' => ['required', 'integer', 'min:0', 'max:9999'],
             'combinations.*.attributes' => ['required', 'array'],
+            'combinations.*.attributes.*.option_value_id' => ['nullable', 'integer', 'exists:product_option_values,id'],
+            'combinations.*.attributes.*.name' => ['required', 'string'],
+            'combinations.*.attributes.*.value' => ['required', 'string'],
 
             // Addons
             'add_on_groups' => ['nullable', 'array', 'max:' . self::MAX_ADDON_GROUPS],
@@ -1190,15 +1247,19 @@ class ProductController extends Controller
             ], 422);
         }
         // Validasi: combinations tidak boleh duplikat
-        // ✅ VALIDASI: kombinasi tidak boleh duplikat (BERDASARKAN name + value)
+        // Prefer option_value_id signature (stable), fallback to name:value
         if ($useVariants) {
             $uniqueCombinations = collect($data['combinations'])
                 ->map(function ($combo) {
-                    return collect($combo['attributes'])
-                        ->map(
-                            fn($a) =>
-                            strtolower(trim($a['name'])) . ':' . strtolower(trim($a['value']))
-                        )
+                    return collect($combo['attributes'] ?? [])
+                        ->map(function ($a) {
+                            if (!empty($a['option_value_id'])) {
+                                return 'id:' . (int) $a['option_value_id'];
+                            }
+                            $n = strtolower(trim((string) ($a['name'] ?? '')));
+                            $v = strtolower(trim((string) ($a['value'] ?? '')));
+                            return 'nv:' . $n . ':' . $v;
+                        })
                         ->sort()
                         ->implode('|');
                 })
@@ -1283,11 +1344,6 @@ class ProductController extends Controller
             $useVariants = isset($data['variants']) && is_array($data['variants']) && count($data['variants']) > 0;
 
             if ($useVariants) {
-                // Hapus data single variant jika ada (agar tidak bentrok)
-                $product->variants()->each(function (ProductVariant $variant) {
-                    $variant->optionValues()->detach();
-                    $variant->delete();
-                });
                 // Update Logic Variant Kompleks
                 $this->updateProductVariants($product, $data);
             } else {
@@ -1344,7 +1400,9 @@ class ProductController extends Controller
         $existingOptions = $product->options()->with('values')->get()->keyBy('id');
 
         $optionValueMap = []; // [optionIndex][valueName] => valueId
+        $optionNameToIndex = []; // [lower(option_name)] => optionIndex
         $keptOptionIds = [];
+        $allKeptValueIds = [];
 
         /**
          * ==================================================
@@ -1352,6 +1410,7 @@ class ProductController extends Controller
          * ==================================================
          */
         foreach ($incomingOptions as $vIndex => $variantData) {
+            $optionNameToIndex[strtolower(trim($variantData['name']))] = $vIndex;
 
             // ---------- OPTION ----------
             if (!empty($variantData['id']) && $existingOptions->has($variantData['id'])) {
@@ -1398,6 +1457,7 @@ class ProductController extends Controller
                 }
 
                 $keptValueIds[] = $value->id;
+                $allKeptValueIds[] = $value->id;
 
                 // map utk combinations
                 $optionValueMap[$vIndex][strtolower(trim($opt['name']))] = $value->id;
@@ -1431,35 +1491,102 @@ class ProductController extends Controller
          * 2️⃣ UPSERT PRODUCT VARIANTS (COMBINATIONS)
          * ==================================================
          */
-        $existingVariants = $product->variants()->get()->keyBy('id');
+        // Build lookup of existing variants by their optionValues combination key
+        $existingVariants = $product->variants()->with('optionValues:id')->get();
+        $existingVariantsById = $existingVariants->keyBy('id');
+        $existingVariantsByComboKey = [];
+        foreach ($existingVariants as $existingVariant) {
+            $ids = $existingVariant->optionValues
+                ->pluck('id')
+                ->map(fn($id) => (int) $id)
+                ->sort()
+                ->values()
+                ->all();
+            $key = implode('-', $ids);
+            $existingVariantsByComboKey[$key] = $existingVariant;
+        }
+
         $keptVariantIds = [];
+        $seenIncomingComboKeys = [];
 
         foreach ($data['combinations'] as $combo) {
-
             $optionValueIds = [];
 
-            foreach ($combo['attributes'] as $aIndex => $attr) {
-                $key = strtolower(trim($attr['value']));
-                if (isset($optionValueMap[$aIndex][$key])) {
-                    $optionValueIds[] = $optionValueMap[$aIndex][$key];
+            foreach ($combo['attributes'] as $attr) {
+                // Prefer stable IDs from FE payload
+                if (!empty($attr['option_value_id'])) {
+                    $optionValueIds[] = (int) $attr['option_value_id'];
+                    continue;
+                }
+
+                // Fallback for older payloads: resolve by option name + value
+                $optNameKey = strtolower(trim($attr['name'] ?? ''));
+                $valueKey = strtolower(trim($attr['value'] ?? ''));
+                if ($optNameKey === '' || $valueKey === '') {
+                    continue;
+                }
+
+                $idx = $optionNameToIndex[$optNameKey] ?? null;
+                if ($idx !== null && isset($optionValueMap[$idx][$valueKey])) {
+                    $optionValueIds[] = $optionValueMap[$idx][$valueKey];
                 }
             }
 
-            if (!empty($combo['id']) && $existingVariants->has($combo['id'])) {
-                $variant = $existingVariants[$combo['id']];
-                $variant->update([
-                    'sku' => $combo['sku'] ?? null,
-                    'price' => $combo['price'],
-                    'stock' => $combo['stock'],
-                ]);
-            } else {
-                $variant = $product->variants()->create([
-                    'sku' => $combo['sku'] ?? null,
-                    'price' => $combo['price'],
-                    'stock' => $combo['stock'],
-                ]);
+            // Normalize key for matching existing variants (order-independent)
+            $optionValueIds = collect($optionValueIds)
+                ->map(fn($id) => (int) $id)
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+
+            // Safety: reject stale option_value_id that was deleted in this same request
+            $validSet = array_flip(array_map('intval', $allKeptValueIds));
+            foreach ($optionValueIds as $id) {
+                if (!isset($validSet[(int) $id])) {
+                    throw ValidationException::withMessages([
+                        'combinations' => 'Kombinasi berisi opsi varian yang sudah dihapus. Refresh halaman lalu coba lagi.',
+                    ]);
+                }
             }
 
+            $comboKey = implode('-', $optionValueIds);
+            if (isset($seenIncomingComboKeys[$comboKey])) {
+                throw ValidationException::withMessages([
+                    'combinations' => 'Kombinasi variasi tidak boleh duplikat.',
+                ]);
+            }
+            $seenIncomingComboKeys[$comboKey] = true;
+
+            // Priority matching:
+            // 1) If client sends id and exists -> update it
+            // 2) Else, if combination key matches existing -> update it (keeps id stable)
+            // 3) Else -> create new
+            $incomingVariantId = !empty($combo['id']) ? (int) $combo['id'] : null;
+            if ($incomingVariantId) {
+                $variant = ProductVariant::query()
+                    ->where('product_id', $product->id)
+                    ->where('id', $incomingVariantId)
+                    ->first();
+            } else {
+                $variant = null;
+            }
+
+            if ($variant) {
+                // matched by id
+            } elseif (array_key_exists($comboKey, $existingVariantsByComboKey)) {
+                $variant = $existingVariantsByComboKey[$comboKey];
+            } else {
+                $variant = $product->variants()->create();
+            }
+
+            $variant->update([
+                'sku' => $combo['sku'] ?? null,
+                'price' => $combo['price'],
+                'stock' => $combo['stock'],
+            ]);
+
+            // Keep optionValues in sync (no-op when unchanged)
             $variant->optionValues()->sync($optionValueIds);
             $keptVariantIds[] = $variant->id;
         }
@@ -1479,6 +1606,17 @@ class ProductController extends Controller
     private function updateAddonGroups(Product $product, array $groups): void
     {
         $submittedGroupIds = [];
+
+        // Track addon ids used by this product BEFORE update, to cleanup orphans after changes
+        $beforeAddonIds = AddonGroupOption::query()
+            ->whereIn(
+                'addon_group_id',
+                AddonGroup::query()->where('product_id', $product->id)->select('id')
+            )
+            ->pluck('addon_id')
+            ->unique()
+            ->values()
+            ->all();
 
         /**
          * =================================================
@@ -1552,17 +1690,37 @@ class ProductController extends Controller
 
                 $optionNameMap[$optionName] = true;
 
-                // 🔁 MASTER ADDON (GLOBAL PER MERCHANT)
-                $addonMaster = $product->merchant->addons()->firstOrCreate(
-                    ['addon_name' => trim($optionData['name'])],
-                    ['addon_name' => trim($optionData['name'])]
-                );
-
                 $groupOption = null;
 
                 // 🔐 TERIMA ID OPTION HANYA JIKA INTEGER (ID DB)
                 if (isset($optionData['id']) && is_int($optionData['id'])) {
                     $groupOption = $addonGroup->options()->find($optionData['id']);
+                }
+
+                // 🔁 MASTER ADDON (GLOBAL PER MERCHANT)
+                // Jika option sudah ada (punya id), maka rename addon existing agar ID tetap.
+                // Jika option baru, pakai firstOrCreate by name.
+                $addonName = trim($optionData['name']);
+                if ($groupOption && $groupOption->addon) {
+                    $addonMaster = $groupOption->addon;
+
+                    // Safety: pastikan addon milik merchant yang sama
+                    if ((int) $addonMaster->merchant_id === (int) $product->merchant_id) {
+                        if ($addonMaster->addon_name !== $addonName) {
+                            $addonMaster->update(['addon_name' => $addonName]);
+                        }
+                    } else {
+                        // Fallback (shouldn't happen): keep behavior global by merchant
+                        $addonMaster = $product->merchant->addons()->firstOrCreate(
+                            ['addon_name' => $addonName],
+                            ['addon_name' => $addonName]
+                        );
+                    }
+                } else {
+                    $addonMaster = $product->merchant->addons()->firstOrCreate(
+                        ['addon_name' => $addonName],
+                        ['addon_name' => $addonName]
+                    );
                 }
 
                 $optionPayload = [
@@ -1597,6 +1755,9 @@ class ProductController extends Controller
         $product->addonGroups()
             ->whereNotIn('id', $submittedGroupIds)
             ->delete();
+
+        // Cleanup addon master yang jadi orphan setelah update (mis. opsi dihapus / sebelumnya sempat bikin addon baru)
+        $this->cleanupOrphanAddons($beforeAddonIds, (int) $product->merchant_id);
     }
 
     private function generateUniqueSlugForUpdate(string $name, int $currentProductId): string
@@ -1748,7 +1909,7 @@ class ProductController extends Controller
     public function destroy(Request $request, Merchant $merchant, Product $product)
     {
         // 1) Merchant-level permission
-        $this->authorize('manage', $merchant);
+        $this->authorize('manageProduct', $merchant);
 
         if ((int) $product->merchant_id !== (int) $merchant->id) {
             return ApiResponse::error('Produk tidak ditemukan.', 404);
@@ -1757,10 +1918,17 @@ class ProductController extends Controller
         // 2) Product-level permission
         $this->authorize('manage', $product);
 
+        // Ambil addon_id yang dipakai produk ini sebelum delete (FK cascade akan menghapus groups/options)
+        $addonIds = $this->getAddonIdsForProduct($product);
+
         foreach ($product->images as $img) {
             $this->deleteImageFileIfExists($img->image_path);
         }
         $product->delete();
+
+        // Hapus addon master yang sudah tidak dipakai oleh addon_group_options manapun
+        $this->cleanupOrphanAddons($addonIds, (int) $merchant->id);
+
         return ApiResponse::success(null, 'Produk dihapus.', 200);
     }
 
@@ -1773,6 +1941,42 @@ class ProductController extends Controller
         if (Storage::disk($disk)->exists($path)) {
             Storage::disk($disk)->delete($path);
         }
+    }
+
+    private function getAddonIdsForProduct(Product $product): array
+    {
+        return AddonGroupOption::query()
+            ->whereIn(
+                'addon_group_id',
+                AddonGroup::query()->where('product_id', $product->id)->select('id')
+            )
+            ->pluck('addon_id')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function cleanupOrphanAddons(array $addonIds, int $merchantId): void
+    {
+        if (empty($addonIds)) {
+            return;
+        }
+
+        $stillUsedIds = AddonGroupOption::query()
+            ->whereIn('addon_id', $addonIds)
+            ->distinct()
+            ->pluck('addon_id')
+            ->all();
+
+        $orphanIds = array_values(array_diff($addonIds, $stillUsedIds));
+        if (empty($orphanIds)) {
+            return;
+        }
+
+        Addon::query()
+            ->where('merchant_id', $merchantId)
+            ->whereIn('id', $orphanIds)
+            ->delete();
     }
 
     public function exportExcel(Request $request, Merchant $merchant)
@@ -1874,8 +2078,14 @@ class ProductController extends Controller
                 // Delete product files
                 $this->cleanupProductFiles($product);
 
+                // Collect addon ids used by this product before deleting (FK cascades will remove group/options)
+                $addonIds = $this->getAddonIdsForProduct($product);
+
                 // Delete product record
                 $product->delete();
+
+                // Cleanup orphan addon masters per product
+                $this->cleanupOrphanAddons($addonIds, (int) $merchantId);
                 $deletedCount++;
             }
 

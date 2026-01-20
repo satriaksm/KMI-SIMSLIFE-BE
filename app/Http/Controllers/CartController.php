@@ -128,6 +128,7 @@ class CartController extends Controller
                 'cart_id' => $cart->id,
                 'merchant' => [
                     'id' => $cart->merchant->id,
+                    'slug' => $cart->merchant->slug,
                     'name' => $cart->merchant->name,
                     'phone' => $cart->merchant->phone,
                     'address' => $fullAddress,
@@ -142,7 +143,8 @@ class CartController extends Controller
                     // =========================
                     $snapshotAddons = $item->addons->map(function ($a) {
                         return [
-                            'label' => $a->addon->addon_name,
+                            'addon_id' => $a->addon_id,
+                            'label' => $a->addon_name_snapshot,
                             'price' => (int) $a->addon_price_snapshot,
                         ];
                     });
