@@ -10,6 +10,7 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('jasa_id')->constrained('jasas')->onDelete('cascade');
             $table->string('name');
+            $table->string('description')->nullable();
             $table->integer('price');
             $table->string('image')->nullable();
             $table->timestamps();
