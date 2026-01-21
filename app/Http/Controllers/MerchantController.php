@@ -7,6 +7,7 @@ use App\Models\Address;
 use App\Models\Merchant;
 use Illuminate\Support\Arr;
 use App\Helpers\ApiResponse;
+use App\Services\Deletion\HardDeleteService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +17,34 @@ use Illuminate\Support\Facades\Validator;
 
 class MerchantController extends Controller
 {
+
+    /**
+     * UMKM owner: delete own merchant (hard delete)
+     * DELETE /api/merchant/{merchant:slug}
+     */
+    public function destroyMyMerchant(Request $request, Merchant $merchant, HardDeleteService $deleter)
+    {
+        $this->authorize('delete', $merchant);
+
+        try {
+            DB::transaction(function () use ($deleter, $merchant) {
+                $deleter->deleteMerchant($merchant);
+            });
+
+            return ApiResponse::success(null, 'UMKM berhasil dihapus.');
+        } catch (\Throwable $e) {
+            Log::error('[MerchantController] Failed to delete merchant', [
+                'merchant_id' => $merchant->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ApiResponse::error(
+                'Gagal menghapus UMKM.',
+                500,
+                config('app.debug') ? [$e->getMessage()] : null
+            );
+        }
+    }
 
     public function merchantProfilePictureShow(Request $request, Merchant $merchant, ?string $v = null)
     {

@@ -4,15 +4,17 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Helpers\ApiResponse;
+use App\Services\Deletion\HardDeleteService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rules\Password;
 
-class ProfileController
+class UserController
 {
     public function show(Request $request)
     {
@@ -225,6 +227,52 @@ class ProfileController
         // For now, profile pictures are treated as public avatars.
         // If you want to restrict this later, add auth/ownership checks here.
         return $this->streamUserProfilePicture($user);
+    }
+
+    /**
+     * Self account deletion (hard delete)
+     * DELETE /api/profile
+     */
+    public function destroy(Request $request, HardDeleteService $deleter)
+    {
+        $user = $request->user();
+        if (!$user instanceof User) {
+            abort(401);
+        }
+
+        $data = $request->validate([
+            'password' => ['required', 'string'],
+        ]);
+
+        if (!Hash::check($data['password'], $user->password)) {
+            return ApiResponse::error('Kata sandi tidak cocok.', 422);
+        }
+
+        try {
+            DB::transaction(function () use ($deleter, $user) {
+                $deleter->deleteUser($user);
+            });
+
+            // Best-effort logout (token already revoked in deleter)
+            try {
+                Auth::logout();
+            } catch (\Throwable $e) {
+                // ignore
+            }
+
+            return ApiResponse::success(null, 'Akun berhasil dihapus.');
+        } catch (\Throwable $e) {
+            Log::error('[ProfileController] Failed to delete self account', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ApiResponse::error(
+                'Gagal menghapus akun.',
+                500,
+                config('app.debug') ? [$e->getMessage()] : null
+            );
+        }
     }
 
     private function streamUserProfilePicture(User $user)

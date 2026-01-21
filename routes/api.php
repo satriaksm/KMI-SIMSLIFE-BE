@@ -30,7 +30,7 @@ use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
 use App\Http\Controllers\ChatController;
-use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\UserController;
 
 // ============================================================
 // HEALTH CHECK
@@ -127,11 +127,11 @@ Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot']
 Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
     ->name('images.product-option-value.show');
 
-Route::get('profile-pictures/{user}', [ProfileController::class, 'profilePictureShow'])
+Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile-pictures.show');
 
 // Backward/alternate naming (underscore) for clients that expect it
-Route::get('profile_pictures/{user}', [ProfileController::class, 'profilePictureShow'])
+Route::get('profile_pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile_pictures.show');
 
 Route::get('merchant-profile-pictures/{merchant}/{v?}', [MerchantController::class, 'merchantProfilePictureShow'])
@@ -171,7 +171,7 @@ Route::prefix('auth')->group(function () {
         ->middleware(['throttle:5,1'])
         ->name('api.verification.verify');
 
-    Route::middleware(['auth:sanctum'])->group(function () {
+    Route::middleware(['auth'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
             ->middleware('throttle:5,1')
@@ -184,16 +184,17 @@ Route::prefix('auth')->group(function () {
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
 // ============================================================
-Route::middleware(['auth:sanctum', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('/me', [AuthController::class, 'me'])->name('me');
 
-    Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+    Route::prefix('profile')->controller(UserController::class)->group(function () {
         Route::get('/', 'show')->name('profile.show');
         Route::post('/update', 'update')->name('profile.update');
         Route::post('/change-password', 'changePassword')->name('profile.change-password');
         Route::get('/address', 'addressShow')->name('profile.address.show');
         Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
+        Route::delete('/', 'destroy')->name('profile.destroy');
     });
 
 
@@ -274,6 +275,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
             Route::get('profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
             Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
+            Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
 
             // Route::prefix('events')->name('events.')->group(function () {
             //     Route::get('/', [EventController::class, 'indexByMerchant'])->name('index');
