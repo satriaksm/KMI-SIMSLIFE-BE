@@ -46,7 +46,7 @@ class MerchantController extends Controller
         }
     }
 
-    public function merchantProfilePictureShow(Request $request, Merchant $merchant, ?string $v = null)
+    public function merchantProfilePictureShow(Request $request, Merchant $merchant)
     {
         if ($request->hasValidSignature()) {
             return $this->streamMerchantAsset($merchant->logo_path);
@@ -55,30 +55,13 @@ class MerchantController extends Controller
         return $this->streamMerchantAsset($merchant->logo_path);
     }
 
-    public function merchantBannerShow(Request $request, Merchant $merchant, ?string $v = null)
+    public function merchantBannerShow(Request $request, Merchant $merchant)
     {
         if ($request->hasValidSignature()) {
             return $this->streamMerchantAsset($merchant->cover_path);
         }
 
         return $this->streamMerchantAsset($merchant->cover_path);
-    }
-
-    /**
-     * Return ALL merchants owned by the authenticated user.
-     */
-    public function myMerchants(Request $request)
-    {
-        $user = $request->user();
-
-        $merchants = Merchant::query()
-            ->where('user_id', $user->id)
-            ->where('status', '!=', 'rejected')
-            ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
-            ->orderByDesc('id')
-            ->get();
-
-        return ApiResponse::success($merchants, 'Berhasil mengambil data merchant milik pengguna.');
     }
 
     public function mapIndex()
