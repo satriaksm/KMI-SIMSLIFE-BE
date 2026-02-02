@@ -253,6 +253,13 @@ class UserController
                 $deleter->deleteUser($user);
             });
 
+            // Logging: cek apakah user masih ada di DB setelah transaksi
+            $userExists = User::find($user->id);
+            Log::info('[UserController@destroy] User exists after delete?', [
+                'id' => $user->id,
+                'exists' => $userExists
+            ]);
+
             // Best-effort logout (token already revoked in deleter)
             try {
                 Auth::logout();

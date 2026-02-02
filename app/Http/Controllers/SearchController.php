@@ -94,19 +94,16 @@ class SearchController extends Controller
                 ->whereColumn('product_id', 'products.id'),
         ]);
 
-        if (isset($data['min_price'])) {
-            $query->whereRaw(
-                '(select MIN(price) from product_variants where product_id = products.id) >= ?',
-                [$data['min_price']]
-            );
+        if (isset($data['min_price']) || isset($data['max_price'])) {
+            $min = $data['min_price'] ?? 0;
+            $max = $data['max_price'] ?? PHP_INT_MAX;
+
+            $query->whereHas('variants', function ($q) use ($min, $max) {
+                $q->whereBetween('price', [$min, $max])
+                    ->where('stock', '>', 0);
+            });
         }
 
-        if (isset($data['max_price'])) {
-            $query->whereRaw(
-                '(select MAX(price) from product_variants where product_id = products.id) <= ?',
-                [$data['max_price']]
-            );
-        }
 
         $sort = $data['sort'] ?? 'latest';
 
@@ -478,16 +475,21 @@ class SearchController extends Controller
         }
 
         return ApiResponse::success(
-            $items,
+            [
+                'products' => $items,
+                'jasas' => $jasasItems,
+            ],
             'Products retrieved successfully.',
             200,
             [
-                'current_page' => $result->currentPage(),
-                'last_page' => $result->lastPage(),
-                'total' => $result->total(),
-                // Additional results
-                'jasas' => $jasasItems,
+                'products_meta' => [
+                    'current_page' => $result->currentPage(),
+                    'last_page' => $result->lastPage(),
+                    'total' => $result->total(),
+                ],
                 'jasas_meta' => $jasasMeta,
+                // Additional results
+
             ]
         );
     }
@@ -500,17 +502,11 @@ class SearchController extends Controller
             'segments' => ['nullable', 'array'],
             'segments.*' => ['string'],
 
-            'categories' => ['nullable', 'array'],
-            'categories.*' => ['string'],
-
-            'min_price' => ['nullable', 'numeric', 'min:0'],
-            'max_price' => ['nullable', 'numeric', 'min:0'],
-
-            'sort' => ['nullable', 'in:latest,oldest,most_products,nearest'],
+            'sort' => ['nullable', 'in:latest,oldest,nearest'],
             // Optional tiebreaker when sort=nearest
-            'secondary_sort' => ['nullable', 'in:latest,oldest,most_products', 'prohibited_unless:sort,nearest'],
+            'secondary_sort' => ['nullable', 'in:latest,oldest', 'prohibited_unless:sort,nearest'],
             // Optional third-level tiebreaker when sort=nearest
-            'tertiary_sort' => ['nullable', 'in:latest,oldest,most_products', 'prohibited_unless:sort,nearest'],
+            'tertiary_sort' => ['nullable', 'in:latest,oldest', 'prohibited_unless:sort,nearest'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             'is_open' => ['nullable', 'boolean'],
 
@@ -650,7 +646,6 @@ class SearchController extends Controller
                 match ($s) {
                     'latest' => $query->orderByDesc('merchants.created_at'),
                     'oldest' => $query->orderBy('merchants.created_at'),
-                    'most_products' => $query->orderByRaw('(products_count + jasas_count) DESC'),
                     default => null,
                 };
             }
@@ -662,8 +657,6 @@ class SearchController extends Controller
             match ($sort) {
                 'latest' => $query->orderByDesc('merchants.created_at'),
                 'oldest' => $query->orderBy('merchants.created_at'),
-                'most_products' => $query
-                    ->orderByRaw('(products_count + jasas_count) DESC'),
                 default => null,
             };
         }

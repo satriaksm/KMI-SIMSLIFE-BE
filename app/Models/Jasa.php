@@ -11,8 +11,6 @@ class Jasa extends Model
 
     protected $fillable = [
         'merchant_id',
-        'jasa_category_id',
-        'jasa_subcategory_id',
         'title',
         'description',
         'fixed_price',
@@ -36,19 +34,25 @@ class Jasa extends Model
         // 'social_media' => 'array',
     ];
 
+    public function getMorphClass()
+    {
+        return 'jasa';
+    }
+
     public function merchant()
     {
         return $this->belongsTo(Merchant::class);
     }
 
-    public function category()
+    public function categories()
     {
-        return $this->belongsTo(JasaCategory::class, 'jasa_category_id');
-    }
-
-    public function subcategory()
-    {
-        return $this->belongsTo(JasaSubcategory::class, 'jasa_subcategory_id');
+        return $this->morphToMany(
+            Category::class,
+            'categorizable',
+            'categorizables',
+            'categorizable_id',
+            'category_id'
+        )->withTimestamps();
     }
 
     public function packages()
@@ -63,6 +67,6 @@ class Jasa extends Model
 
     public function images()
     {
-        return $this->hasMany(JasaImage::class);
+        return $this->morphMany(Image::class, 'imageable');
     }
 }

@@ -16,7 +16,7 @@ class MerchantFactory extends Factory
     public function definition(): array
     {
         $name = $this->faker->company();
-        
+
         return [
             'user_id' => User::factory(),
             'paguyuban_id' => null,
@@ -25,6 +25,15 @@ class MerchantFactory extends Factory
             'slug' => Str::slug($name) . '-' . Str::random(5),
             'description' => $this->faker->paragraph(),
             'logo_path' => null,
+            'operational_hours' => [
+                'monday' => ['is_open' => false],
+                'tuesday' => ['is_open' => false],
+                'wednesday' => ['is_open' => false],
+                'thursday' => ['is_open' => false],
+                'friday' => ['is_open' => false],
+                'saturday' => ['is_open' => false],
+                'sunday' => ['is_open' => false],
+            ],
             'phone' => $this->faker->phoneNumber(),
             'status' => 'approved',
             'rejection_reason' => null,
@@ -38,7 +47,7 @@ class MerchantFactory extends Factory
      */
     public function approved(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'status' => 'approved',
             'response_at' => now(),
             'rejection_reason' => null,
@@ -50,7 +59,7 @@ class MerchantFactory extends Factory
      */
     public function pending(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'status' => 'pending',
             'response_at' => null,
             'reviewed_by' => null,
@@ -62,7 +71,7 @@ class MerchantFactory extends Factory
      */
     public function rejected(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'status' => 'rejected',
             'rejection_reason' => $this->faker->sentence(),
             'response_at' => now(),
@@ -101,7 +110,7 @@ class MerchantFactory extends Factory
 
         $finalSlug = Str::slug($finalName) . '-' . Str::random(5);
 
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'name' => $finalName,
             'slug' => $finalSlug,
         ]);

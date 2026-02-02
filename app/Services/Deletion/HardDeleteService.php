@@ -71,7 +71,11 @@ class HardDeleteService
         $user->addresses()->delete();
 
         // 4) Finally delete the user
-        $user->delete();
+        $user->forceDelete();
+        Log::info('User deleted?', [
+            'id' => $user->id,
+            'exists' => User::find($user->id)
+        ]);
     }
 
     public function deleteMerchant(Merchant $merchant): void

@@ -11,10 +11,6 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('merchant_id')->constrained('merchants')->onDelete('cascade');
 
-            // Kategori & Sub Kategori
-            $table->foreignId('jasa_category_id')->nullable()->constrained('jasa_categories')->cascadeOnDelete();
-            $table->foreignId('jasa_subcategory_id')->nullable()->constrained('jasa_subcategories')->cascadeOnDelete();
-
             $table->string('title');
             $table->string('vendor')->nullable();
 

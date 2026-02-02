@@ -130,10 +130,6 @@ Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImage
 Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile-pictures.show');
 
-// Backward/alternate naming (underscore) for clients that expect it
-Route::get('profile_pictures/{user}', [UserController::class, 'profilePictureShow'])
-    ->name('profile_pictures.show');
-
 Route::get('merchant-profile-pictures/{merchant}', [MerchantController::class, 'merchantProfilePictureShow'])
     ->name('merchant_profile_pictures.show');
 Route::get('merchant-banner/{merchant}', [MerchantController::class, 'merchantBannerShow'])
@@ -147,10 +143,6 @@ Route::prefix('auth')->group(function () {
     Route::post('register', [AuthController::class, 'register'])
         ->middleware('throttle:5,1')
         ->name('register');
-
-    Route::post('login', [AuthController::class, 'login'])
-        ->middleware('throttle:5,1')
-        ->name('login');
 
     Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])
         ->middleware('throttle:5,1')

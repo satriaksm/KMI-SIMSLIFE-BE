@@ -4,8 +4,6 @@ use Illuminate\Foundation\Application;
 use Illuminate\Http\Middleware\HandleCors;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
-use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 use App\Http\Middleware\AllowOptions;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -26,15 +24,11 @@ return Application::configure(basePath: dirname(__DIR__))
             AllowOptions::class,
             HandleCors::class,
         ]);
-        $middleware->api(prepend: [
-            EnsureFrontendRequestsAreStateful::class,
-            VerifyCsrfToken::class
-        ]);
+
+        // Enable Sanctum SPA (cookie-based) authentication for API routes.
+        // NOTE: Do not prepend CSRF middleware to the API group; Sanctum's stateful stack
+        // already wires the correct order (cookies -> session -> CSRF).
         $middleware->statefulApi();
-        // 🆕 ADDED from feat/rating-system: Global middleware untuk OPTIONS request
-        $middleware->append([
-            AllowOptions::class,
-        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
