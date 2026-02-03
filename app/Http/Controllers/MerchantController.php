@@ -381,38 +381,49 @@ class MerchantController extends Controller
             }
 
             $addressPayload = [];
-            if (array_key_exists('province_id', $validated)) {
+            if (!is_null($validated['province_id'] ?? null)) {
                 $addressPayload['province_id'] = $validated['province_id'];
             }
-            if (array_key_exists('city_id', $validated)) {
+            if (!is_null($validated['city_id'] ?? null)) {
                 $addressPayload['city_id'] = $validated['city_id'];
             }
-            if (array_key_exists('district_id', $validated)) {
+            if (!is_null($validated['district_id'] ?? null)) {
                 $addressPayload['district_id'] = $validated['district_id'];
             }
-            if (array_key_exists('village_id', $validated)) {
+            if (!is_null($validated['village_id'] ?? null)) {
                 $addressPayload['village_id'] = $validated['village_id'];
             }
-            if (array_key_exists('address_detail', $validated)) {
+            if (array_key_exists('address_detail', $validated) && !is_null($validated['address_detail'])) {
                 $addressPayload['detail'] = $validated['address_detail'];
             }
-            if (array_key_exists('latitude', $validated)) {
+            if (!is_null($validated['latitude'] ?? null)) {
                 $addressPayload['latitude'] = $validated['latitude'];
             }
-            if (array_key_exists('longitude', $validated)) {
+            if (!is_null($validated['longitude'] ?? null)) {
                 $addressPayload['longitude'] = $validated['longitude'];
             }
 
             if (!$address) {
-                $merchant->addresses()->create(array_merge([
-                    'label' => 'utama',
-                ], $addressPayload));
-            } else {
-                // Ensure it becomes primary going forward
-                if (empty($address->label)) {
-                    $addressPayload['label'] = 'utama';
+                // Only create a new address row if we have the required location IDs.
+                $hasRequiredIds =
+                    array_key_exists('province_id', $addressPayload)
+                    && array_key_exists('city_id', $addressPayload)
+                    && array_key_exists('district_id', $addressPayload)
+                    && array_key_exists('village_id', $addressPayload);
+
+                if ($hasRequiredIds) {
+                    $merchant->addresses()->create(array_merge([
+                        'label' => 'utama',
+                    ], $addressPayload));
                 }
-                $address->update($addressPayload);
+            } else {
+                if (!empty($addressPayload)) {
+                    // Ensure it becomes primary going forward
+                    if (empty($address->label)) {
+                        $addressPayload['label'] = 'utama';
+                    }
+                    $address->update($addressPayload);
+                }
             }
 
             /** ===============================
