@@ -90,7 +90,7 @@ class JasaController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Jasa::with(['categories'])
+        $query = Jasa::with(['categories', 'images'])
             // Tampilkan jasa lama di atas, yang baru di urutan terakhir
             ->orderBy('id', 'asc');
 
@@ -103,6 +103,23 @@ class JasaController extends Controller
 
         $jasas->each(function ($jasa) {
             $this->attachCategoryAliases($jasa);
+            
+            // Normalize images for frontend
+            if ($jasa->images && $jasa->images->count() > 0) {
+                $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
+                    || ($jasa->status === null && (bool) $jasa->is_active);
+
+                $jasa->images->transform(function ($image) use ($isPublic) {
+                    $image->path = $image->image_path;
+                    $image->url = $isPublic
+                        ? route('images.show', ['image' => $image->id])
+                        : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+                    $image->src_url = $image->url;
+
+                    $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+                    return $image;
+                });
+            }
         });
 
         // Selalu kembalikan array (termasuk [] jika kosong) agar frontend konsisten
@@ -330,6 +347,7 @@ class JasaController extends Controller
         $jasa = Jasa::with([
             'categories',
             'merchant.segmentation',
+            'merchant.primaryAddress',
             'images',
         ])
             ->where(function ($q) {
@@ -613,7 +631,7 @@ class JasaController extends Controller
                     $path = $file->store("jasa/{$jasa->id}", 'public');
 
                     $imagesToInsert[] = [
-                        'imageable_type' => 'jasa',
+                        'imageable_type' => 'App\\Models\\Jasa',
                         'imageable_id' => $jasa->id,
                         'image_path' => $path,
                         'display_order' => $index,

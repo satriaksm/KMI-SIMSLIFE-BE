@@ -95,6 +95,11 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/{merchantSlug}/jasas', [JasaController::class, 'publicByMerchant'])
             ->where('merchantSlug', '^[A-Za-z0-9-]+$')
             ->name('jasas');
+
+        // Merchant's vouchers (by ID - public endpoint for checkout)
+        Route::get('/{merchantId}/vouchers', [VoucherController::class, 'publicVouchersByMerchantId'])
+            ->where('merchantId', '[0-9]+')
+            ->name('vouchers');
     });
 
     // Category Routes
@@ -353,9 +358,35 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     });
 });
 
-// ============================================================
-// PUBLIC API DARI SISTEM LAMA (JASA / PROMO / ORDER)
-// ============================================================
+    // CHATS (Customer & Merchant)
+    Route::prefix('chats')->group(function () {
+        Route::get('/', [ChatController::class, 'index'])->name('chats.index');
+        Route::post('/start', [ChatController::class, 'start'])->name('chats.start');
+        Route::get('/{id}', [ChatController::class, 'show'])->name('chats.show');
+        Route::post('/{id}/messages', [ChatController::class, 'sendMessage'])->name('chats.sendMessage');
+        Route::post('/{id}/offer', [ChatController::class, 'makeOffer'])->name('chats.makeOffer');
+        Route::post('/{id}/messages/{messageId}/accept', [ChatController::class, 'acceptOffer'])->name('chats.acceptOffer');
+        Route::post('/{id}/messages/{messageId}/reject', [ChatController::class, 'rejectOffer'])->name('chats.rejectOffer');
+    });
+
+    // CUSTOMER ONLY: Register Merchant
+    Route::middleware('role:customer')->group(function () {
+
+        Route::prefix('cart')->group(function () {
+            Route::get('/', [CartController::class, 'index']);
+            Route::get('/count', [CartController::class, 'count']);
+            Route::post('/items', [CartController::class, 'addToCart']);
+            Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
+            Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
+            Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
+            Route::delete('/{cart}', [CartController::class, 'clearCart']);
+        });
+
+        Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
+
+        Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+
+    });
 
 
 // ---------- PROMO ----------
