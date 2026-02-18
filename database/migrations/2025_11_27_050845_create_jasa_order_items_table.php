@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        Schema::create('orders', function (Blueprint $table) {
+        Schema::create('jasa_order_items', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
             $table->foreignId('merchant_id')->constrained('merchants')->onDelete('cascade');
@@ -23,13 +23,13 @@ return new class extends Migration {
             $table->enum('metode_pembayaran', ['COD', 'QRIS'])->default('COD');
             $table->string('promo_code')->nullable();
             $table->integer('total')->default(0);
-            $table->enum('status', ['pending','proses','selesai','batal'])->default('pending');
+            $table->enum('status', ['pending', 'proses', 'selesai', 'batal'])->default('pending');
             $table->timestamps();
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('orders');
+        Schema::dropIfExists('jasa_order_items');
     }
 };

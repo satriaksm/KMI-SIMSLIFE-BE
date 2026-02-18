@@ -2,42 +2,36 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Order extends Model
 {
-    use HasFactory;
-
     protected $fillable = [
-        'jasa_id',
+        'address_id',
         'user_id',
-        'package_id',
-        'nama',
-        'tel',
-        'alamat',
-        'catatan',
-        'catatan_alamat',
-        'tanggal',
-        'waktu',
-        'metode_pembayaran',
-        'promo_code',
-        'total',
+        'merchant_id',
+        'voucher_id',
+        'order_code',
+        'subtotal',
+        'discount_total',
+        'gross_amount',
+        'delivery_fee_snapshot',
+
         'status',
+        'responsed_at',
+        'paid_at',
+        'delivered_at',
+        'completed_at',
+        'cancelled_at',
+
+        'user_name_snapshot',
+        'user_phone_snapshot',
+        'address_detail_snapshot',
+        'province_name_snapshot',
+        'city_name_snapshot',
+        'district_name_snapshot',
+        'village_name_snapshot',
+        'latitude_snapshot',
+        'longitude_snapshot',
     ];
-
-    public function jasa()
-    {
-        return $this->belongsTo(\App\Models\Jasa::class);
-    }
-
-    public function package()
-    {
-        return $this->belongsTo(\App\Models\Package::class);
-    }
-
-    public function user()
-    {
-        return $this->belongsTo(\App\Models\User::class);
-    }
 }
