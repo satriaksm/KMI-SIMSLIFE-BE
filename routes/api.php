@@ -27,6 +27,7 @@ use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Admin\AdminManagementController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
 use App\Http\Controllers\ChatController;
@@ -343,10 +344,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // ===== DASHBOARD STATISTICS =====
         Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
         Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']);
-        Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']); // ✅ NEW
+        Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']); 
 
-        // ===== DASHBOARD USER MANA0GEMENT (NEW) =====
+        // ===== DASHBOARD USER MANAGEMENT =====
         Route::get('/dashboard', [AdminUserController::class, 'dashboard'])->name('dashboard');
+
+        // Manage Admins (Super Admin only - validated in controller)
+        Route::prefix('manage-admins')->name('manage-admins.')->group(function () {
+            Route::get('/', [AdminManagementController::class, 'index'])->name('index');
+            Route::post('/', [AdminManagementController::class, 'store'])->name('store');
+            Route::patch('/{id}/toggle-status', [AdminManagementController::class, 'toggleStatus'])->name('toggle-status');
+            Route::delete('/{id}', [AdminManagementController::class, 'destroy'])->name('destroy');
+            Route::get('/{id}/activity-logs', [AdminManagementController::class, 'activityLogs'])->name('activity-logs');
+            Route::get('/export-pdf', [AdminManagementController::class, 'exportPdf'])->name('export-pdf');
+            Route::get('/{id}/export-pdf', [AdminManagementController::class, 'exportAdminDetailPdf'])->name('exportAdminDetailPdf');
+        });
 
         // ===== USER MANAGEMENT =====
         Route::prefix('users')->name('users.')->group(function () {
@@ -463,8 +475,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     });
 });
 
-
-// ✅ Event banner streaming route (should already exist)
+// Event banner streaming route (should already exist)
 Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
     ->name('event-banners.show');
 
@@ -474,11 +485,11 @@ Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
 Route::get('/merchant-logo/{merchant}', [AdminMerchantController::class, 'showLogo'])
     ->name('merchant.logo');
 
-// ✅ User profile picture streaming route
+// User profile picture streaming route
 Route::get('/user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])
     ->name('user.profile');
 
-// ✅ ADD: Community post image streaming route
+// Community post image streaming route
 Route::get('community-images/{image}', [CommunityPostController::class, 'showImage'])
     ->name('community-images.show');
 

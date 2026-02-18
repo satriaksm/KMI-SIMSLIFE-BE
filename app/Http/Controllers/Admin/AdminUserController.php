@@ -348,6 +348,13 @@ class AdminUserController extends Controller
             $query->where('status', $status);
         }
 
+        // ✅ Exclude users with 'admin' role if exclude_admin is true
+        if ($request->boolean('exclude_admin')) {
+            $query->whereDoesntHave('roles', function ($q) {
+                $q->where('name', 'admin');
+            });
+        }
+
         // Filter by role
         if ($request->filled('role')) {
             if ($request->role === 'customer') {
@@ -412,7 +419,7 @@ class AdminUserController extends Controller
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'nik' => $user->nik,
-                'profile_picture_path' => $user->profile_picture_path, // ✅ ADD THIS
+                'profile_picture_path' => $user->profile_picture_path,
                 'status' => $user->status ?? 'active',
                 'roles' => $user->roles->pluck('name'),
                 'merchants' => $user->merchants->map(function ($m) {

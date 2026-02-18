@@ -104,6 +104,7 @@ class CommunityPost extends Model
                     $query->with('user:id,name,profile_picture_path')
                           ->oldest('created_at');
                 }
+                
             ])
             ->oldest('created_at');
     }
