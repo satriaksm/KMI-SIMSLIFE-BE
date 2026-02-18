@@ -30,6 +30,9 @@ class JasaController extends Controller
             ? route('images.show', ['image' => $cover->id])
             : URL::signedRoute('images.show', ['image' => $cover->id], now()->addMinutes(60));
 
+        // Sinkronkan field legacy `image` agar semua endpoint FE konsisten
+        $jasa->setAttribute('image', $cover->image_path);
+
         $jasa->setAttribute('cover_img', [
             'id' => $cover->id,
             'src_url' => $srcUrl,
@@ -119,6 +122,8 @@ class JasaController extends Controller
                     $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                     return $image;
                 });
+
+                $this->attachCoverImg($jasa, $isPublic);
             }
         });
 
@@ -457,7 +462,8 @@ class JasaController extends Controller
             'jasa_subcategory_id' => 'nullable|integer|exists:categories,id',
 
             // Gambar layanan (multiple file) dari Editjasa.vue (opsional)
-            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
+            'images' => 'nullable|array|max:10',
+            'images.*' => 'file|image|mimes:jpg,jpeg,png,webp|max:5120',
         ]);
 
         $data = $validated;
@@ -589,7 +595,7 @@ class JasaController extends Controller
             // Pembayaran & status
             'payment_methods' => 'nullable|string|max:255',
             'status' => 'required|string|in:draft,active,inactive,published,archived',
-            'operating_days' => 'required|string|max:255',
+            'operating_days' => 'nullable|string|max:255',
             'operating_times' => 'nullable|string|max:255',
 
             // Kategori (nama field yang dipakai FE)
@@ -597,10 +603,20 @@ class JasaController extends Controller
             'jasa_subcategory_id' => 'nullable|integer|exists:categories,id',
 
             // Gambar layanan (multiple file) dari Createjasa.vue
-            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
+            'images' => 'nullable|array|max:10',
+            'images.*' => 'file|image|mimes:jpg,jpeg,png,webp|max:5120',
         ]);
 
         $data = $validated;
+
+        // Field jadwal sekarang opsional dari FE.
+        // Default aman: tersedia setiap hari, tanpa batasan jam spesifik.
+        if (empty($data['operating_days'])) {
+            $data['operating_days'] = '1,2,3,4,5,6,7';
+        }
+        if (!array_key_exists('operating_times', $data) || $data['operating_times'] === null) {
+            $data['operating_times'] = '';
+        }
 
         // Sinkronkan legacy price untuk kompatibilitas listing lama
         $fixed = $data['fixed_price'] ?? null;
