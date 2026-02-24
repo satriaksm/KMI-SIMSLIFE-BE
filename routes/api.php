@@ -135,9 +135,9 @@ Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureSho
 Route::get('profile_pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile_pictures.show');
 
-Route::get('merchant-profile-pictures/{merchant}/{v?}', [MerchantController::class, 'merchantProfilePictureShow'])
+Route::get('merchant-profile-pictures/{merchant}', [MerchantController::class, 'merchantProfilePictureShow'])
     ->name('merchant_profile_pictures.show');
-Route::get('merchant-banner/{merchant}/{v?}', [MerchantController::class, 'merchantBannerShow'])
+Route::get('merchant-banner/{merchant}', [MerchantController::class, 'merchantBannerShow'])
     ->name('merchant_banner.show');
 
 // ============================================================
@@ -247,8 +247,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
-
-        Route::get('/my-merchants', [MerchantController::class, 'myMerchants'])->name('merchant.my-many');
 
         // ---------- JASA ----------
         Route::prefix('jasa')->group(function () {

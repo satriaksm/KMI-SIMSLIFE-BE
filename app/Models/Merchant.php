@@ -168,10 +168,9 @@ class Merchant extends Model
             return null;
         }
 
-        // Include a version segment derived from the stored filename.
-        // This makes the URL change whenever the file changes, so clients can cache safely.
         return route('merchant_profile_pictures.show', [
             'merchant' => $this->id,
+            // Query param for cache-busting (no extra path segment)
             'v' => basename((string) $this->logo_path),
         ]);
     }
@@ -185,6 +184,7 @@ class Merchant extends Model
 
         return route('merchant_banner.show', [
             'merchant' => $this->id,
+            // Query param for cache-busting (no extra path segment)
             'v' => basename((string) $this->cover_path),
         ]);
     }
