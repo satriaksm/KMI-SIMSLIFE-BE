@@ -1,16 +1,13 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-
-// Controllers lama (Jasa / Promo / Orders)
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
-use App\Http\Controllers\PublicImageController;
-// Controllers baru
+use App\Http\Controllers\JasaCategoryController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PackageController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
-use App\Http\Controllers\OrderController;
-use App\Http\Controllers\PromoController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\VoucherController;
 use App\Http\Controllers\CategoryController;
@@ -31,16 +28,18 @@ use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\Admin\AdminVoucherController;
-use App\Http\Controllers\ProductOptionValueImageController;
-// 🆕 ADDED FROM feat/rating-system: Profile Controller
-use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\Product\ProductOptionValueImageController;
+use App\Http\Controllers\ChatController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\RatingController;
+use App\Models\Conversation;
 
 // ============================================================
 // HEALTH CHECK
 // ============================================================
 Route::get('/', fn() => response()->json(['status' => 'API is running']));
 
-Route::get('images/by-path/{path}', [PublicImageController::class, 'byPath'])->where('path', '.*');
+
 
 
 // ============================================================
@@ -53,36 +52,36 @@ Route::prefix('public')->name('public.')->group(function () {
 
     // Public jasa listing (only published/active)
     // Route::get('/jasas', [JasaController::class, 'publicIndex']);
-    Route::get('/jasas/{id}', [JasaController::class, 'publicShow']);    // Public Products
+    
+    // Jasa Ratings (public - view only) - MUST BE BEFORE ID/SLUG routes
+    Route::get('/jasas/{jasaId}/ratings/summary', [RatingController::class, 'jasaSummary'])->name('jasas.ratings.summary');
+    Route::get('/jasas/{jasaId}/ratings', [RatingController::class, 'indexForJasa'])->name('jasas.ratings');
+    
+    // Jasa by ID (numeric only - must come FIRST so it matches before slug)
+    Route::get('/jasas/{id}', [JasaController::class, 'publicShow'])
+        ->whereNumber('id')
+        ->name('jasas.show');
+    
+    // Jasa by slug (must contain at least one letter, come AFTER numeric check)
+    Route::get('/jasas/{slug}', [JasaController::class, 'publicShowBySlug'])
+        ->where('slug', '.*[a-z].*')
+        ->name('jasas.show.slug');
+
     Route::prefix('products')->name('products.')->group(function () {
-        // Route::get('/', [ProductController::class, 'publicIndex'])->name('index');
-        // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
 
-        // 🆕 FROM feat/rating-system: Featured products endpoint
-        // Route::get('/featured', [ProductController::class, 'publicFeatured'])->name('featured');
-
-        // ✅ Public show by slug (only published)
-        Route::get('/{slug}', [ProductController::class, 'publicShow'])
+        Route::get('/{product:slug}', [ProductController::class, 'publicShow'])
             ->where('slug', '^[A-Za-z0-9-]+$')
             ->name('show');
 
-        // 🆕 FROM feat/rating-system: Get variant by option values
-        // Route::post('/{slug}/variant', [ProductController::class, 'publicGetVariant'])
-        //     ->where('slug', '^[a-z0-9-]+$')
-        //     ->name('variant');
-
+        // Product Ratings (public - view only)
+        Route::get('/{productId}/ratings', [RatingController::class, 'indexForProduct'])->name('ratings');
+        Route::get('/{productId}/ratings/summary', [RatingController::class, 'productSummary'])->name('ratings.summary');
     });
 
     // Public Merchants
     Route::prefix('merchants')->name('merchants.')->group(function () {
-        // List merchants (with pagination & filters)
-        // Route::get('/', [MerchantController::class, 'publicIndex'])->name('index');
-
-        // // Random merchants for homepage
-        // Route::get('/random', [MerchantController::class, 'publicRandom'])->name('random');
 
         Route::get('/map', [MerchantController::class, 'mapIndex'])->name('map.index');
-        // Route::get('/map/search', [MerchantController::class, 'mapSearch'])->name('map.search');
 
         // Show single merchant
         Route::get('/{merchantSlug}', [MerchantController::class, 'publicShow'])->name('show');
@@ -96,10 +95,15 @@ Route::prefix('public')->name('public.')->group(function () {
             ->where('merchantSlug', '^[A-Za-z0-9-]+$')
             ->name('jasas');
 
-        // Merchant's vouchers (by ID - public endpoint for checkout)
-        Route::get('/{merchantId}/vouchers', [VoucherController::class, 'publicVouchersByMerchantId'])
-            ->where('merchantId', '[0-9]+')
-            ->name('vouchers');
+        // Merchant's ratings/reviews (public endpoint)
+        Route::get('/{merchantSlug}/ratings/summary', [RatingController::class, 'merchantSummaryBySlug'])
+            ->where('merchantSlug', '^[A-Za-z0-9-]+$')
+            ->name('ratings.summary');
+
+        // Merchant's individual ratings (public endpoint - for merchant reviews page)
+        Route::get('/{merchantSlug}/ratings', [RatingController::class, 'indexForMerchantBySlug'])
+            ->where('merchantSlug', '^[A-Za-z0-9-]+$')
+            ->name('ratings');
     });
 
     // Category Routes
@@ -120,8 +124,18 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('villages/{districtId}', 'villages');
     });
 
-    // ✅ NEW: Public events endpoint (published only, for homepage banner)
+    //  events endpoint (published only, for homepage banner)
     Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
+
+    //  Homepage specific endpoints
+    Route::prefix('home')->name('home.')->group(function () {
+        Route::get('recommended-merchants', [\App\Http\Controllers\HomeController::class, 'recommendedMerchants'])
+            ->name('recommended-merchants');
+        Route::get('map-carousel-merchants', [\App\Http\Controllers\HomeController::class, 'mapCarouselMerchants'])
+            ->name('map-carousel-merchants');
+        Route::get('statistics', [\App\Http\Controllers\HomeController::class, 'statistics'])
+            ->name('statistics');
+    });
 });
 
 
@@ -143,17 +157,16 @@ Route::get('images/{image}', [ImageController::class, 'show'])
 // Cart item snapshot images (served via API - avoids direct /storage access)
 Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot'])
     ->name('cart-snapshots.show');
-Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
-    ->name('images.product-option-value.show');
+// Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
+//     ->name('images.product-option-value.show');
 
-Route::get('profile-pictures/{user}', [ProfileController::class, 'profilePictureShow'])
+Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile-pictures.show');
 
 // Backward/alternate naming (underscore) for clients that expect it
-Route::get('profile_pictures/{user}', [ProfileController::class, 'profilePictureShow'])
+Route::get('profile_pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile_pictures.show');
 
-// Merchant media (logo & banner) served via API
 Route::get('merchant-profile-pictures/{merchant}', [MerchantController::class, 'merchantProfilePictureShow'])
     ->name('merchant_profile_pictures.show');
 Route::get('merchant-banner/{merchant}', [MerchantController::class, 'merchantBannerShow'])
@@ -192,7 +205,7 @@ Route::prefix('auth')->group(function () {
         ->middleware(['throttle:5,1'])
         ->name('api.verification.verify');
 
-    Route::middleware(['auth:sanctum'])->group(function () {
+    Route::middleware(['auth'])->group(function () {
         Route::post('/change-password', [PasswordResetController::class, 'change'])->name('password.change');
         Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])
             ->middleware('throttle:5,1')
@@ -205,24 +218,43 @@ Route::prefix('auth')->group(function () {
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
 // ============================================================
-Route::middleware(['auth:sanctum', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('/me', [AuthController::class, 'me'])->name('me');
-    // 🆕 ADDED FROM feat/rating-system: Profile Management
-    Route::prefix('profile')->controller(ProfileController::class)->group(function () {
+
+    Route::prefix('profile')->controller(UserController::class)->group(function () {
         Route::get('/', 'show')->name('profile.show');
         Route::post('/update', 'update')->name('profile.update');
         Route::post('/change-password', 'changePassword')->name('profile.change-password');
-    });
-
-    // Customer profile address (primary / "utama")
-    Route::prefix('profile')->controller(ProfileController::class)->group(function () {
         Route::get('/address', 'addressShow')->name('profile.address.show');
         Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
+        Route::delete('/', 'destroy')->name('profile.destroy');
+    });
+
+    // ===== RATINGS (for all authenticated users) =====
+    Route::prefix('ratings')->name('ratings.')->group(function () {
+        Route::post('/', [RatingController::class, 'store'])->name('store');
+        Route::get('/{ratingId}', [RatingController::class, 'show'])->name('show');
+        Route::put('/{ratingId}', [RatingController::class, 'update'])->name('update');
+        Route::delete('/{ratingId}', [RatingController::class, 'destroy'])->name('destroy');
+    });
+
+    // ===== CHATS/MESSAGING (for all authenticated users) =====
+    Route::prefix('chats')->name('chats.')->group(function () {
+        Route::post('/start', [ChatController::class, 'start'])->name('start');
+        Route::get('/', [ChatController::class, 'index'])->name('index');
+        Route::get('/{conversation}', [ChatController::class, 'show'])->name('show');
+        Route::post('/{conversation}/messages', [ChatController::class, 'sendMessage'])->name('messages.store');
+        Route::post('/{conversation}/buyer-messages', [ChatController::class, 'sendBuyerMessage'])->name('messages.buyer.store');
+        Route::post('/{conversation}/offer', [ChatController::class, 'makeOffer'])->name('offer.store');
+        Route::put('/{conversation}/offer/accept', [ChatController::class, 'acceptOffer'])->name('offer.accept');
+        Route::put('/{conversation}/status', [ChatController::class, 'updateStatus'])->name('status.update');
+        Route::delete('/{conversation}', [ChatController::class, 'destroy'])->name('destroy');
     });
 
     // CUSTOMER ONLY: Register Merchant
     Route::middleware('role:customer')->group(function () {
+
         Route::prefix('cart')->group(function () {
             Route::get('/', [CartController::class, 'index']);
             Route::get('/count', [CartController::class, 'count']);
@@ -234,10 +266,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         });
 
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
-        // Current user's merchant (for Profile page "Akses Toko" button)
-        Route::get('/my-merchants', [MerchantController::class, 'myMerchants'])->name('merchant.my-many');
-
-
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
 
@@ -246,6 +274,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
     // UMKM OWNER ONLY
     Route::middleware('role:umkm-owner')->group(function () {
+
         // ---------- JASA ----------
         Route::prefix('jasa')->group(function () {
             Route::get('/', [JasaController::class, 'index']);
@@ -263,72 +292,73 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         // Route::post('/merchants/{merchantId}/jasas', [JasaController::class, 'storeForMerchant'])
         //     ->whereNumber('merchantId');
 
-        Route::prefix('merchant')->group(function () {
+        Route::prefix('merchant/{merchant:slug}')->group(function () {
 
             Route::get(
-                '{merchant:slug}/dashboard',
+                'dashboard',
                 [DashboardController::class, 'merchantDashboard']
             );
 
-            Route::get('/{merchant:slug}/profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
-            Route::post('/{merchant:slug}/update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
+            Route::get('profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
+            Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
+            Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
 
-            // PRODUCT CRUD & NESTED
-            Route::get('{merchant:slug}/products', [ProductController::class, 'index'])->name('index');
-            Route::post('{merchant:slug}/products', [ProductController::class, 'store'])->name('store');
+            // Route::prefix('events')->name('events.')->group(function () {
+            //     Route::get('/', [EventController::class, 'indexByMerchant'])->name('index');
+            //     Route::get('/{id}', [EventController::class, 'show'])->name('show');
 
-            Route::post('{merchant:slug}/products/bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
-            Route::post('{merchant:slug}/products/bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
+            //     Route::post('/{id}', [EventController::class, 'approvalByMerchant'])->name('approval');
+            // });
 
-            Route::get('{merchant:slug}/products/export/excel', [ProductController::class, 'exportExcel']);
-            Route::get('{merchant:slug}/products/export/pdf', [ProductController::class, 'exportPdf']);
-            Route::get('{merchant:slug}/products/{product:slug}', [ProductController::class, 'show'])
-                ->where('product', '^[a-z0-9-]+$')
-                ->name('show');
+            Route::prefix('products')->name('merchant.products.')->group(function () {
+                Route::get('', [ProductController::class, 'index'])->name('index');
+                Route::post('', [ProductController::class, 'store'])->name('store');
 
-            Route::put('{merchant:slug}/products/{product:slug}', [ProductController::class, 'update'])
-                ->where('product', '^[a-z0-9-]+$')
-                ->name('update');
+                Route::post('bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
+                Route::post('bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
 
-            Route::patch('{merchant:slug}/products/{product:slug}', [ProductController::class, 'update'])
-                ->where('product', '^[a-z0-9-]+$')
-                ->name('update.patch');
+                Route::get('export/excel', [ProductController::class, 'exportExcel']);
+                Route::get('export/pdf', [ProductController::class, 'exportPdf']);
 
-            Route::delete('{merchant:slug}/products/{product:slug}', [ProductController::class, 'destroy'])
-                ->where('product', '^[a-z0-9-]+$')
-                ->name('destroy');
+                Route::prefix('{product:slug}')->group(function () {
+                    Route::get('', [ProductController::class, 'show'])
+                        ->where('product', '^[a-z0-9-]+$')
+                        ->name('show');
 
-            Route::patch('{merchant:slug}/products/{product:slug}/status', [ProductController::class, 'updateStatus'])
-                ->where('product', '^[a-z0-9-]+$')
-                ->name('update-status');
+                    Route::put('', [ProductController::class, 'update'])
+                        ->where('product', '^[a-z0-9-]+$')
+                        ->name('update');
 
-            // Variant combination counter
-            Route::get('{merchant:slug}/products/{product:slug}/combinations-count', [ProductController::class, 'getCombinationCount'])
-                ->where('product', '^[a-z0-9-]+$');
-            // 🆕 FROM feat/rating-system: Upload product images
-            Route::post('{merchant:slug}/products/{product:slug}/images', [ProductController::class, 'storeImage'])
-                ->where('product', '^[a-z0-9-]+$');
+                    Route::patch('', [ProductController::class, 'update'])
+                        ->where('product', '^[a-z0-9-]+$')
+                        ->name('update.patch');
 
-            // VOUCHER MANAGEMENT FOR MERCHANT OWNERS
+                    Route::delete('', [ProductController::class, 'destroy'])
+                        ->where('product', '^[a-z0-9-]+$')
+                        ->name('destroy');
 
-            Route::get('{merchant:slug}/vouchers', [VoucherController::class, 'merchantIndex']);
-            Route::get('{merchant:slug}/vouchers/{voucher}', [VoucherController::class, 'merchantShow']);
-            Route::post('{merchant:slug}/vouchers', [VoucherController::class, 'merchantStore']);
-            Route::put('{merchant:slug}/vouchers/{voucher}', [VoucherController::class, 'merchantUpdate']);
-            Route::delete('{merchant:slug}/vouchers/{voucher}', [VoucherController::class, 'merchantDestroy']);
+                    Route::patch('/status', [ProductController::class, 'updateStatus'])
+                        ->where('product', '^[a-z0-9-]+$')
+                        ->name('update-status');
+                });
+            });
 
-            Route::post('{merchant:slug}/vouchers/bulk-delete', [VoucherController::class, 'bulkDelete'])->name('merchant.bulk-delete');
-            Route::post('{merchant:slug}/vouchers/bulk-update-status', [VoucherController::class, 'bulkUpdateStatus'])->name('merchant.bulk-update-status');
+            Route::prefix('vouchers')->name('merchant.vouchers.')->group(function () {
+                Route::get('', [VoucherController::class, 'merchantIndex']);
+                Route::post('', [VoucherController::class, 'merchantStore']);
+                Route::get('{voucher}', [VoucherController::class, 'merchantShow']);
+                Route::put('{voucher}', [VoucherController::class, 'merchantUpdate']);
+                Route::delete('{voucher}', [VoucherController::class, 'merchantDestroy']);
+                Route::patch('{voucher}/status', [VoucherController::class, 'updateStatus'])
+                    ->name('merchant.update-status');
+
+                Route::post('bulk-delete', [VoucherController::class, 'bulkDelete'])->name('merchant.bulk-delete');
+                Route::post('bulk-update-status', [VoucherController::class, 'bulkUpdateStatus'])->name('merchant.bulk-update-status');
 
 
-            Route::patch('{merchant:slug}/vouchers/{voucher}/status', [VoucherController::class, 'updateStatus'])
-                ->name('merchant.update-status');
+            });
+
         });
-
-
-
-
-
     });
 
     // PROTECTED Community Actions (require auth)
@@ -358,51 +388,29 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     });
 });
 
-    // CHATS (Customer & Merchant)
-    Route::prefix('chats')->group(function () {
-        Route::get('/', [ChatController::class, 'index'])->name('chats.index');
-        Route::post('/start', [ChatController::class, 'start'])->name('chats.start');
-        Route::get('/{id}', [ChatController::class, 'show'])->name('chats.show');
-        Route::post('/{id}/messages', [ChatController::class, 'sendMessage'])->name('chats.sendMessage');
-        Route::post('/{id}/offer', [ChatController::class, 'makeOffer'])->name('chats.makeOffer');
-        Route::post('/{id}/messages/{messageId}/accept', [ChatController::class, 'acceptOffer'])->name('chats.acceptOffer');
-        Route::post('/{id}/messages/{messageId}/reject', [ChatController::class, 'rejectOffer'])->name('chats.rejectOffer');
-    });
 
-    // CUSTOMER ONLY: Register Merchant
-    Route::middleware('role:customer')->group(function () {
+// ✅ Event banner streaming route (should already exist)
+Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
+    ->name('event-banners.show');
 
-        Route::prefix('cart')->group(function () {
-            Route::get('/', [CartController::class, 'index']);
-            Route::get('/count', [CartController::class, 'count']);
-            Route::post('/items', [CartController::class, 'addToCart']);
-            Route::patch('/items/{cartItem}', [CartController::class, 'updateQuantity']);
-            Route::patch('/items/{cartItem}/variant', [CartController::class, 'updateVariant']);
-            Route::delete('/items/{cartItem}', [CartController::class, 'removeItem']);
-            Route::delete('/{cart}', [CartController::class, 'clearCart']);
-        });
+Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
+    ->name('event_banners.show');
 
-        Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
+Route::get('/merchant-logo/{merchant}', [AdminMerchantController::class, 'showLogo'])
+    ->name('merchant.logo');
 
-        Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+// ✅ User profile picture streaming route
+Route::get('/user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])
+    ->name('user.profile');
 
-    });
+// ✅ ADD: Community post image streaming route
+Route::get('community-images/{image}', [CommunityPostController::class, 'showImage'])
+    ->name('community-images.show');
 
+// Backward compatibility (underscore naming)
+Route::get('community_images/{image}', [CommunityPostController::class, 'showImage'])
+    ->name('community_images.show');
 
-// ---------- PROMO ----------
-Route::prefix('promos')->group(function () {
-    Route::get('/', [PromoController::class, 'index']);
-    Route::get('/{id}', [PromoController::class, 'show'])->name('promos.show');
-    Route::post('/', [PromoController::class, 'store']);
-    Route::delete('/{id}', [PromoController::class, 'destroy']);
-});
-
-// ---------- ORDERS ----------
-Route::prefix('orders')->group(function () {
-    Route::get('/', [OrderController::class, 'index']);
-    Route::get('/{id}', [OrderController::class, 'show']);
-    Route::post('/', [OrderController::class, 'store']);
-});
 
 
 // ============================================================
@@ -531,11 +539,3 @@ Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
     });
 });
-
-// Event banner images (served via API)
-Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
-    ->name('event-banners.show');
-
-// Alternate naming with underscore
-Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
-    ->name('event_banners.show');

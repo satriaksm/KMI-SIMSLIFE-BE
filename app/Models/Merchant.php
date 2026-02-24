@@ -128,6 +128,11 @@ class Merchant extends Model
         return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
+    public function jasas(): HasMany
+    {
+        return $this->hasMany(Jasa::class, 'merchant_id');
+    }
+
     // Relasi ke paguyuban
     public function paguyuban(): BelongsTo
     {
@@ -250,5 +255,11 @@ class Merchant extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+    }
+
+    // 🆕 Rating System
+    public function ratings(): HasMany
+    {
+        return $this->hasMany(Rating::class);
     }
 }

@@ -115,6 +115,12 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->full_address;
     }
 
+    // 🆕 Rating System
+    public function ratings(): HasMany
+    {
+        return $this->hasMany(Rating::class);
+    }
+
     public function createdEvents()
     {
         return $this->hasMany(Event::class, 'created_by');

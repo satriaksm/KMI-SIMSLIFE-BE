@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\Log;
 
 class JasaController extends Controller
 {
@@ -340,15 +341,56 @@ class JasaController extends Controller
     }
 
     /**
+     * PUBLIC: GET /api/public/jasas/{slug}
+     * Detail jasa untuk halaman customer by slug (preferred endpoint).
+     */
+    public function publicShowBySlug($slug)
+    {
+        // Detail jasa untuk customer: hanya tampilkan jasa yang benar-benar dipublish.
+        $jasa = Jasa::with([
+            'categories',
+            'merchant.segmentation',
+            'merchant.primaryAddress',
+            'images',
+        ])
+            ->where(function ($q) {
+                $q->where('status', 'published')
+                    ->orWhere(function ($sub) {
+                        $sub->whereNull('status')->where('is_active', true);
+                    });
+            })
+            ->where('slug', $slug)
+            ->first();
+
+        if (!$jasa) {
+            return response()->json(['message' => 'Jasa tidak ditemukan'], 404);
+        }
+
+        $this->attachCategoryAliases($jasa);
+
+        // Normalisasi struktur images untuk FE
+        if ($jasa->images) {
+            $jasa->images->transform(function ($image) {
+                $image->path = $image->image_path;
+                $image->url = route('images.show', ['image' => $image->id]);
+                $image->src_url = $image->url;
+                $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+                return $image;
+            });
+
+            $this->attachCoverImg($jasa, true);
+        }
+
+        return response()->json($jasa);
+    }
+
+    /**
      * PUBLIC: GET /api/public/jasas/{id}
      * Detail jasa untuk halaman customer, termasuk relasi merchant.
      */
     public function publicShow($id)
     {
         // Detail jasa untuk customer: hanya tampilkan jasa yang benar-benar dipublish.
-        // Aturan sama seperti listing publik:
-        // - Skema baru: status = 'published'
-        // - Skema lama: status NULL dan is_active = true
         $jasa = Jasa::with([
             'categories',
             'merchant.segmentation',
@@ -370,18 +412,16 @@ class JasaController extends Controller
 
         $this->attachCategoryAliases($jasa);
 
-        // Normalisasi struktur images untuk FE (path, is_cover, display_order)
+        // Normalisasi struktur images untuk FE
         if ($jasa->images) {
             $jasa->images->transform(function ($image) {
                 $image->path = $image->image_path;
                 $image->url = route('images.show', ['image' => $image->id]);
                 $image->src_url = $image->url;
-
                 $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                 return $image;
             });
 
-            // public endpoint => always public URL
             $this->attachCoverImg($jasa, true);
         }
 

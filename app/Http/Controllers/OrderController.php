@@ -30,7 +30,6 @@ class OrderController extends Controller
             'metode_pembayaran' => 'required|in:COD,QRIS',
             'promo_code' => 'nullable|string',
             'total' => 'required|integer',
-            'status' => 'in:pending,proses,selesai,batal'
         ]);
 
         $order = Order::create($data);

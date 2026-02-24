@@ -18,6 +18,7 @@ class Jasa extends Model
         // Ownership
         'merchant_id',
         'title',
+        'slug',
         'vendor',
         'price',
         'image',
@@ -49,6 +50,55 @@ class Jasa extends Model
     public function getMorphClass()
     {
         return 'jasa';
+    }
+
+    /**
+     * Boot method to auto-generate slug
+     */
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($model) {
+            if (!$model->slug) {
+                $model->slug = static::generateUniqueSlug($model->title);
+            }
+        });
+
+        static::updating(function ($model) {
+            if ($model->isDirty('title') && !$model->isDirty('slug')) {
+                $model->slug = static::generateUniqueSlug($model->title, $model->id);
+            }
+        });
+    }
+
+    /**
+     * Generate unique slug from title
+     */
+    protected static function generateUniqueSlug($title, $excludeId = null)
+    {
+        $slug = str($title)
+            ->lower()
+            ->slug('-');
+
+        $count = 1;
+        $originalSlug = $slug;
+
+        $query = static::where('slug', $slug);
+        if ($excludeId) {
+            $query->where('id', '!=', $excludeId);
+        }
+
+        while ($query->exists()) {
+            $slug = "{$originalSlug}-{$count}";
+            $count++;
+            $query = static::where('slug', $slug);
+            if ($excludeId) {
+                $query->where('id', '!=', $excludeId);
+            }
+        }
+
+        return $slug;
     }
 
     public function merchant(): BelongsTo
@@ -85,5 +135,16 @@ class Jasa extends Model
     public function coverImage(): MorphOne
     {
         return $this->morphOne(Image::class, 'imageable')->where('is_cover', true);
+    }
+
+    // 🆕 Rating System
+    public function ratings(): MorphMany
+    {
+        return $this->morphMany(Rating::class, 'rateable');
+    }
+
+    public function ratingSummary(): MorphOne
+    {
+        return $this->morphOne(RatingSummary::class, 'rateable');
     }
 }
