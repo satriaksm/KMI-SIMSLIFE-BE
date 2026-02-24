@@ -34,4 +34,29 @@ class Order extends Model
         'latitude_snapshot',
         'longitude_snapshot',
     ];
+
+    public function address()
+    {
+        return $this->belongsTo(Address::class);
+    }
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function merchant()
+    {
+        return $this->belongsTo(Merchant::class);
+    }
+
+    public function voucher()
+    {
+        return $this->belongsTo(Voucher::class);
+    }
+
+    public function items()
+    {
+        return $this->hasMany(ProductOrderItem::class);
+    }
 }

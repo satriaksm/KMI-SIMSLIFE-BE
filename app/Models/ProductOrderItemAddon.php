@@ -12,4 +12,14 @@ class ProductOrderItemAddon extends Model
         'addon_name_snapshot',
         'addon_price_snapshot',
     ];
+
+    public function item()
+    {
+        return $this->belongsTo(ProductOrderItem::class, 'product_order_item_id');
+    }
+
+    public function addon()
+    {
+        return $this->belongsTo(Addon::class);
+    }
 }

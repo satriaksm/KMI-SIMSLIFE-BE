@@ -31,6 +31,13 @@ class Merchant extends Model
         'status',
         'response_at',
         'operational_hours',
+
+        'NPWP',
+        'bank_name',
+        'bank_account_number',
+        'bank_account_name',
+
+        'midtrans_sub_account_id'
     ];
 
     protected $guarded = [

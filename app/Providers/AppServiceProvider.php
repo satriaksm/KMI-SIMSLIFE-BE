@@ -9,6 +9,7 @@ use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Midtrans\Config;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -25,6 +26,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Config::$serverKey = config('midtrans.server_key');
+        Config::$isProduction = config('midtrans.is_production');
+        Config::$isSanitized = config('midtrans.is_sanitized');
+        Config::$is3ds = config('midtrans.is_3ds');
+
         Schema::defaultStringLength(191);
         if (app()->environment('production')) {
             URL::forceScheme('https'); // pastikan signed URL pakai https
@@ -41,9 +47,9 @@ class AppServiceProvider extends ServiceProvider
                 ->line('Jika Anda tidak merasa membuat akun, abaikan email ini.')
                 ->salutation('Salam hangat, Tim SUMILIR')
                 ->markdown('emails.auth.verify-email', [
-                        'actionUrl' => $url,
-                        'userName' => $notifiable->name ?? 'Pengguna',
-                    ]);
+                    'actionUrl' => $url,
+                    'userName' => $notifiable->name ?? 'Pengguna',
+                ]);
         });
 
         // Reset Password (arah ke FE)
@@ -60,9 +66,9 @@ class AppServiceProvider extends ServiceProvider
                 ->line('Abaikan email ini jika Anda tidak meminta reset kata sandi.')
                 ->salutation('Salam, Tim SUMILIR')
                 ->markdown('emails.auth.reset-password', [
-                        'actionUrl' => $resetUrl,
-                        'userName' => $notifiable->name ?? 'Pengguna',
-                    ]);
+                    'actionUrl' => $resetUrl,
+                    'userName' => $notifiable->name ?? 'Pengguna',
+                ]);
         });
 
         Relation::enforceMorphMap([

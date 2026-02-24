@@ -33,4 +33,9 @@ class ProductOrderItem extends Model
     {
         return $this->belongsTo(ProductVariant::class, 'product_variant_id');
     }
+
+    public function addons()
+    {
+        return $this->hasMany(ProductOrderItemAddon::class);
+    }
 }

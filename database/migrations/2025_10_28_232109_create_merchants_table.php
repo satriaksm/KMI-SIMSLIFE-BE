@@ -26,8 +26,14 @@ return new class extends Migration {
             $table->text('rejection_reason')->nullable();
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->onDelete('set null');
             $table->timestamp('response_at')->nullable();
+            $table->string('NPWP')->nullable();
+            $table->string('bank_name')->nullable();
+            $table->string('bank_account_number')->nullable();
+            $table->string('bank_account_name')->nullable();
+            $table->string('midtrans_sub_account_id')->nullable();
+
             $table->timestamps();
-            
+
         });
     }
 

@@ -3,9 +3,6 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
-use App\Http\Controllers\JasaCategoryController;
-use App\Http\Controllers\OrderController;
-use App\Http\Controllers\PackageController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\SearchController;
@@ -29,8 +26,8 @@ use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
-use App\Http\Controllers\ChatController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\OrderController;
 
 // ============================================================
 // HEALTH CHECK
@@ -105,6 +102,12 @@ Route::prefix('public')->name('public.')->group(function () {
             ->name('statistics');
     });
 });
+
+// ============================================================
+// MIDTRANS CALLBACK (NO AUTH)
+// ============================================================
+Route::post('payments/midtrans/notification', [OrderController::class, 'midtransNotification'])
+    ->name('payments.midtrans.notification');
 
 
 // Public Community Posts (harusnya masuk ke prefix public)
@@ -233,6 +236,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
 
+        Route::prefix('orders')->group(function () {
+            Route::post('products/checkout', [OrderController::class, 'checkoutProductFromCart']);
+
+            Route::get('/', [OrderController::class, 'customerIndex']);
+            Route::get('/{order}', [OrderController::class, 'customerShow']);
+            Route::post('/{order}/cancel', [OrderController::class, 'cancel']);
+        });
+        // Orders (Product checkout)
+
     });
 
 
@@ -322,6 +334,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
             });
 
+            Route::prefix('orders')->group(function () {
+                Route::get('', [OrderController::class, 'merchantIndex']);
+                Route::get('/{order}', [OrderController::class, 'merchantShow']);
+                Route::post('/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
+            });
         });
     });
 
