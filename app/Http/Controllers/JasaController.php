@@ -354,7 +354,7 @@ class JasaController extends Controller
             'images',
         ])
             ->where(function ($q) {
-                $q->where('status', 'published')
+                $q->whereIn('status', ['published', 'active'])
                     ->orWhere(function ($sub) {
                         $sub->whereNull('status')->where('is_active', true);
                     });
@@ -398,7 +398,7 @@ class JasaController extends Controller
             'images',
         ])
             ->where(function ($q) {
-                $q->where('status', 'published')
+                $q->whereIn('status', ['published', 'active'])
                     ->orWhere(function ($sub) {
                         $sub->whereNull('status')->where('is_active', true);
                     });
@@ -507,6 +507,32 @@ class JasaController extends Controller
         ]);
 
         $data = $validated;
+
+        // Sinkronkan alamat layanan sesuai tipe layanan
+        if (array_key_exists('service_type', $data)) {
+            if ($data['service_type'] === 'at_location') {
+                $merchant = $jasa->merchant;
+                $primary = $merchant?->primary_address;
+
+                $location = trim(implode(', ', array_filter([
+                    data_get($primary, 'detail'),
+                    data_get($primary, 'village'),
+                    data_get($primary, 'district'),
+                    data_get($primary, 'city'),
+                    data_get($primary, 'province'),
+                ])));
+
+                if ($location === '') {
+                    $location = $merchant->address ?? $merchant->alamat ?? '';
+                }
+
+                $data['location_address'] = $location;
+            }
+
+            if ($data['service_type'] === 'online' || $data['service_type'] === 'on_site') {
+                $data['location_address'] = '';
+            }
+        }
 
         // Kategori Jasa disimpan via pivot table `categorizables`
         unset($data['jasa_category_id'], $data['jasa_subcategory_id']);
@@ -648,6 +674,28 @@ class JasaController extends Controller
         ]);
 
         $data = $validated;
+
+        // Sinkronkan alamat layanan sesuai tipe layanan
+        if (($data['service_type'] ?? null) === 'at_location') {
+            $primary = $merchant->primary_address;
+            $location = trim(implode(', ', array_filter([
+                data_get($primary, 'detail'),
+                data_get($primary, 'village'),
+                data_get($primary, 'district'),
+                data_get($primary, 'city'),
+                data_get($primary, 'province'),
+            ])));
+
+            if ($location === '') {
+                $location = $merchant->address ?? $merchant->alamat ?? '';
+            }
+
+            $data['location_address'] = $location;
+        }
+
+        if (($data['service_type'] ?? null) === 'online' || ($data['service_type'] ?? null) === 'on_site') {
+            $data['location_address'] = '';
+        }
 
         // Field jadwal sekarang opsional dari FE.
         // Default aman: tersedia setiap hari, tanpa batasan jam spesifik.

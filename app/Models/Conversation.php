@@ -38,7 +38,7 @@ class Conversation extends Model
      */
     public function merchant(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'merchant_id');
+        return $this->belongsTo(Merchant::class, 'merchant_id');
     }
 
     /**
@@ -70,10 +70,7 @@ class Conversation extends Model
      */
     public function getUnreadCountAttribute()
     {
-        return $this->messages()
-            ->where('is_read', false)
-            ->where('sender_role', '!=', 'merchant')
-            ->count();
+        return 0;
     }
 
     /**
@@ -97,10 +94,7 @@ class Conversation extends Model
      */
     public function markAsRead()
     {
-        $this->messages()
-            ->where('sender_role', '!=', 'merchant')
-            ->where('is_read', false)
-            ->update(['is_read' => true, 'read_at' => now()]);
+        return;
     }
 }
 

@@ -11,6 +11,22 @@ use Illuminate\Support\Facades\DB;
 
 class ChatController extends Controller
 {
+    private function isMerchantConversationOwner(Conversation $conversation, $user): bool
+    {
+        if (!$user) return false;
+        return Merchant::where('id', $conversation->merchant_id)
+            ->where('user_id', $user->id)
+            ->exists();
+    }
+
+    private function canAccessConversation(Conversation $conversation, $user): bool
+    {
+        if (!$user) return false;
+        return $conversation->buyer_id === $user->id
+            || $this->isMerchantConversationOwner($conversation, $user)
+            || $user->hasRole('admin');
+    }
+
     /**
      * GET /api/chats
      * Dapatkan daftar chat untuk merchant yang login
@@ -22,7 +38,7 @@ class ChatController extends Controller
         // Validate merchant access
         $merchant = Merchant::where('user_id', $user->id)->firstOrFail();
 
-        $query = Conversation::where('merchant_id', $user->id)
+        $query = Conversation::where('merchant_id', $merchant->id)
             ->with([
                 'buyer' => fn($q) => $q->select('id', 'name', 'profile_picture_path'),
                 'jasa' => fn($q) => $q->select('id', 'title', 'slug'),
@@ -72,10 +88,7 @@ class ChatController extends Controller
                         'sender_role' => $lastMsg->sender_role,
                         'created_at' => $lastMsg->created_at,
                     ] : null,
-                    'unread_count' => $conversation->messages()
-                        ->where('is_read', false)
-                        ->whereIn('sender_role', ['buyer', 'customer'])
-                        ->count(),
+                    'unread_count' => 0,
                     'created_at' => $conversation->created_at,
                     'updated_at' => $conversation->updated_at,
                 ];
@@ -126,8 +139,8 @@ class ChatController extends Controller
             'buyer' => fn($q) => $q->select('id', 'name', 'email', 'phone', 'profile_picture_path'),
             'jasa' => fn($q) => $q->select('id', 'title', 'slug'),
             'messages' => fn($q) => $q->with('sender:id,name,profile_picture_path')
-                ->select('id', 'conversation_id', 'sender_id', 'sender_role', 'body', 'is_read', 'created_at')
-                ->where('type', 'message')
+                ->select('id', 'conversation_id', 'sender_id', 'sender_role', 'body', 'type', 'offer_price', 'offer_status', 'created_at')
+                ->whereIn('type', ['text', 'offer'])
                 ->orderBy('created_at', 'asc'),
         ]);
 
@@ -160,7 +173,8 @@ class ChatController extends Controller
                         'sender_id' => $message->sender_id,
                         'sender_role' => $message->sender_role,
                         'body' => $message->body,
-                        'is_read' => $message->is_read,
+                        'is_read' => false,
+                        'type' => $message->type,
                         'created_at' => $message->created_at,
                         'sender' => $message->sender ? [
                             'id' => $message->sender->id,
@@ -182,23 +196,21 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate access (merchant, buyer, or admin)
-        $isAuthorized = $conversation->merchant_id === $user->id || 
-                       $conversation->buyer_id === $user->id || 
-                       $user->hasRole('admin');
+        $isAuthorized = $this->canAccessConversation($conversation, $user);
         
         if (!$isAuthorized) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        // Mark messages as read
+        // Mark messages as read (no-op on current schema)
         $conversation->markAsRead();
 
         $conversation->load([
             'buyer' => fn($q) => $q->select('id', 'name', 'email', 'phone', 'profile_picture_path'),
             'jasa' => fn($q) => $q->select('id', 'title', 'slug'),
             'messages' => fn($q) => $q->with('sender:id,name,profile_picture_path')
-                ->select('id', 'conversation_id', 'sender_id', 'sender_role', 'body', 'is_read', 'offer_price', 'offer_status', 'created_at')
-                ->where('type', 'message')
+                ->select('id', 'conversation_id', 'sender_id', 'sender_role', 'body', 'type', 'offer_price', 'offer_status', 'created_at')
+                ->whereIn('type', ['text', 'offer'])
                 ->orderBy('created_at', 'asc'),
         ]);
 
@@ -231,7 +243,8 @@ class ChatController extends Controller
                         'sender_id' => $message->sender_id,
                         'sender_role' => $message->sender_role,
                         'body' => $message->body,
-                        'is_read' => $message->is_read,
+                        'is_read' => false,
+                        'type' => $message->type,
                         'offer_price' => $message->offer_price,
                         'offer_status' => $message->offer_status,
                         'created_at' => $message->created_at,
@@ -255,7 +268,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if ($conversation->merchant_id !== $user->id && ! $user->hasRole('admin')) {
+        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -266,7 +279,7 @@ class ChatController extends Controller
         $message = $conversation->messages()->create([
             'sender_id' => $user->id,
             'sender_role' => 'merchant',
-            'type' => 'message',
+            'type' => 'text',
             'body' => $data['body'],
         ]);
 
@@ -280,7 +293,8 @@ class ChatController extends Controller
                 'sender_id' => $message->sender_id,
                 'sender_role' => $message->sender_role,
                 'body' => $message->body,
-                'is_read' => $message->is_read,
+                'is_read' => false,
+                'type' => $message->type,
                 'created_at' => $message->created_at,
             ],
         ], 201);
@@ -306,7 +320,7 @@ class ChatController extends Controller
         $message = $conversation->messages()->create([
             'sender_id' => $user->id,
             'sender_role' => 'buyer',
-            'type' => 'message',
+            'type' => 'text',
             'body' => $data['body'],
         ]);
 
@@ -320,7 +334,8 @@ class ChatController extends Controller
                 'sender_id' => $message->sender_id,
                 'sender_role' => $message->sender_role,
                 'body' => $message->body,
-                'is_read' => $message->is_read,
+                'is_read' => false,
+                'type' => $message->type,
                 'created_at' => $message->created_at,
             ],
         ], 201);
@@ -335,7 +350,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if ($conversation->merchant_id !== $user->id && ! $user->hasRole('admin')) {
+        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -399,7 +414,7 @@ class ChatController extends Controller
         $conversation->messages()->create([
             'sender_id' => $user->id,
             'sender_role' => 'merchant',
-            'type' => 'system',
+            'type' => 'text',
             'body' => '✅ Penawaran diterima!',
         ]);
 
@@ -421,7 +436,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if ($conversation->merchant_id !== $user->id && ! $user->hasRole('admin')) {
+        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -444,7 +459,7 @@ class ChatController extends Controller
         $conversation->messages()->create([
             'sender_id' => $user->id,
             'sender_role' => 'merchant',
-            'type' => 'system',
+            'type' => 'text',
             'body' => "📌 Status pembahasan berubah menjadi: " . ($statusLabels[$data['status']] ?? $data['status']),
         ]);
 
@@ -466,7 +481,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if ($conversation->merchant_id !== $user->id && ! $user->hasRole('admin')) {
+        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 

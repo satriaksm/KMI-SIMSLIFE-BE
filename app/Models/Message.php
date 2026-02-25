@@ -45,7 +45,7 @@ class Message extends Model
      */
     public function scopeUnread($query)
     {
-        return $query->where('is_read', false);
+        return $query->whereRaw('1 = 0');
     }
 
     /**
