@@ -151,6 +151,11 @@ class MerchantController extends Controller
             'response_at',
             'created_at',
             'updated_at',
+            // Informasi sensitif – tidak boleh tampil di publik
+            'NPWP',
+            'bank_name',
+            'bank_account_number',
+            'bank_account_name',
         ]);
 
         return ApiResponse::success($data, 'success');
@@ -194,6 +199,12 @@ class MerchantController extends Controller
                 'address.detail' => ['nullable', 'string', 'max:500'],
                 'address.latitude' => ['nullable', 'numeric', 'between:-90,90'],
                 'address.longitude' => ['nullable', 'numeric', 'between:-180,180'],
+
+                // Informasi pajak & bank (opsional saat pendaftaran)
+                'NPWP' => ['nullable', 'string', 'max:30'],
+                'bank_name' => ['nullable', 'string', 'max:100'],
+                'bank_account_number' => ['nullable', 'string', 'max:50'],
+                'bank_account_name' => ['nullable', 'string', 'max:255'],
             ],
             [
                 'name.required' => 'Nama usaha wajib diisi.',
@@ -242,6 +253,11 @@ class MerchantController extends Controller
                 'phone' => $validated['phone'],
                 'logo_path' => null,
                 'operational_hours' => $operationalHours,
+
+                'NPWP' => $validated['NPWP'] ?? null,
+                'bank_name' => $validated['bank_name'] ?? null,
+                'bank_account_number' => $validated['bank_account_number'] ?? null,
+                'bank_account_name' => $validated['bank_account_name'] ?? null,
             ]);
 
             $addr = $validated['address'];
@@ -351,6 +367,12 @@ class MerchantController extends Controller
 
             // operational hours
             'operational_hours' => ['nullable', 'string'], // JSON string
+
+            // Informasi pajak & bank
+            'NPWP' => ['nullable', 'string', 'max:30'],
+            'bank_name' => ['nullable', 'string', 'max:100'],
+            'bank_account_number' => ['nullable', 'string', 'max:50'],
+            'bank_account_name' => ['nullable', 'string', 'max:255'],
         ], [
             'logo.mimes' => 'Logo harus berupa file gambar (jpg, jpeg, png, gif, webp)',
             'logo.max' => 'Ukuran logo maksimal 5MB',
@@ -368,6 +390,11 @@ class MerchantController extends Controller
                 'name' => $validated['name'],
                 'phone' => $validated['phone'] ?? null,
                 'description' => $validated['description'] ?? null,
+
+                'NPWP' => ($validated['NPWP'] ?? '') !== '' ? $validated['NPWP'] : null,
+                'bank_name' => ($validated['bank_name'] ?? '') !== '' ? $validated['bank_name'] : null,
+                'bank_account_number' => ($validated['bank_account_number'] ?? '') !== '' ? $validated['bank_account_number'] : null,
+                'bank_account_name' => ($validated['bank_account_name'] ?? '') !== '' ? $validated['bank_account_name'] : null,
             ]);
 
             /** ===============================

@@ -20,6 +20,7 @@ return new class extends Migration {
             $table->decimal('subtotal', 12, 2)->default(0);
             $table->decimal('discount_total', 12, 2)->default(0);
             $table->decimal('gross_amount', 12, 2)->default(0);
+            $table->enum('delivery_type', ['pickup', 'delivery'])->default('pickup');
             $table->decimal('delivery_fee_snapshot', 12, 2)->default(0);
             $table->enum('status', ['pending', 'responsed', 'paid', 'delivered', 'completed', 'cancelled'])->default('pending');
             $table->timestamp('responsed_at')->nullable();

@@ -18,7 +18,6 @@ class DatabaseSeeder extends Seeder
                 // MerchantSeeder::class,
                 // VoucherSeeder::class,
                 // JasaSeeder::class,
-                // PromoSeeder::class,
                 // ProductSeeder::class,
                 // OrderSeeder::class,
                 // CommunityPostSeeder::class,

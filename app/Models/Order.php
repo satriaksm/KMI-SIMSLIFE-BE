@@ -16,6 +16,7 @@ class Order extends Model
         'discount_total',
         'gross_amount',
         'delivery_fee_snapshot',
+        'delivery_type',
 
         'status',
         'responsed_at',

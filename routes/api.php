@@ -28,6 +28,7 @@ use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\ShippingController;
 
 // ============================================================
 // HEALTH CHECK
@@ -242,6 +243,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/', [OrderController::class, 'customerIndex']);
             Route::get('/{order}', [OrderController::class, 'customerShow']);
             Route::post('/{order}/cancel', [OrderController::class, 'cancel']);
+        });
+
+        Route::prefix('shipping')->group(function () {
+            Route::get('/settings', [ShippingController::class, 'settings']);
+            Route::post('/calculate', [ShippingController::class, 'calculate']);
         });
         // Orders (Product checkout)
 

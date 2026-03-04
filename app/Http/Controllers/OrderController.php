@@ -10,6 +10,7 @@ use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductOrderItem;
 use App\Models\ProductOrderItemAddon;
+use App\Models\ShippingSetting;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -244,6 +245,7 @@ class OrderController extends Controller
             'cart_id' => 'required|integer|exists:carts,id',
             'address_id' => 'nullable|integer|exists:addresses,id',
             'voucher_id' => 'nullable|integer|exists:vouchers,id',
+            'delivery_type' => 'nullable|in:pickup,delivery',
         ]);
 
         $user = Auth::user();
@@ -298,8 +300,10 @@ class OrderController extends Controller
         $snapToken = null;
         $snapRedirectUrl = null;
 
+        $deliveryType = (string) $request->input('delivery_type', 'pickup');
+
         try {
-            DB::transaction(function () use ($request, $cart, $user, $address, &$order) {
+            DB::transaction(function () use ($request, $cart, $user, $address, $deliveryType, &$order) {
                 $orderCode = $this->generateOrderCode();
 
                 $productSubtotal = 0;
@@ -315,7 +319,13 @@ class OrderController extends Controller
 
                 $subtotal = $productSubtotal + $addonSubtotal;
                 $discountTotal = 0;
+
+                // Calculate delivery fee from ShippingSetting
                 $deliveryFee = 0;
+                if ($deliveryType === 'delivery') {
+                    $deliveryFee = $this->calculateDeliveryFee($cart->merchant_id, $address);
+                }
+
                 $grossAmount = $subtotal - $discountTotal + $deliveryFee;
 
                 $order = Order::query()->create([
@@ -328,6 +338,7 @@ class OrderController extends Controller
                     'discount_total' => $discountTotal,
                     'gross_amount' => $grossAmount,
                     'delivery_fee_snapshot' => $deliveryFee,
+                    'delivery_type' => $deliveryType,
                     'status' => 'pending',
                     'user_name_snapshot' => (string) ($user->name ?? ''),
                     'user_phone_snapshot' => (string) ($user->phone ?? ''),
@@ -484,6 +495,17 @@ class OrderController extends Controller
             }
         }
 
+        // Add delivery fee as line item if applicable
+        $deliveryFee = (int) round((float) $order->delivery_fee_snapshot);
+        if ($deliveryFee > 0) {
+            $itemDetails[] = [
+                'id' => 'delivery-fee',
+                'price' => $deliveryFee,
+                'quantity' => 1,
+                'name' => 'Biaya Pengiriman',
+            ];
+        }
+
         $customerDetails = [
             'first_name' => (string) ($order->user_name_snapshot ?? ''),
             'email' => (string) ($order->user?->email ?? ''),
@@ -498,6 +520,46 @@ class OrderController extends Controller
             'item_details' => $itemDetails,
             'customer_details' => $customerDetails,
         ];
+    }
+
+    /**
+     * Calculate delivery fee based on ShippingSetting and distance.
+     */
+    private function calculateDeliveryFee(int $merchantId, Address $customerAddress): float
+    {
+        $merchant = Merchant::query()->find($merchantId);
+        if (!$merchant) {
+            return 0;
+        }
+
+        $merchantAddress = $merchant->primaryAddress()->first();
+        if (!$merchantAddress || !$merchantAddress->latitude || !$merchantAddress->longitude) {
+            return 0;
+        }
+
+        if (!$customerAddress->latitude || !$customerAddress->longitude) {
+            return 0;
+        }
+
+        $setting = ShippingSetting::query()->where('status', 'active')->first();
+        if (!$setting) {
+            return 0;
+        }
+
+        $baseCost = (float) $setting->base_cost;
+        $costPerKm = (float) $setting->cost_per_km;
+
+        $distanceKm = ShippingController::haversineDistance(
+            (float) $merchantAddress->latitude,
+            (float) $merchantAddress->longitude,
+            (float) $customerAddress->latitude,
+            (float) $customerAddress->longitude,
+        );
+
+        $fee = $baseCost + ($costPerKm * $distanceKm);
+
+        // Round up to nearest 500
+        return (float) (ceil($fee / 500) * 500);
     }
 
     private function generateOrderCode(): string
