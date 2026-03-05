@@ -29,10 +29,7 @@ use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
-use App\Http\Controllers\ChatController;
 use App\Http\Controllers\UserController;
-use App\Http\Controllers\RatingController;
-use App\Models\Conversation;
 
 // ============================================================
 // HEALTH CHECK
@@ -53,10 +50,6 @@ Route::prefix('public')->name('public.')->group(function () {
     // Public jasa listing (only published/active)
     // Route::get('/jasas', [JasaController::class, 'publicIndex']);
     
-    // Jasa Ratings (public - view only) - MUST BE BEFORE ID/SLUG routes
-    Route::get('/jasas/{jasaId}/ratings/summary', [RatingController::class, 'jasaSummary'])->name('jasas.ratings.summary');
-    Route::get('/jasas/{jasaId}/ratings', [RatingController::class, 'indexForJasa'])->name('jasas.ratings');
-    
     // Jasa by ID (numeric only - must come FIRST so it matches before slug)
     Route::get('/jasas/{id}', [JasaController::class, 'publicShow'])
         ->whereNumber('id')
@@ -73,9 +66,6 @@ Route::prefix('public')->name('public.')->group(function () {
             ->where('slug', '^[A-Za-z0-9-]+$')
             ->name('show');
 
-        // Product Ratings (public - view only)
-        Route::get('/{productId}/ratings', [RatingController::class, 'indexForProduct'])->name('ratings');
-        Route::get('/{productId}/ratings/summary', [RatingController::class, 'productSummary'])->name('ratings.summary');
     });
 
     // Public Merchants
@@ -95,15 +85,6 @@ Route::prefix('public')->name('public.')->group(function () {
             ->where('merchantSlug', '^[A-Za-z0-9-]+$')
             ->name('jasas');
 
-        // Merchant's ratings/reviews (public endpoint)
-        Route::get('/{merchantSlug}/ratings/summary', [RatingController::class, 'merchantSummaryBySlug'])
-            ->where('merchantSlug', '^[A-Za-z0-9-]+$')
-            ->name('ratings.summary');
-
-        // Merchant's individual ratings (public endpoint - for merchant reviews page)
-        Route::get('/{merchantSlug}/ratings', [RatingController::class, 'indexForMerchantBySlug'])
-            ->where('merchantSlug', '^[A-Za-z0-9-]+$')
-            ->name('ratings');
     });
 
     // Category Routes
@@ -229,27 +210,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/address', 'addressShow')->name('profile.address.show');
         Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
         Route::delete('/', 'destroy')->name('profile.destroy');
-    });
-
-    // ===== RATINGS (for all authenticated users) =====
-    Route::prefix('ratings')->name('ratings.')->group(function () {
-        Route::post('/', [RatingController::class, 'store'])->name('store');
-        Route::get('/{ratingId}', [RatingController::class, 'show'])->name('show');
-        Route::put('/{ratingId}', [RatingController::class, 'update'])->name('update');
-        Route::delete('/{ratingId}', [RatingController::class, 'destroy'])->name('destroy');
-    });
-
-    // ===== CHATS/MESSAGING (for all authenticated users) =====
-    Route::prefix('chats')->name('chats.')->group(function () {
-        Route::post('/start', [ChatController::class, 'start'])->name('start');
-        Route::get('/', [ChatController::class, 'index'])->name('index');
-        Route::get('/{conversation}', [ChatController::class, 'show'])->name('show');
-        Route::post('/{conversation}/messages', [ChatController::class, 'sendMessage'])->name('messages.store');
-        Route::post('/{conversation}/buyer-messages', [ChatController::class, 'sendBuyerMessage'])->name('messages.buyer.store');
-        Route::post('/{conversation}/offer', [ChatController::class, 'makeOffer'])->name('offer.store');
-        Route::put('/{conversation}/offer/accept', [ChatController::class, 'acceptOffer'])->name('offer.accept');
-        Route::put('/{conversation}/status', [ChatController::class, 'updateStatus'])->name('status.update');
-        Route::delete('/{conversation}', [ChatController::class, 'destroy'])->name('destroy');
     });
 
     // CUSTOMER ONLY: Register Merchant
