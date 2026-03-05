@@ -56,7 +56,7 @@ class MerchantSeeder extends Seeder
         // Create approved merchants (1-3 per user randomly)
         $this->command->info('- Creating approved merchants (1-3 per user)...');
         foreach ($customers->random(min(20, $customers->count())) as $user) {
-            $merchantTotal = rand(1, 3);
+            $merchantTotal = rand(1,1);
             for ($m = 0; $m < $merchantTotal; $m++) {
                 $merchant = Merchant::factory()
                     ->approved()
