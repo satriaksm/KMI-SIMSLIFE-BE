@@ -23,22 +23,22 @@ class UserSeeder extends Seeder
         }
 
 
-        // $this->command->info('Creating sample customers (30)...');
-        // $customers = User::factory()->count(30)->create([
-        //     'status' => 'active',
-        // ]);
+        $this->command->info('Creating sample customers (30)...');
+        $customers = User::factory()->count(30)->create([
+            'status' => 'active',
+        ]);
 
-        // // Assign role 'customer' ke semua user (kecuali admin)
-        // $customerRole = Role::where('name', 'customer')->first();
-        // if ($customerRole) {
-        //     // Assign ke semua user yang bukan admin
-        //     User::where('id', '!=', $admin->id)->each(function ($user) use ($customerRole) {
-        //         $user->roles()->syncWithoutDetaching([$customerRole->id]);
-        //     });
-        // }
+        // Assign role 'customer' ke semua user (kecuali admin)
+        $customerRole = Role::where('name', 'customer')->first();
+        if ($customerRole) {
+            // Assign ke semua user yang bukan admin
+            User::where('id', '!=', $admin->id)->each(function ($user) use ($customerRole) {
+                $user->roles()->syncWithoutDetaching([$customerRole->id]);
+            });
+        }
 
-        // $this->command->info('Users seeded successfully!');
-        // $this->command->info('   Admin: 1');
-        // $this->command->info('   Customers: 30');
+        $this->command->info('Users seeded successfully!');
+        $this->command->info('   Admin: 1');
+        $this->command->info('   Customers: 30');
     }
 }
