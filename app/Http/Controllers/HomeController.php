@@ -24,11 +24,13 @@ class HomeController extends Controller
                 ->with(['segmentation', 'paguyuban', 'primaryAddress'])
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
-                          ->whereNotNull('longitude');
+                        ->whereNotNull('longitude');
                 })
-                ->withCount(['products' => function ($q) {
-                    $q->where('status', 'published');
-                }])
+                ->withCount([
+                    'products' => function ($q) {
+                        $q->where('status', 'published');
+                    }
+                ])
                 ->inRandomOrder()
                 ->limit($limit)
                 ->get()
@@ -66,7 +68,7 @@ class HomeController extends Controller
     public function mapCarouselMerchants(Request $request)
     {
         try {
-            $limit = $request->input('limit') ? (int)$request->input('limit') : null;
+            $limit = $request->input('limit') ? (int) $request->input('limit') : null;
 
             $query = Merchant::query()
                 ->where('merchants.status', 'approved')
@@ -75,7 +77,7 @@ class HomeController extends Controller
                 ->whereNotNull('cover_path')
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
-                          ->whereNotNull('longitude');
+                        ->whereNotNull('longitude');
                 })
                 ->inRandomOrder();
 

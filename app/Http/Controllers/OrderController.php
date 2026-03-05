@@ -52,136 +52,15 @@ class OrderController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'jasa_id' => ['required', 'exists:jasas,id'],
-            'package_id' => ['nullable', 'exists:packages,id'],
-
-            'nama' => ['required', 'string', 'max:255'],
-            'tel' => ['required', 'string', 'max:20'],
-            'alamat' => ['required', 'string'],
-            'catatan' => ['nullable', 'string'],
-            'catatan_alamat' => ['nullable', 'string'],
-
-            'tanggal' => ['required', 'date'],
-            'waktu' => ['required', 'string'],
-
-            'metode_pembayaran' => ['required', 'in:COD,QRIS'],
-            'promo_code' => ['nullable', 'string', 'max:50'],
-        ]);
-
-        $jasa = Jasa::with('packages')->findOrFail($data['jasa_id']);
-
-        // Optional: jasa harus aktif
-        if ((int) ($jasa->is_active ?? 1) !== 1) {
-            return response()->json(['message' => 'Jasa sedang tidak aktif.'], 422);
-        }
-
-        // Validasi package harus milik jasa
-        $package = null;
-        if (!empty($data['package_id'])) {
-            $package = Package::where('id', $data['package_id'])
-                ->where('jasa_id', $jasa->id)
-                ->first();
-
-            if (!$package) {
-                return response()->json(['message' => 'Paket tidak valid untuk jasa ini.'], 422);
-            }
-        }
-
-        // Hitung total
-        $total = $package ? (int) $package->price : (int) $jasa->price;
-
-        // Apply promo (kalau ada)
-        $appliedPromo = null;
-        if (!empty($data['promo_code'])) {
-            $promo = Promo::where('code', $data['promo_code'])
-                ->where('is_active', true)
-                ->first();
-
-            if ($promo) {
-                $appliedPromo = $promo->code;
-
-                if ($promo->type === 'percent') {
-                    $total = (int) round($total - ($total * ((int) $promo->value / 100)));
-                } else { // flat
-                    $total = max(0, $total - (int) $promo->value);
-                }
-            }
-        }
-
-        $order = Order::create([
-            'user_id' => $request->user()->id,
-            'jasa_id' => $jasa->id,
-            'package_id' => $package?->id,
-
-            'nama' => $data['nama'],
-            'tel' => $data['tel'],
-            'alamat' => $data['alamat'],
-            'catatan' => $data['catatan'] ?? null,
-            'catatan_alamat' => $data['catatan_alamat'] ?? null,
-
-            'tanggal' => $data['tanggal'],
-            'waktu' => $data['waktu'],
-            'metode_pembayaran' => $data['metode_pembayaran'],
-            'promo_code' => $appliedPromo,
-
-            'total' => $total,
-            'status' => 'pending',
-        ]);
-
-        return response()->json($order->load(['jasa', 'package']), 201);
-    }
-
-    // ============================================================
-    // OWNER (UMKM-OWNER) - lihat order masuk berdasarkan merchant jasa
-    // ============================================================
-
-    /**
-     * GET /api/orders/owner
-     * Owner lihat semua order masuk untuk semua jasa milik merchant-nya
-     */
-    public function ownerIndex(Request $request)
-    {
-        $merchant = $this->findOwnedMerchantOrAbort($request);
-        if (isset($merchant['error'])) return $merchant['error'];
-
-        return Order::with(['jasa', 'package'])
-            ->whereHas('jasa', fn($q) => $q->where('merchant_id', $merchant->id))
-            ->latest()
-            ->get();
-    }
-
-    /**
-     * GET /api/orders/owner/{id}
-     * Owner lihat detail order masuk (harus punya merchant)
-     */
-    public function ownerShow(Request $request, int $id)
-    {
-        $merchant = $this->findOwnedMerchantOrAbort($request);
-        if (isset($merchant['error'])) return $merchant['error'];
-
-        $order = Order::with(['jasa', 'package'])->find($id);
-        if (!$order) {
-            return response()->json(['message' => 'Order tidak ditemukan.'], 404);
-        }
-
-        if (!$order->jasa || (int) $order->jasa->merchant_id !== (int) $merchant->id) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
-
-        return response()->json($order);
-    }
-
-    /**
-     * PATCH /api/orders/owner/{id}/status
-     * Owner update status order masuk (pending/proses/selesai/batal)
-     */
-    public function ownerUpdateStatus(Request $request, int $id)
-    {
-        $merchant = $this->findOwnedMerchantOrAbort($request);
-        if (isset($merchant['error'])) return $merchant['error'];
-
-        $data = $request->validate([
-            'status' => ['required', 'in:pending,proses,selesai,batal'],
+            'jasa_id' => 'required|exists:jasas,id',
+            'nama' => 'required|string|max:255',
+            'tel' => 'required|string|max:20',
+            'alamat' => 'required|string',
+            'tanggal' => 'required|date',
+            'waktu' => 'required|string',
+            'metode_pembayaran' => 'required|in:COD,QRIS',
+            'promo_code' => 'nullable|string',
+            'total' => 'required|integer',
         ]);
 
         $order = Order::with('jasa')->find($id);

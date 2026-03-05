@@ -7,41 +7,106 @@ use App\Models\Message;
 use App\Models\Jasa;
 use App\Models\Merchant;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class ChatController extends Controller
 {
-    // List conversations for current user (buyer or merchant)
+    private function isMerchantConversationOwner(Conversation $conversation, $user): bool
+    {
+        if (!$user)
+            return false;
+        return Merchant::where('id', $conversation->merchant_id)
+            ->where('user_id', $user->id)
+            ->exists();
+    }
+
+    private function canAccessConversation(Conversation $conversation, $user): bool
+    {
+        if (!$user)
+            return false;
+        return $conversation->buyer_id === $user->id
+            || $this->isMerchantConversationOwner($conversation, $user)
+            || $user->hasRole('admin');
+    }
+
+    /**
+     * GET /api/chats
+     * Dapatkan daftar chat untuk merchant yang login
+     */
     public function index(Request $request)
     {
         $user = $request->user();
 
-        $query = Conversation::with(['buyer', 'merchant', 'jasa'])
-            ->orderByDesc('last_message_at')->orderByDesc('id');
+        // Validate merchant access
+        $merchant = Merchant::where('user_id', $user->id)->firstOrFail();
 
-        // If user is merchant owner, show conversations for their merchants
-        if ($user->roles && $user->roles->contains('name', 'umkm-owner')) {
-            $merchantIds = Merchant::where('user_id', $user->id)->pluck('id');
-            $query->whereIn('merchant_id', $merchantIds);
-        } else {
-            // Assume as buyer (customer)
-            $query->where('buyer_id', $user->id);
+        $query = Conversation::where('merchant_id', $merchant->id)
+            ->with([
+                'buyer' => fn($q) => $q->select('id', 'name', 'profile_picture_path'),
+                'jasa' => fn($q) => $q->select('id', 'title', 'slug'),
+                'lastMessage' => fn($q) => $q->select('id', 'conversation_id', 'body', 'sender_role', 'created_at'),
+            ])
+            ->orderBy('updated_at', 'desc');
+
+        // Filter by search
+        if ($request->has('search') && $request->search) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->whereHas('buyer', fn($q) => $q->where('name', 'like', "%{$search}%"))
+                    ->orWhereHas('jasa', fn($q) => $q->where('title', 'like', "%{$search}%"));
+            });
         }
 
-        $conversations = $query->paginate($request->input('per_page', 20));
+        // Filter by status
+        if ($request->has('status') && $request->status) {
+            $query->where('status', $request->status);
+        }
 
+        $conversations = $query->paginate(15);
+
+        // Transform response to match frontend expectations
         return response()->json([
-            'data' => $conversations->items(),
+            'data' => $conversations->map(function ($conversation) {
+                $lastMsg = $conversation->lastMessage;
+                return [
+                    'id' => $conversation->id,
+                    'buyer_id' => $conversation->buyer_id,
+                    'merchant_id' => $conversation->merchant_id,
+                    'jasa_id' => $conversation->jasa_id,
+                    'status' => $conversation->status,
+                    'user' => $conversation->buyer ? [
+                        'id' => $conversation->buyer->id,
+                        'name' => $conversation->buyer->name,
+                        'profile_picture' => $conversation->buyer->profile_picture_path ? url("/api/profile-pictures/{$conversation->buyer->id}") : null,
+                    ] : null,
+                    'jasa' => $conversation->jasa ? [
+                        'id' => $conversation->jasa->id,
+                        'title' => $conversation->jasa->title,
+                        'slug' => $conversation->jasa->slug,
+                    ] : null,
+                    'last_message' => $lastMsg ? [
+                        'id' => $lastMsg->id,
+                        'body' => $lastMsg->body,
+                        'sender_role' => $lastMsg->sender_role,
+                        'created_at' => $lastMsg->created_at,
+                    ] : null,
+                    'unread_count' => 0,
+                    'created_at' => $conversation->created_at,
+                    'updated_at' => $conversation->updated_at,
+                ];
+            }),
             'meta' => [
                 'current_page' => $conversations->currentPage(),
-                'last_page' => $conversations->lastPage(),
-                'per_page' => $conversations->perPage(),
                 'total' => $conversations->total(),
+                'per_page' => $conversations->perPage(),
             ],
         ]);
     }
 
-    // Start or get existing conversation for a jasa (buyer side)
+    /**
+     * POST /api/chats/start
+     * Mulai percakapan baru sebagai buyer
+     */
     public function start(Request $request)
     {
         $user = $request->user();
@@ -50,178 +115,382 @@ class ChatController extends Controller
             'jasa_id' => 'required|exists:jasas,id',
         ]);
 
-        $jasa = Jasa::with('merchant')->findOrFail($data['jasa_id']);
+        // Get the jasa to find the merchant
+        $jasa = Jasa::findOrFail($data['jasa_id']);
         $merchantId = $jasa->merchant_id;
 
-        $conversation = Conversation::firstOrCreate(
-            [
+        // Check if conversation already exists
+        $conversation = Conversation::where([
+            'buyer_id' => $user->id,
+            'merchant_id' => $merchantId,
+            'jasa_id' => $jasa->id,
+        ])->first();
+
+        // Create new conversation if doesn't exist
+        if (!$conversation) {
+            $conversation = Conversation::create([
                 'buyer_id' => $user->id,
                 'merchant_id' => $merchantId,
                 'jasa_id' => $jasa->id,
-            ],
-            [
-                'status' => 'open',
-                'last_message_at' => now(),
-            ]
-        );
-
-        return response()->json([
-            'data' => $conversation->load(['buyer', 'merchant', 'jasa']),
-        ], 201);
-    }
-
-    // Get conversation + messages
-    public function show(Request $request, $id)
-    {
-        $user = $request->user();
-
-        $conversation = Conversation::with(['buyer', 'merchant', 'jasa'])
-            ->findOrFail($id);
-
-        // Simple authorization: must be buyer or merchant in this conversation
-        if ($conversation->buyer_id !== $user->id &&
-            !$this->userIsMerchantInConversation($user, $conversation)) {
-            return response()->json(['message' => 'Forbidden'], 403);
+                'status' => 'active',
+            ]);
         }
 
-        $messages = Message::where('conversation_id', $conversation->id)
-            ->orderBy('created_at')
-            ->get();
+        // Load related data
+        $conversation->load([
+            'buyer' => fn($q) => $q->select('id', 'name', 'email', 'phone', 'profile_picture_path'),
+            'jasa' => fn($q) => $q->select('id', 'title', 'slug'),
+            'messages' => fn($q) => $q->with('sender:id,name,profile_picture_path')
+                ->select('id', 'conversation_id', 'sender_id', 'sender_role', 'body', 'type', 'offer_price', 'offer_status', 'created_at')
+                ->whereIn('type', ['text', 'offer'])
+                ->orderBy('created_at', 'asc'),
+        ]);
 
         return response()->json([
             'data' => [
-                'conversation' => $conversation,
-                'messages' => $messages,
+                'conversation' => [
+                    'id' => $conversation->id,
+                    'buyer_id' => $conversation->buyer_id,
+                    'merchant_id' => $conversation->merchant_id,
+                    'jasa_id' => $conversation->jasa_id,
+                    'status' => $conversation->status,
+                    'buyer' => $conversation->buyer ? [
+                        'id' => $conversation->buyer->id,
+                        'name' => $conversation->buyer->name,
+                        'email' => $conversation->buyer->email,
+                        'phone' => $conversation->buyer->phone,
+                        'profile_picture' => $conversation->buyer->profile_picture_path ? url("/api/profile-pictures/{$conversation->buyer->id}") : null,
+                    ] : null,
+                    'jasa' => $conversation->jasa ? [
+                        'id' => $conversation->jasa->id,
+                        'title' => $conversation->jasa->title,
+                        'slug' => $conversation->jasa->slug,
+                    ] : null,
+                    'created_at' => $conversation->created_at,
+                    'updated_at' => $conversation->updated_at,
+                ],
+                'messages' => $conversation->messages->map(function ($message) {
+                    return [
+                        'id' => $message->id,
+                        'sender_id' => $message->sender_id,
+                        'sender_role' => $message->sender_role,
+                        'body' => $message->body,
+                        'is_read' => false,
+                        'type' => $message->type,
+                        'created_at' => $message->created_at,
+                        'sender' => $message->sender ? [
+                            'id' => $message->sender->id,
+                            'name' => $message->sender->name,
+                            'profile_picture' => $message->sender->profile_picture_path ? url("/api/profile-pictures/{$message->sender->id}") : null,
+                        ] : null,
+                    ];
+                }),
             ],
         ]);
     }
 
-    // Send plain text message
-    public function sendMessage(Request $request, $id)
+    /**
+     * GET /api/chats/{id}
+     * Dapatkan detail chat dengan semua messages
+     */
+    public function show(Request $request, Conversation $conversation)
     {
         $user = $request->user();
 
-        $conversation = Conversation::findOrFail($id);
+        // Validate access (merchant, buyer, or admin)
+        $isAuthorized = $this->canAccessConversation($conversation, $user);
 
-        if ($conversation->buyer_id !== $user->id &&
-            !$this->userIsMerchantInConversation($user, $conversation)) {
-            return response()->json(['message' => 'Forbidden'], 403);
+        if (!$isAuthorized) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Mark messages as read (no-op on current schema)
+        $conversation->markAsRead();
+
+        $conversation->load([
+            'buyer' => fn($q) => $q->select('id', 'name', 'email', 'phone', 'profile_picture_path'),
+            'jasa' => fn($q) => $q->select('id', 'title', 'slug'),
+            'messages' => fn($q) => $q->with('sender:id,name,profile_picture_path')
+                ->select('id', 'conversation_id', 'sender_id', 'sender_role', 'body', 'type', 'offer_price', 'offer_status', 'created_at')
+                ->whereIn('type', ['text', 'offer'])
+                ->orderBy('created_at', 'asc'),
+        ]);
+
+        return response()->json([
+            'data' => [
+                'conversation' => [
+                    'id' => $conversation->id,
+                    'buyer_id' => $conversation->buyer_id,
+                    'merchant_id' => $conversation->merchant_id,
+                    'jasa_id' => $conversation->jasa_id,
+                    'status' => $conversation->status,
+                    'user' => $conversation->buyer ? [
+                        'id' => $conversation->buyer->id,
+                        'name' => $conversation->buyer->name,
+                        'email' => $conversation->buyer->email,
+                        'phone' => $conversation->buyer->phone,
+                        'profile_picture' => $conversation->buyer->profile_picture_path ? url("/api/profile-pictures/{$conversation->buyer->id}") : null,
+                    ] : null,
+                    'jasa' => $conversation->jasa ? [
+                        'id' => $conversation->jasa->id,
+                        'title' => $conversation->jasa->title,
+                        'slug' => $conversation->jasa->slug,
+                    ] : null,
+                    'created_at' => $conversation->created_at,
+                    'updated_at' => $conversation->updated_at,
+                ],
+                'messages' => $conversation->messages->map(function ($message) {
+                    return [
+                        'id' => $message->id,
+                        'sender_id' => $message->sender_id,
+                        'sender_role' => $message->sender_role,
+                        'body' => $message->body,
+                        'is_read' => false,
+                        'type' => $message->type,
+                        'offer_price' => $message->offer_price,
+                        'offer_status' => $message->offer_status,
+                        'created_at' => $message->created_at,
+                        'sender' => $message->sender ? [
+                            'id' => $message->sender->id,
+                            'name' => $message->sender->name,
+                            'profile_picture' => $message->sender->profile_picture_path ? url("/api/profile-pictures/{$message->sender->id}") : null,
+                        ] : null,
+                    ];
+                }),
+            ],
+        ]);
+    }
+
+    /**
+     * POST /api/chats/{id}/messages
+     * Kirim pesan baru ke chat
+     */
+    public function sendMessage(Request $request, Conversation $conversation)
+    {
+        $user = $request->user();
+
+        // Validate merchant access
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         $data = $request->validate([
-            'body' => 'required|string',
+            'body' => 'required|string|max:5000',
         ]);
 
-        $senderRole = $this->detectSenderRole($user, $conversation);
-
-        $message = Message::create([
-            'conversation_id' => $conversation->id,
+        $message = $conversation->messages()->create([
             'sender_id' => $user->id,
-            'sender_role' => $senderRole,
-            'type' => 'message',
+            'sender_role' => 'merchant',
+            'type' => 'text',
             'body' => $data['body'],
         ]);
 
-        $conversation->update(['last_message_at' => now()]);
+        // Update conversation's updated_at
+        $conversation->touch();
 
-        return response()->json(['data' => $message], 201);
+        return response()->json([
+            'message' => 'Pesan berhasil dikirim',
+            'data' => [
+                'id' => $message->id,
+                'sender_id' => $message->sender_id,
+                'sender_role' => $message->sender_role,
+                'body' => $message->body,
+                'is_read' => false,
+                'type' => $message->type,
+                'created_at' => $message->created_at,
+            ],
+        ], 201);
     }
 
-    // Merchant makes an offer in the chat
-    public function makeOffer(Request $request, $id)
+    /**
+     * POST /api/chats/{id}/buyer-messages
+     * Kirim pesan baru ke chat sebagai buyer
+     */
+    public function sendBuyerMessage(Request $request, Conversation $conversation)
     {
         $user = $request->user();
-        $conversation = Conversation::findOrFail($id);
 
-        if (!$this->userIsMerchantInConversation($user, $conversation)) {
-            return response()->json(['message' => 'Hanya merchant yang dapat membuat penawaran'], 403);
+        // Validate buyer access
+        if ($conversation->buyer_id !== $user->id && !$user->hasRole('admin')) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         $data = $request->validate([
-            'offer_price' => 'required|integer|min:0',
-            'body' => 'nullable|string',
+            'body' => 'required|string|max:5000',
         ]);
 
-        $message = Message::create([
-            'conversation_id' => $conversation->id,
+        $message = $conversation->messages()->create([
+            'sender_id' => $user->id,
+            'sender_role' => 'buyer',
+            'type' => 'text',
+            'body' => $data['body'],
+        ]);
+
+        // Update conversation's updated_at
+        $conversation->touch();
+
+        return response()->json([
+            'message' => 'Pesan berhasil dikirim',
+            'data' => [
+                'id' => $message->id,
+                'sender_id' => $message->sender_id,
+                'sender_role' => $message->sender_role,
+                'body' => $message->body,
+                'is_read' => false,
+                'type' => $message->type,
+                'created_at' => $message->created_at,
+            ],
+        ], 201);
+    }
+
+    /**
+     * POST /api/chats/{id}/offer
+     * Buat penawaran harga untuk chat
+     */
+    public function makeOffer(Request $request, Conversation $conversation)
+    {
+        $user = $request->user();
+
+        // Validate merchant access
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $data = $request->validate([
+            'price' => 'required|numeric|min:0',
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        // Update conversation status
+        $conversation->update([
+            'status' => 'pending_offer',
+        ]);
+
+        // Create message with offer details
+        $message = $conversation->messages()->create([
             'sender_id' => $user->id,
             'sender_role' => 'merchant',
             'type' => 'offer',
-            'body' => $data['body'] ?? null,
-            'jasa_id' => $conversation->jasa_id,
-            'offer_price' => $data['offer_price'],
+            'body' => "💰 Penawaran harga: Rp " . number_format($data['price'], 0, ',', '.') .
+                ($data['note'] ? "\n\n📝 " . $data['note'] : ""),
+            'offer_price' => (int) $data['price'],
             'offer_status' => 'pending',
         ]);
 
-        $conversation->update(['last_message_at' => now()]);
-
-        return response()->json(['data' => $message], 201);
+        return response()->json([
+            'message' => 'Penawaran berhasil dikirim',
+            'data' => [
+                'id' => $conversation->id,
+                'status' => $conversation->status,
+                'offer_price' => (int) $data['price'],
+                'offer_note' => $data['note'] ?? null,
+            ],
+        ], 201);
     }
 
-    // Buyer accepts an offer
-    public function acceptOffer(Request $request, $id, $messageId)
+    /**
+     * PUT /api/chats/{id}/offer/accept
+     * Terima penawaran dari pembeli
+     */
+    public function acceptOffer(Request $request, Conversation $conversation)
     {
         $user = $request->user();
-        $conversation = Conversation::findOrFail($id);
 
-        if ($conversation->buyer_id !== $user->id) {
-            return response()->json(['message' => 'Hanya pembeli yang dapat menerima penawaran'], 403);
+        // Validate merchant access
+        if ($conversation->merchant_id !== $user->id && !$user->hasRole('admin')) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $message = Message::where('conversation_id', $conversation->id)
-            ->where('id', $messageId)
-            ->where('type', 'offer')
-            ->firstOrFail();
+        if ($conversation->status !== 'pending_offer') {
+            return response()->json([
+                'message' => 'Chat tidak memiliki penawaran yang pending',
+            ], 422);
+        }
 
-        $message->offer_status = 'accepted';
-        $message->save();
+        // Update conversation status
+        $conversation->update([
+            'status' => 'deal_accepted',
+        ]);
 
-        // Optionally: create Order here from jasa & offer_price
+        // Send system message
+        $conversation->messages()->create([
+            'sender_id' => $user->id,
+            'sender_role' => 'merchant',
+            'type' => 'text',
+            'body' => '✅ Penawaran diterima!',
+        ]);
 
-        return response()->json(['data' => $message]);
+        return response()->json([
+            'message' => 'Penawaran berhasil diterima',
+            'data' => [
+                'id' => $conversation->id,
+                'status' => $conversation->status,
+            ],
+        ]);
     }
 
-    // Buyer rejects an offer
-    public function rejectOffer(Request $request, $id, $messageId)
+    /**
+     * PUT /api/chats/{id}/status
+     * Update status chat
+     */
+    public function updateStatus(Request $request, Conversation $conversation)
     {
         $user = $request->user();
-        $conversation = Conversation::findOrFail($id);
 
-        if ($conversation->buyer_id !== $user->id) {
-            return response()->json(['message' => 'Hanya pembeli yang dapat menolak penawaran'], 403);
+        // Validate merchant access
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $message = Message::where('conversation_id', $conversation->id)
-            ->where('id', $messageId)
-            ->where('type', 'offer')
-            ->firstOrFail();
+        $data = $request->validate([
+            'status' => 'required|in:active,pending_offer,deal_accepted,completed,cancelled',
+        ]);
 
-        $message->offer_status = 'rejected';
-        $message->save();
+        $oldStatus = $conversation->status;
+        $conversation->update(['status' => $data['status']]);
 
-        return response()->json(['data' => $message]);
+        // Send system message
+        $statusLabels = [
+            'active' => 'kembali aktif',
+            'pending_offer' => 'pending penawaran',
+            'deal_accepted' => 'deal diterima',
+            'completed' => 'selesai',
+            'cancelled' => 'dibatalkan',
+        ];
+
+        $conversation->messages()->create([
+            'sender_id' => $user->id,
+            'sender_role' => 'merchant',
+            'type' => 'text',
+            'body' => "📌 Status pembahasan berubah menjadi: " . ($statusLabels[$data['status']] ?? $data['status']),
+        ]);
+
+        return response()->json([
+            'message' => 'Status berhasil diupdate',
+            'data' => [
+                'id' => $conversation->id,
+                'status' => $conversation->status,
+            ],
+        ]);
     }
 
-    protected function userIsMerchantInConversation($user, Conversation $conversation): bool
+    /**
+     * DELETE /api/chats/{id}
+     * Hapus/arsipkan chat
+     */
+    public function destroy(Request $request, Conversation $conversation)
     {
-        // User is merchant when they own the merchant in this conversation
-        $merchant = Merchant::where('id', $conversation->merchant_id)
-            ->where('user_id', $user->id)
-            ->first();
+        $user = $request->user();
 
-        return (bool) $merchant;
-    }
-
-    protected function detectSenderRole($user, Conversation $conversation): string
-    {
-        if ($conversation->buyer_id === $user->id) {
-            return 'buyer';
+        // Validate merchant access
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        if ($this->userIsMerchantInConversation($user, $conversation)) {
-            return 'merchant';
-        }
+        $conversation->delete();
 
-        return 'customer';
+        return response()->json([
+            'message' => 'Chat berhasil dihapus',
+        ]);
     }
 }

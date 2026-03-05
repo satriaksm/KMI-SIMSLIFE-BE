@@ -108,4 +108,15 @@ class Product extends Model
     {
         return $this->morphMany(CartItem::class, 'itemable');
     }
+
+    // 🆕 Rating System
+    public function ratings(): MorphMany
+    {
+        return $this->morphMany(Rating::class, 'rateable');
+    }
+
+    public function ratingSummary(): MorphOne
+    {
+        return $this->morphOne(RatingSummary::class, 'rateable');
+    }
 }
