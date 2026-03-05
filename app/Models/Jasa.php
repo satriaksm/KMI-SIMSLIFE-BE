@@ -32,6 +32,7 @@ class Jasa extends Model
         'service_area',
         'special_notes',
         'payment_methods',
+        'status',
         'operating_days',
         'operating_times',
 

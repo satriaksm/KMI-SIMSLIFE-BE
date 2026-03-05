@@ -270,8 +270,10 @@ class SearchController extends Controller
             $jasaQuery = Jasa::query()
                 ->select([
                     'jasas.id',
+                    'jasas.slug',
                     'jasas.merchant_id',
                     'jasas.title',
+                    'jasas.image',
                     'jasas.fixed_price',
                     'jasas.base_price',
                     'jasas.price',
@@ -436,8 +438,10 @@ class SearchController extends Controller
                     // Build explicit payload (avoid leaking raw select keys like COALESCE(...)).
                     $payload = [
                         'id' => $jasa->id,
+                        'slug' => $jasa->slug,
                         'merchant_id' => $jasa->merchant_id,
                         'created_at' => $jasa->created_at,
+                        'image' => $jasa->image,
 
                         'min_price' => $jasa->min_price,
                         'max_price' => $jasa->max_price,

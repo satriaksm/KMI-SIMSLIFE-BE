@@ -4,7 +4,6 @@ use Illuminate\Foundation\Application;
 use Illuminate\Http\Middleware\HandleCors;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 use App\Http\Middleware\AllowOptions;
 
@@ -28,7 +27,6 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
         $middleware->api(prepend: [
             EnsureFrontendRequestsAreStateful::class,
-            VerifyCsrfToken::class
         ]);
         $middleware->statefulApi();
         // 🆕 ADDED from feat/rating-system: Global middleware untuk OPTIONS request

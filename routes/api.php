@@ -47,9 +47,11 @@ Route::prefix('public')->name('public.')->group(function () {
     Route::get('search', [SearchController::class, 'searchProducts'])->name('search');
     Route::get('search-merchants', [SearchController::class, 'searchMerchants'])->name('search.merchants');
 
-    // Public jasa listing (only published/active)
-    // Route::get('/jasas', [JasaController::class, 'publicIndex']);
-    Route::get('/jasas/{id}', [JasaController::class, 'publicShow']);
+
+      // Jasa by slug (must contain at least one letter, come AFTER numeric check)
+    Route::get('/jasas/{slug}', [JasaController::class, 'publicShowBySlug'])
+        ->where('slug', '^(?!\d+$).+')
+        ->name('jasas.show.slug');
 
     Route::prefix('products')->name('products.')->group(function () {
 
