@@ -2,7 +2,7 @@ name: Laravel CI/CD -> FTPS
 
 on:
   push:
-    branches: [staging]
+    branches: [prod-kel-banyuanyar]
   workflow_dispatch:
 
 jobs:
@@ -28,6 +28,29 @@ jobs:
           composer install --no-interaction --prefer-dist --optimize-autoloader
           composer dump-autoload --optimize
 
+      - name: Setup .env from secrets
+        run: |
+          cp .env.example .env
+          sed -i "s|^APP_NAME=.*|APP_NAME=${{ secrets.APP_NAME }}|" .env
+          sed -i "s|^APP_DEBUG=.*|APP_DEBUG=false|" .env
+          sed -i "s|^APP_URL=.*|APP_URL=${{ secrets.APP_URL }}|" .env
+          sed -i "s|^SANCTUM_STATEFUL_DOMAINS=.*|SANCTUM_STATEFUL_DOMAINS=${{ secrets.SANCTUM_STATEFUL_DOMAINS }}|" .env
+          sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=${{ secrets.FRONTEND_URL }}|" .env
+          sed -i "s|^DB_HOST=.*|DB_HOST=${{ secrets.DB_HOST }}|" .env
+          sed -i "s|^DB_PORT=.*|DB_PORT=${{ secrets.DB_PORT }}|" .env
+          sed -i "s|^DB_DATABASE=.*|DB_DATABASE=${{ secrets.DB_DATABASE }}|" .env
+          sed -i "s|^DB_USERNAME=.*|DB_USERNAME=${{ secrets.DB_USERNAME }}|" .env
+          sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${{ secrets.DB_PASSWORD }}|" .env
+          sed -i "s|^MAIL_MAILER=.*|MAIL_MAILER=${{ secrets.MAIL_MAILER }}|" .env
+          sed -i "s|^MAIL_SCHEME=.*|MAIL_SCHEME=${{ secrets.MAIL_SCHEME }}|" .env
+          sed -i "s|^MAIL_HOST=.*|MAIL_HOST=${{ secrets.MAIL_HOST }}|" .env
+          sed -i "s|^MAIL_PORT=.*|MAIL_PORT=${{ secrets.MAIL_PORT }}|" .env
+          sed -i "s|^MAIL_USERNAME=.*|MAIL_USERNAME=${{ secrets.MAIL_USERNAME }}|" .env
+          sed -i "s|^MAIL_PASSWORD=.*|MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }}|" .env
+          sed -i "s|^MAIL_FROM_ADDRESS=.*|MAIL_FROM_ADDRESS=${{ secrets.MAIL_FROM_ADDRESS }}|" .env
+          sed -i "s|^MAIL_FROM_NAME=.*|MAIL_FROM_NAME=${{ secrets.APP_NAME }}|" .env
+          php artisan key:generate --force
+
       - name: Prepare release folder
         run: |
           rm -rf release || true
@@ -41,7 +64,6 @@ jobs:
             --exclude='node_modules' \
             --exclude='tests' \
             --exclude='public' \
-            --exclude='.env' \
             --exclude='/.scribe' \
             --exclude='/.scribe/**' \
             --exclude='storage/logs/*' \
@@ -64,10 +86,10 @@ jobs:
       - name: Deploy to FTPS (Source Code)
         uses: SamKirkland/FTP-Deploy-Action@4.3.0
         with:
-          server: ${{ secrets.FTP_SERVER }}
+          server: ${{ secrets.FTP_IP }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASS }}
-          port: ${{ secrets.FTP_PORT || 21 }}
+          port: ${{ secrets.FTP_PORT}}
           protocol: ftps
           local-dir: release/
           server-dir: ${{ secrets.FTP_PATH_LARAVEL }}/
@@ -80,7 +102,6 @@ jobs:
             **/node_modules/**
             /vendor/**
             **/tests/**
-            **/.env
 
       - name: Deployment Summary
         if: success()
