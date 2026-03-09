@@ -93,18 +93,20 @@ jobs:
       - name: Patch public/index.php paths for shared hosting
         run: |
           # Struktur di server:
-          #   public_html/           
-          #   public_html/backend/   
+          #   /laravel_app/             ← app Laravel (sejajar dengan public_html)
+          #   /public_html/             ← web root (Vue SPA)
+          #   /public_html/backend/     ← Laravel public/ entry point
           #
           # index.php defaultnya: __DIR__.'/../vendor/autoload.php'
-          # Harus diubah ke:      __DIR__.'/backend/vendor/autoload.php'
+          # Harus diubah ke:      __DIR__.'/../../laravel_app/vendor/autoload.php'
+          # (naik 2 level: backend/ -> public_html/ -> /)
           #
-          # PENTING: Sesuaikan 'backend' di bawah jika nama subfolder FTP_PATH_LARAVEL berbeda
-          LARAVEL_SUBDIR="backend"
+          # API dapat diakses di: domain.com/backend/api/...
+          LARAVEL_DIR="laravel_app"
 
-          sed -i "s|__DIR__\.'/../storage/framework/maintenance.php'|__DIR__.\"/\${LARAVEL_SUBDIR}/storage/framework/maintenance.php\"|g" release-public/index.php
-          sed -i "s|require __DIR__\.'/../vendor/autoload.php'|require __DIR__.\"/${LARAVEL_SUBDIR}/vendor/autoload.php\"|g" release-public/index.php
-          sed -i "s|require_once __DIR__\.'/../bootstrap/app.php'|require_once __DIR__.\"/${LARAVEL_SUBDIR}/bootstrap/app.php\"|g" release-public/index.php
+          sed -i "s|__DIR__\.'/../storage/framework/maintenance.php'|__DIR__.'/../../${LARAVEL_DIR}/storage/framework/maintenance.php'|g" release-public/index.php
+          sed -i "s|require __DIR__\.'/../vendor/autoload.php'|require __DIR__.'/../../${LARAVEL_DIR}/vendor/autoload.php'|g" release-public/index.php
+          sed -i "s|require_once __DIR__\.'/../bootstrap/app.php'|require_once __DIR__.'/../../${LARAVEL_DIR}/bootstrap/app.php'|g" release-public/index.php
 
           echo "✅ release-public/index.php setelah dipatch:"
           cat release-public/index.php
@@ -118,7 +120,7 @@ jobs:
           port: ${{ secrets.FTP_PORT}}
           protocol: ftp
           local-dir: release/
-          server-dir: backend/
+          server-dir: laravel_app/
           dangerous-clean-slate: false
           passive: true
           log-level: verbose
@@ -140,7 +142,7 @@ jobs:
           port: ${{ secrets.FTP_PORT}}
           protocol: ftp
           local-dir: release-public/
-          server-dir: /
+          server-dir: public_html/backend/
           dangerous-clean-slate: false
           passive: true
           log-level: verbose

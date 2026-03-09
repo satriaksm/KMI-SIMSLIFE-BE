@@ -1,6 +1,3 @@
-# ─── Block access to Laravel app folder ────────────────────────────────────
-RedirectMatch 403 ^/backend(/.*)?$
-
 # ─── Block access to sensitive files ────────────────────────────────────────
 <FilesMatch "(\.env|\.env\..*|composer\.json|composer\.lock|package\.json|pnpm-lock\.yaml|artisan|\.git)$">
     Order allow,deny
@@ -13,9 +10,6 @@ RedirectMatch 403 ^/backend(/.*)?$
     </IfModule>
 
     RewriteEngine On
-
-    # Block direct access to backend/ folder
-    RewriteRule ^backend(/.*)?$ - [F,L]
 
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
