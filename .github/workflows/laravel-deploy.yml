@@ -53,14 +53,13 @@ jobs:
 
       - name: Prepare release folder
         run: |
-          rm -rf release || true
-          mkdir -p release
+          rm -rf release release-public || true
+          mkdir -p release release-public
 
-          # ✅ Copy source code (exclude vendor, node_modules, tests, etc)
+          # ✅ Copy Laravel app files (excluding public/, git, node_modules, tests)
           rsync -av --delete \
             --exclude='.git' \
             --exclude='.github' \
-            --exclude='/vendor' \
             --exclude='node_modules' \
             --exclude='tests' \
             --exclude='public' \
@@ -72,36 +71,83 @@ jobs:
             --exclude='storage/framework/views/*' \
             ./ release/
 
+          # ✅ Copy Laravel public/ folder separately (entry point for web)
+          rsync -av --delete \
+            --exclude='.git' \
+            public/ release-public/
+
           # ✅ Create necessary directories
           mkdir -p release/storage/{app,framework,logs}
           mkdir -p release/storage/framework/{cache,sessions,views}
           mkdir -p release/bootstrap/cache
 
-          echo "📦 Release contents:"
+          echo "📦 Release (Laravel app) contents:"
           ls -lah release/
           echo ""
+          echo "📦 Release (public) contents:"
+          ls -lah release-public/
+          echo ""
           echo "📊 Release size:"
-          du -sh release/
+          du -sh release/ release-public/
 
-      - name: Deploy to FTPS (Source Code)
+      - name: Patch public/index.php paths for shared hosting
+        run: |
+          # Struktur di server:
+          #   public_html/           
+          #   public_html/backend/   
+          #
+          # index.php defaultnya: __DIR__.'/../vendor/autoload.php'
+          # Harus diubah ke:      __DIR__.'/backend/vendor/autoload.php'
+          #
+          # PENTING: Sesuaikan 'backend' di bawah jika nama subfolder FTP_PATH_LARAVEL berbeda
+          LARAVEL_SUBDIR="backend"
+
+          sed -i "s|__DIR__\.'/../storage/framework/maintenance.php'|__DIR__.\"/\${LARAVEL_SUBDIR}/storage/framework/maintenance.php\"|g" release-public/index.php
+          sed -i "s|require __DIR__\.'/../vendor/autoload.php'|require __DIR__.\"/${LARAVEL_SUBDIR}/vendor/autoload.php\"|g" release-public/index.php
+          sed -i "s|require_once __DIR__\.'/../bootstrap/app.php'|require_once __DIR__.\"/${LARAVEL_SUBDIR}/bootstrap/app.php\"|g" release-public/index.php
+
+          echo "✅ release-public/index.php setelah dipatch:"
+          cat release-public/index.php
+
+      - name: Deploy to FTPS (Laravel App)
         uses: SamKirkland/FTP-Deploy-Action@4.3.0
         with:
           server: ${{ secrets.FTP_IP }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASS }}
           port: ${{ secrets.FTP_PORT}}
-          protocol: ftps
+          protocol: ftp
           local-dir: release/
-          server-dir: ${{ secrets.FTP_PATH_LARAVEL }}/
+          server-dir: backend/
           dangerous-clean-slate: false
+          passive: true
+          log-level: verbose
+          security: loose
           exclude: |
             **/.git*
             **/.git*/**
             **/.scribe
             **/.scribe/**
             **/node_modules/**
-            /vendor/**
             **/tests/**
+
+      - name: Deploy to FTPS (Public / Web Root)
+        uses: SamKirkland/FTP-Deploy-Action@4.3.0
+        with:
+          server: ${{ secrets.FTP_IP }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASS }}
+          port: ${{ secrets.FTP_PORT}}
+          protocol: ftp
+          local-dir: release-public/
+          server-dir: /
+          dangerous-clean-slate: false
+          passive: true
+          log-level: verbose
+          security: loose
+          exclude: |
+            **/.git*
+            **/.git*/**
 
       - name: Deployment Summary
         if: success()
