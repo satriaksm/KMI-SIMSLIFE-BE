@@ -142,7 +142,7 @@ jobs:
           port: ${{ secrets.FTP_PORT}}
           protocol: ftp
           local-dir: release-public/
-          server-dir: ./backend/
+          server-dir: backend/
           dangerous-clean-slate: false
           passive: true
           log-level: verbose
