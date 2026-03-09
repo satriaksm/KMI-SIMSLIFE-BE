@@ -120,7 +120,7 @@ jobs:
           port: ${{ secrets.FTP_PORT}}
           protocol: ftp
           local-dir: release/
-          server-dir: laravel_app/
+          server-dir: ../laravel_app/
           dangerous-clean-slate: false
           passive: true
           log-level: verbose
@@ -142,7 +142,7 @@ jobs:
           port: ${{ secrets.FTP_PORT}}
           protocol: ftp
           local-dir: release-public/
-          server-dir: public_html/backend/
+          server-dir: ./backend/
           dangerous-clean-slate: false
           passive: true
           log-level: verbose
