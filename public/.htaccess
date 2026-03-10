@@ -10,6 +10,7 @@
     </IfModule>
 
     RewriteEngine On
+    RewriteBase /backend/
 
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .

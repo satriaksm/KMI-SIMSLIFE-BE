@@ -64,7 +64,6 @@ jobs:
             --exclude='node_modules' \
             --exclude='tests' \
             --exclude='public' \
-            --exclude='vendor' \
             --exclude='/.scribe' \
             --exclude='/.scribe/**' \
             --exclude='storage/logs/*' \
@@ -132,7 +131,6 @@ jobs:
             **/.git*/**
             **/.scribe
             **/.scribe/**
-            **/vendor/**
             **/node_modules/**
             **/tests/**
 
