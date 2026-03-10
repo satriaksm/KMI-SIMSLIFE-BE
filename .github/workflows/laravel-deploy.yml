@@ -35,12 +35,14 @@ jobs:
           sed -i "s|^APP_DEBUG=.*|APP_DEBUG=false|" .env
           sed -i "s|^APP_URL=.*|APP_URL=${{ secrets.APP_URL }}|" .env
           sed -i "s|^SANCTUM_STATEFUL_DOMAINS=.*|SANCTUM_STATEFUL_DOMAINS=${{ secrets.SANCTUM_STATEFUL_DOMAINS }}|" .env
+          sed -i "s|^SESSION_SECURE_COOKIE=.*|SESSION_SECURE_COOKIE=true|" .env
+          sed -i "s|^SESSION_DOMAIN=.*|SESSION_DOMAIN=${{ secrets.SESSION_DOMAIN }}|" .env
           sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=${{ secrets.FRONTEND_URL }}|" .env
           sed -i "s|^DB_HOST=.*|DB_HOST=${{ secrets.DB_HOST }}|" .env
           sed -i "s|^DB_PORT=.*|DB_PORT=${{ secrets.DB_PORT }}|" .env
           sed -i "s|^DB_DATABASE=.*|DB_DATABASE=${{ secrets.DB_DATABASE }}|" .env
           sed -i "s|^DB_USERNAME=.*|DB_USERNAME=${{ secrets.DB_USERNAME }}|" .env
-          sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${{ secrets.DB_PASSWORD }}|" .env
+          sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=\"${{ secrets.DB_PASSWORD }}\"|" .env
           sed -i "s|^MAIL_MAILER=.*|MAIL_MAILER=${{ secrets.MAIL_MAILER }}|" .env
           sed -i "s|^MAIL_HOST=.*|MAIL_HOST=${{ secrets.MAIL_HOST }}|" .env
           sed -i "s|^MAIL_PORT=.*|MAIL_PORT=${{ secrets.MAIL_PORT }}|" .env
