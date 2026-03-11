@@ -50,6 +50,8 @@ jobs:
           sed -i "s|^MAIL_PASSWORD=.*|MAIL_PASSWORD=\"${{ secrets.MAIL_PASSWORD }}\"|" .env
           sed -i "s|^MAIL_FROM_ADDRESS=.*|MAIL_FROM_ADDRESS=\"${{ secrets.MAIL_FROM_ADDRESS }}\"|" .env
           sed -i "s|^MAIL_FROM_NAME=.*|MAIL_FROM_NAME=\"${{ secrets.APP_NAME }}\"|" .env
+          sed -i "s|^CACHE_STORE=.*|CACHE_STORE=file|" .env
+          sed -i "s|^QUEUE_CONNECTION=.*|QUEUE_CONNECTION=sync|" .env
           php artisan key:generate --force
 
       - name: Prepare release folder
