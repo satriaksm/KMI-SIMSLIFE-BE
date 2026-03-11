@@ -577,9 +577,15 @@ class ProductController extends Controller
             'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
         ]);
 
-        if (count($data['images']) > 6) {
+        if (count($data['images'] ?? []) > 6) {
             return response()->json([
                 'message' => 'Maksimal upload 6 foto produk.',
+            ], 422);
+        }
+
+        if (empty($data['images'])) {
+            return response()->json([
+                'message' => 'Minimal 1 foto produk diperlukan.',
             ], 422);
         }
 
@@ -788,11 +794,6 @@ class ProductController extends Controller
             }
 
             DB::commit();
-
-            return response()->json([
-                'message' => 'Produk berhasil dibuat',
-                'data' => $product->load(['categories', 'images', 'variants', 'options.values', 'addonGroups.options.addon']),
-            ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
             if (isset($product)) {
@@ -800,6 +801,15 @@ class ProductController extends Controller
             }
             throw $e;
         }
+
+        // Return minimal data — FE redirects immediately after creation and doesn't use the full payload.
+        // Returning only what's needed for the optimistic update keeps DB connections free.
+        return ApiResponse::success([
+            'id' => $product->id,
+            'slug' => $product->slug,
+            'name' => $product->name,
+            'status' => $product->status,
+        ], 'Produk berhasil dibuat', 201);
     }
 
     /**
