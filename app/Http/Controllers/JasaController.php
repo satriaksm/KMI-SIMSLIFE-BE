@@ -31,8 +31,8 @@ class JasaController extends Controller
             ? route('images.show', ['image' => $cover->id])
             : URL::signedRoute('images.show', ['image' => $cover->id], now()->addMinutes(60));
 
-        // Sinkronkan field legacy `image` agar semua endpoint FE konsisten
-        $jasa->setAttribute('image', $cover->image_path);
+        // Field legacy `image` juga gunakan API URL agar tidak 403 di production
+        $jasa->setAttribute('image', $srcUrl);
 
         $jasa->setAttribute('cover_img', [
             'id' => $cover->id,
@@ -624,6 +624,14 @@ class JasaController extends Controller
             }
         }
 
+        // Muat relasi dan tambahkan cover_img dengan API URL
+        $jasa->load(['categories', 'images']);
+        $this->attachCategoryAliases($jasa);
+        
+        $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
+            || ($jasa->status === null && (bool) $jasa->is_active);
+        $this->attachCoverImg($jasa, $isPublic);
+
         return response()->json([
             'message' => 'Data jasa berhasil diperbarui',
             'data' => $jasa
@@ -759,8 +767,13 @@ class JasaController extends Controller
         }
 
         // Muat relasi yang dipakai di Indexjasa.vue
-        $jasa->load(['categories']);
+        $jasa->load(['categories', 'images']);
         $this->attachCategoryAliases($jasa);
+        
+        // Tambahkan cover_img dengan API URL
+        $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
+            || ($jasa->status === null && (bool) $jasa->is_active);
+        $this->attachCoverImg($jasa, $isPublic);
 
         return response()->json([
             'message' => 'Jasa berhasil dibuat',
