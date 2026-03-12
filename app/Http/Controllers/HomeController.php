@@ -29,6 +29,12 @@ class HomeController extends Controller
                 ->withCount([
                     'products' => function ($q) {
                         $q->where('status', 'published');
+                    },
+                    'jasas' => function ($q) {
+                        $q->whereIn('status', ['published', 'active'])
+                            ->orWhere(function ($sub) {
+                                $sub->whereNull('status')->where('is_active', true);
+                            });
                     }
                 ])
                 ->inRandomOrder()

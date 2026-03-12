@@ -445,7 +445,7 @@ class JasaController extends Controller
             'rating' => 'nullable|numeric|min:0|max:5',
             'distance_km' => 'nullable|numeric|min:0',
             'duration_hours' => 'nullable|numeric|min:0',
-            'description' => 'nullable|string',
+            'description' => 'required|string|min:20',
             'is_active' => 'boolean',
         ]);
 
@@ -484,7 +484,7 @@ class JasaController extends Controller
             'rating' => 'nullable|numeric|min:0|max:5',
             'distance_km' => 'nullable|numeric|min:0',
             'duration_hours' => 'nullable|numeric|min:0',
-            'description' => 'nullable|string',
+            'description' => 'required|string|min:20',
             'is_active' => 'boolean',
 
             // Field baru jasa merchant
@@ -654,7 +654,7 @@ class JasaController extends Controller
         // Validasi field sesuai form Createjasa.vue
         $validated = $request->validate([
             'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
+            'description' => 'required|string|min:20',
 
             // Harga
             'fixed_price' => 'nullable|integer|min:0',
@@ -743,7 +743,7 @@ class JasaController extends Controller
                     $path = $file->store("jasa/{$jasa->id}", 'public');
 
                     $imagesToInsert[] = [
-                        'imageable_type' => 'App\\Models\\Jasa',
+                        'imageable_type' => 'jasa',
                         'imageable_id' => $jasa->id,
                         'image_path' => $path,
                         'display_order' => $index,
