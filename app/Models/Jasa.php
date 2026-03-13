@@ -14,6 +14,12 @@ class Jasa extends Model
 {
     use HasFactory;
 
+    /**
+     * Hide legacy 'image' field from JSON response.
+     * Frontend should use 'cover_img.src_url' instead (API URL).
+     */
+    protected $hidden = ['image'];
+
     protected $fillable = [
         'merchant_id',
         'title',

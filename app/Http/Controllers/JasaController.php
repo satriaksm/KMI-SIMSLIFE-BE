@@ -31,8 +31,8 @@ class JasaController extends Controller
             ? route('images.show', ['image' => $cover->id])
             : URL::signedRoute('images.show', ['image' => $cover->id], now()->addMinutes(60));
 
-        // Sinkronkan field legacy `image` agar semua endpoint FE konsisten
-        $jasa->setAttribute('image', $cover->image_path);
+        // Field legacy `image` juga gunakan API URL agar tidak 403 di production
+        $jasa->setAttribute('image', $srcUrl);
 
         $jasa->setAttribute('cover_img', [
             'id' => $cover->id,
@@ -445,7 +445,7 @@ class JasaController extends Controller
             'rating' => 'nullable|numeric|min:0|max:5',
             'distance_km' => 'nullable|numeric|min:0',
             'duration_hours' => 'nullable|numeric|min:0',
-            'description' => 'nullable|string',
+            'description' => 'required|string|min:20',
             'is_active' => 'boolean',
         ]);
 
@@ -484,7 +484,7 @@ class JasaController extends Controller
             'rating' => 'nullable|numeric|min:0|max:5',
             'distance_km' => 'nullable|numeric|min:0',
             'duration_hours' => 'nullable|numeric|min:0',
-            'description' => 'nullable|string',
+            'description' => 'sometimes|required|string|min:20',
             'is_active' => 'boolean',
 
             // Field baru jasa merchant
@@ -624,6 +624,14 @@ class JasaController extends Controller
             }
         }
 
+        // Muat relasi dan tambahkan cover_img dengan API URL
+        $jasa->load(['categories', 'images']);
+        $this->attachCategoryAliases($jasa);
+        
+        $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
+            || ($jasa->status === null && (bool) $jasa->is_active);
+        $this->attachCoverImg($jasa, $isPublic);
+
         return response()->json([
             'message' => 'Data jasa berhasil diperbarui',
             'data' => $jasa
@@ -646,7 +654,7 @@ class JasaController extends Controller
         // Validasi field sesuai form Createjasa.vue
         $validated = $request->validate([
             'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
+            'description' => 'required|string|min:20',
 
             // Harga
             'fixed_price' => 'nullable|integer|min:0',
@@ -735,7 +743,7 @@ class JasaController extends Controller
                     $path = $file->store("jasa/{$jasa->id}", 'public');
 
                     $imagesToInsert[] = [
-                        'imageable_type' => 'App\\Models\\Jasa',
+                        'imageable_type' => 'jasa',
                         'imageable_id' => $jasa->id,
                         'image_path' => $path,
                         'display_order' => $index,
@@ -759,8 +767,13 @@ class JasaController extends Controller
         }
 
         // Muat relasi yang dipakai di Indexjasa.vue
-        $jasa->load(['categories']);
+        $jasa->load(['categories', 'images']);
         $this->attachCategoryAliases($jasa);
+        
+        // Tambahkan cover_img dengan API URL
+        $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
+            || ($jasa->status === null && (bool) $jasa->is_active);
+        $this->attachCoverImg($jasa, $isPublic);
 
         return response()->json([
             'message' => 'Jasa berhasil dibuat',

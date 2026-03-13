@@ -552,12 +552,10 @@ class SearchController extends Controller
                         });
                 },
                 'jasas as jasas_count' => function ($q) {
-                    $q->where(function ($sub) {
-                        $sub->whereIn('status', ['published', 'active'])
-                            ->orWhere(function ($sub2) {
-                                $sub2->whereNull('status')->where('is_active', true);
-                            });
-                    });
+                    // Count jasas where is_active=true (this covers newly created jasas
+                    // that have default status='draft' but is_active=true, as well as
+                    // jasas with status='active'/'published' synced to is_active=true).
+                    $q->where('is_active', true);
                 },
             ]);
 
