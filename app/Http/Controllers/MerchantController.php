@@ -192,8 +192,8 @@ class MerchantController extends Controller
                 'address.district_id' => ['required', 'integer', Rule::exists('districts', 'id')],
                 'address.village_id' => ['required', 'integer', Rule::exists('villages', 'id')],
                 'address.detail' => ['nullable', 'string', 'max:500'],
-                'address.latitude' => ['nullable', 'numeric', 'between:-90,90'],
-                'address.longitude' => ['nullable', 'numeric', 'between:-180,180'],
+                'address.latitude' => ['required', 'numeric', 'between:-90,90'],
+                'address.longitude' => ['required', 'numeric', 'between:-180,180'],
             ],
             [
                 'name.required' => 'Nama usaha wajib diisi.',
@@ -209,6 +209,10 @@ class MerchantController extends Controller
                 'address.district_id.exists' => 'Kecamatan tidak valid.',
                 'address.village_id.required' => 'Desa/Kelurahan wajib dipilih.',
                 'address.village_id.exists' => 'Desa/Kelurahan tidak valid.',
+                'address.latitude.required' => 'Titik lokasi (latitude) wajib diisi.',
+                'address.latitude.between' => 'Latitude tidak valid.',
+                'address.longitude.required' => 'Titik lokasi (longitude) wajib diisi.',
+                'address.longitude.between' => 'Longitude tidak valid.',
             ]
         );
 
