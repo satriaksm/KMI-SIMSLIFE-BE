@@ -31,10 +31,9 @@ class HomeController extends Controller
                         $q->where('status', 'published');
                     },
                     'jasas' => function ($q) {
-                        $q->whereIn('status', ['published', 'active'])
-                            ->orWhere(function ($sub) {
-                                $sub->whereNull('status')->where('is_active', true);
-                            });
+                        // Count jasas where is_active=true (covers draft+active+published
+                        // since newly created jasas default to status='draft', is_active=true).
+                        $q->where('is_active', true);
                     }
                 ])
                 ->inRandomOrder()

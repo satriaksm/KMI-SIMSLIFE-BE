@@ -484,7 +484,7 @@ class JasaController extends Controller
             'rating' => 'nullable|numeric|min:0|max:5',
             'distance_km' => 'nullable|numeric|min:0',
             'duration_hours' => 'nullable|numeric|min:0',
-            'description' => 'required|string|min:20',
+            'description' => 'sometimes|required|string|min:20',
             'is_active' => 'boolean',
 
             // Field baru jasa merchant
