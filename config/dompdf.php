@@ -6,10 +6,18 @@ return [
 
     /*
      * Fix for shared hosting (e.g. Hostinger) where the Laravel public
-     * directory may be symlinked or relocated to public_html.
-     * Using public_path() ensures the correct resolved path is used.
+     * directory may be symlinked or relocated to public_html/backend.
+     *
+     * public_path() resolves to laravel_app/public which does NOT exist on
+     * the server → realpath() returns false → "Cannot resolve public path".
+     *
+     * Strategy: use APP_PUBLIC_PATH env var if set, otherwise try
+     * public_path(), and fall back to base_path() which always exists.
+     * The PDF template uses only inline CSS (no external file references)
+     * so the exact base path value does not affect PDF output.
      */
-    'public_path' => public_path(),
+    'public_path' => env('APP_PUBLIC_PATH')
+        ?: (realpath(base_path('public')) ?: base_path()),
 
     'convert_entities' => true,
 
