@@ -1,34 +1,37 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\CartController;
-use App\Http\Controllers\JasaController;
-use App\Http\Controllers\EventController;
-use App\Http\Controllers\ImageController;
-use App\Http\Controllers\SearchController;
-use App\Http\Controllers\VoucherController;
-use App\Http\Controllers\CategoryController;
-use App\Http\Controllers\LocationController;
-use App\Http\Controllers\MerchantController;
-use App\Http\Controllers\Auth\AuthController;
-use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\PaguyubanController;
-use App\Http\Controllers\PostCommentController;
-use App\Http\Controllers\SegmentationController;
-use App\Http\Controllers\CommunityPostController;
-use App\Http\Controllers\Admin\AdminUserController;
-use App\Http\Controllers\Product\ProductController;
-use App\Http\Controllers\Auth\PasswordResetController;
-use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
-use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AdminVoucherController;
-use App\Http\Controllers\Product\ProductOptionValueImageController;
-use App\Http\Controllers\UserController;
+use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Auth\EmailVerificationController;
+use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\BankController;
+use App\Http\Controllers\CartController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\CommunityPostController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\EventController;
+use App\Http\Controllers\ImageController;
+use App\Http\Controllers\JasaController;
+use App\Http\Controllers\LocationController;
+use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PaguyubanController;
+use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\Product\ProductController;
+use App\Http\Controllers\Product\ProductOptionValueImageController;
+use App\Http\Controllers\SearchController;
+use App\Http\Controllers\SegmentationController;
 use App\Http\Controllers\ShippingController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\VoucherController;
+use App\Http\Controllers\WebhookController;
+use Illuminate\Support\Facades\Route;
 
 // ============================================================
 // HEALTH CHECK
@@ -105,10 +108,9 @@ Route::prefix('public')->name('public.')->group(function () {
 });
 
 // ============================================================
-// MIDTRANS CALLBACK (NO AUTH)
+// XENDIT WEBHOOK (NO AUTH)
 // ============================================================
-Route::post('payments/midtrans/notification', [OrderController::class, 'midtransNotification'])
-    ->name('payments.midtrans.notification');
+Route::post('/xendit/webhook', [WebhookController::class, 'callback'])->name('webhook.xendit');
 
 
 // Public Community Posts (harusnya masuk ke prefix public)
@@ -184,6 +186,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('/me', [AuthController::class, 'me'])->name('me');
 
+    Route::get('/banks', [BankController::class, 'index']);
+
     Route::prefix('profile')->controller(UserController::class)->group(function () {
         Route::get('/', 'show')->name('profile.show');
         Route::post('/update', 'update')->name('profile.update');
@@ -251,6 +255,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
         });
         // Orders (Product checkout)
 
+        Route::prefix('payments')->group(function () {
+
+            // 🔹 Create Invoice (checkout)
+            Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice']);
+
+            // 🔹 Get Payment Status
+            Route::get('/{orderId}/status', [PaymentController::class, 'getStatus']);
+
+            // 🔹 Cancel Payment (optional)
+            Route::post('/{orderId}/cancel', [PaymentController::class, 'cancel']);
+        });
     });
 
 

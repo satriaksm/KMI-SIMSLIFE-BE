@@ -14,7 +14,9 @@ class Order extends Model
         'order_code',
         'subtotal',
         'discount_total',
+        'platform_fee',
         'gross_amount',
+        'net_amount',
         'delivery_fee_snapshot',
         'delivery_type',
 
@@ -59,5 +61,10 @@ class Order extends Model
     public function items()
     {
         return $this->hasMany(ProductOrderItem::class);
+    }
+
+    public function payment()
+    {
+        return $this->hasOne(Payment::class);
     }
 }

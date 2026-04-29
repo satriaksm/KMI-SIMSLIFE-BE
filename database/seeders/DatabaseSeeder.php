@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
                 // CommunityPostSeeder::class,
                 // PostCommentSeeder::class,
             ReportReasonSeeder::class,
+            ShippingSettingSeeder::class,
             // ContentReportSeeder::class,
             // AddressSeeder::class,
             // EventSeeder::class,

@@ -33,11 +33,12 @@ class Merchant extends Model
         'operational_hours',
 
         'NPWP',
-        'bank_name',
+        'bank_code',
         'bank_account_number',
         'bank_account_name',
-
-        'midtrans_sub_account_id'
+        'balance_available',
+        'balance_pending',
+        'last_payout_at',
     ];
 
     protected $guarded = [
@@ -47,6 +48,9 @@ class Merchant extends Model
     protected $casts = [
         'response_at' => 'datetime',
         'operational_hours' => 'array',
+        'balance_available' => 'decimal:2',
+        'balance_pending' => 'decimal:2',
+        'last_payout_at' => 'datetime',
     ];
 
     protected $appends = ['logo_url', 'banner_url', 'is_open_now'];
@@ -140,6 +144,21 @@ class Merchant extends Model
     public function vouchers()
     {
         return $this->hasMany(Voucher::class, 'merchant_id');
+    }
+
+    public function orders()
+    {
+        return $this->hasMany(Order::class, 'merchant_id');
+    }
+
+    public function payouts()
+    {
+        return $this->hasMany(Payout::class, 'merchant_id');
+    }
+
+    public function walletHistories()
+    {
+        return $this->hasMany(MerchantWalletHistory::class, 'merchant_id');
     }
 
     // Relasi ke paguyuban

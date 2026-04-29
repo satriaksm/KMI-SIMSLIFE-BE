@@ -24,6 +24,9 @@ return Application::configure(basePath: dirname(__DIR__))
             AllowOptions::class,
             HandleCors::class,
         ]);
+        $middleware->validateCsrfTokens(except: [
+            '/webhook/xendit'
+        ]);
 
         // Enable Sanctum SPA (cookie-based) authentication for API routes.
         // NOTE: Do not prepend CSRF middleware to the API group; Sanctum's stateful stack

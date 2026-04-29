@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use Carbon\Carbon;
-use App\Models\Address;
 use App\Models\Merchant;
 use Illuminate\Support\Arr;
 use App\Helpers\ApiResponse;
@@ -153,7 +152,7 @@ class MerchantController extends Controller
             'updated_at',
             // Informasi sensitif – tidak boleh tampil di publik
             'NPWP',
-            'bank_name',
+            'bank_code',
             'bank_account_number',
             'bank_account_name',
         ]);
@@ -202,7 +201,7 @@ class MerchantController extends Controller
 
                 // Informasi pajak & bank (opsional saat pendaftaran)
                 'NPWP' => ['nullable', 'string', 'max:30'],
-                'bank_name' => ['nullable', 'string', 'max:100'],
+                'bank_code' => ['nullable', 'string', 'max:100'],
                 'bank_account_number' => ['nullable', 'string', 'max:50'],
                 'bank_account_name' => ['nullable', 'string', 'max:255'],
             ],
@@ -255,7 +254,7 @@ class MerchantController extends Controller
                 'operational_hours' => $operationalHours,
 
                 'NPWP' => $validated['NPWP'] ?? null,
-                'bank_name' => $validated['bank_name'] ?? null,
+                'bank_code' => $validated['bank_code'] ?? null,
                 'bank_account_number' => $validated['bank_account_number'] ?? null,
                 'bank_account_name' => $validated['bank_account_name'] ?? null,
             ]);
@@ -370,7 +369,7 @@ class MerchantController extends Controller
 
             // Informasi pajak & bank
             'NPWP' => ['nullable', 'string', 'max:30'],
-            'bank_name' => ['nullable', 'string', 'max:100'],
+            'bank_code' => ['nullable', 'string', 'max:100'],
             'bank_account_number' => ['nullable', 'string', 'max:50'],
             'bank_account_name' => ['nullable', 'string', 'max:255'],
         ], [
@@ -392,7 +391,7 @@ class MerchantController extends Controller
                 'description' => $validated['description'] ?? null,
 
                 'NPWP' => ($validated['NPWP'] ?? '') !== '' ? $validated['NPWP'] : null,
-                'bank_name' => ($validated['bank_name'] ?? '') !== '' ? $validated['bank_name'] : null,
+                'bank_code' => ($validated['bank_code'] ?? '') !== '' ? $validated['bank_code'] : null,
                 'bank_account_number' => ($validated['bank_account_number'] ?? '') !== '' ? $validated['bank_account_number'] : null,
                 'bank_account_name' => ($validated['bank_account_name'] ?? '') !== '' ? $validated['bank_account_name'] : null,
             ]);

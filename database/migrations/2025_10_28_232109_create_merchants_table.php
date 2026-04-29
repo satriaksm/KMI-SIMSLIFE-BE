@@ -27,10 +27,12 @@ return new class extends Migration {
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->onDelete('set null');
             $table->timestamp('response_at')->nullable();
             $table->string('NPWP')->nullable();
-            $table->string('bank_name')->nullable();
+            $table->string('bank_code')->nullable(); // BCA, BRI (WAJIB untuk Xendit)
             $table->string('bank_account_number')->nullable();
             $table->string('bank_account_name')->nullable();
-            $table->string('midtrans_sub_account_id')->nullable();
+            $table->decimal('balance_available', 15, 2)->default(0);
+            $table->decimal('balance_pending', 15, 2)->default(0);
+            $table->timestamp('last_payout_at')->nullable();
 
             $table->timestamps();
 

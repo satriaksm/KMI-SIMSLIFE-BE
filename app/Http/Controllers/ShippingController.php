@@ -72,11 +72,15 @@ class ShippingController extends Controller
 
         // Get customer address
         $customerAddress = null;
+        $userAddressableTypes = array_values(array_unique([
+            $user->getMorphClass(),
+            get_class($user),
+        ]));
         if ($request->filled('address_id')) {
             $customerAddress = Address::query()
                 ->where('id', $request->integer('address_id'))
                 ->where('addressable_id', $user->id)
-                ->where('addressable_type', get_class($user))
+                ->whereIn('addressable_type', $userAddressableTypes)
                 ->first();
         } else {
             $customerAddress = $user->primaryAddress()->first();

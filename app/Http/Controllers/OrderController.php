@@ -11,16 +11,17 @@ use App\Models\Product;
 use App\Models\ProductOrderItem;
 use App\Models\ProductOrderItemAddon;
 use App\Models\ShippingSetting;
+use App\Services\XenditInvoiceService;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Midtrans\Config as MidtransConfig;
-use Midtrans\Snap;
 
 class OrderController extends Controller
 {
+    public function __construct(private readonly XenditInvoiceService $xenditInvoiceService) {}
+
     public function customerIndex(Request $request)
     {
         $user = Auth::user();
@@ -278,32 +279,35 @@ class OrderController extends Controller
             return ApiResponse::error('Merchant cart tidak valid', 422);
         }
 
+        $deliveryType = (string) $request->input('delivery_type', 'pickup');
+        $userAddressableTypes = array_values(array_unique([
+            $user->getMorphClass(),
+            get_class($user),
+        ]));
+
         $address = null;
         if ($request->filled('address_id')) {
             $address = Address::query()
                 ->where('id', $request->integer('address_id'))
                 ->where('addressable_id', $user->id)
-                ->where('addressable_type', get_class($user))
+                ->whereIn('addressable_type', $userAddressableTypes)
                 ->with(['province', 'city', 'district', 'village'])
                 ->first();
-        } else {
+        } elseif ($deliveryType === 'delivery') {
             $address = $user->primaryAddress()
                 ->with(['province', 'city', 'district', 'village'])
                 ->first();
         }
 
-        if (!$address) {
+        if ($deliveryType === 'delivery' && !$address) {
             return ApiResponse::error('Alamat tidak ditemukan', 422);
         }
 
         $order = null;
-        $snapToken = null;
-        $snapRedirectUrl = null;
-
-        $deliveryType = (string) $request->input('delivery_type', 'pickup');
+        $payment = null;
 
         try {
-            DB::transaction(function () use ($request, $cart, $user, $address, $deliveryType, &$order) {
+            DB::transaction(function () use ($request, $cart, $user, $address, $deliveryType, &$order, &$payment) {
                 $orderCode = $this->generateOrderCode();
 
                 $productSubtotal = 0;
@@ -327,16 +331,20 @@ class OrderController extends Controller
                 }
 
                 $grossAmount = $subtotal - $discountTotal + $deliveryFee;
+                $platformFee = 0;
+                $netAmount = max(0, $grossAmount - $platformFee);
 
                 $order = Order::query()->create([
-                    'address_id' => $address->id,
+                    'address_id' => $address?->id,
                     'user_id' => $user->id,
                     'merchant_id' => $cart->merchant_id,
                     'voucher_id' => $request->input('voucher_id'),
                     'order_code' => $orderCode,
                     'subtotal' => $subtotal,
                     'discount_total' => $discountTotal,
+                    'platform_fee' => $platformFee,
                     'gross_amount' => $grossAmount,
+                    'net_amount' => $netAmount,
                     'delivery_fee_snapshot' => $deliveryFee,
                     'delivery_type' => $deliveryType,
                     'status' => 'pending',
@@ -347,8 +355,8 @@ class OrderController extends Controller
                     'city_name_snapshot' => (string) ($address->city?->name ?? ''),
                     'district_name_snapshot' => (string) ($address->district?->name ?? ''),
                     'village_name_snapshot' => (string) ($address->village?->name ?? ''),
-                    'latitude_snapshot' => $address->latitude,
-                    'longitude_snapshot' => $address->longitude,
+                    'latitude_snapshot' => $address?->latitude,
+                    'longitude_snapshot' => $address?->longitude,
                 ]);
 
                 foreach ($cart->items as $cartItem) {
@@ -381,16 +389,13 @@ class OrderController extends Controller
                         ]);
                     }
                 }
+
+                $payment = $this->xenditInvoiceService->createOrGetPendingInvoice($order);
             });
 
-            if (!$order instanceof Order) {
+            if (!$order instanceof Order || !$payment) {
                 return ApiResponse::error('Gagal membuat order', 500);
             }
-
-            $this->configureMidtrans();
-            $snapPayload = $this->buildMidtransSnapPayload($order);
-            $snapToken = Snap::getSnapToken($snapPayload);
-            $snapRedirectUrl = Snap::getSnapUrl($snapPayload);
         } catch (\Throwable $e) {
             return ApiResponse::error('Gagal checkout order', 500, [
                 'error' => $e->getMessage(),
@@ -403,123 +408,12 @@ class OrderController extends Controller
 
         return ApiResponse::success([
             'order' => $order->load(['items.addons']),
-            'midtrans' => [
-                'snap_token' => $snapToken,
-                'redirect_url' => $snapRedirectUrl,
+            'xendit' => [
+                'payment_id' => $payment?->id,
+                'external_id' => $payment?->external_id,
+                'invoice_url' => $payment?->invoice_url,
             ],
         ], 'Order created');
-    }
-
-    public function midtransNotification(Request $request)
-    {
-        $orderId = (string) $request->input('order_id');
-        $statusCode = (string) $request->input('status_code');
-        $grossAmount = (string) $request->input('gross_amount');
-        $signatureKey = (string) $request->input('signature_key');
-
-        if ($orderId === '' || $statusCode === '' || $grossAmount === '' || $signatureKey === '') {
-            return response()->json(['message' => 'Invalid payload'], 400);
-        }
-
-        $serverKey = (string) config('midtrans.server_key');
-        $expectedSignature = hash('sha512', $orderId . $statusCode . $grossAmount . $serverKey);
-
-        if (!hash_equals($expectedSignature, $signatureKey)) {
-            return response()->json(['message' => 'Invalid signature'], 403);
-        }
-
-        $order = Order::query()->where('order_code', $orderId)->first();
-        if (!$order) {
-            return response()->json(['message' => 'Order not found'], 404);
-        }
-
-        $transactionStatus = (string) $request->input('transaction_status');
-        $fraudStatus = (string) $request->input('fraud_status');
-
-        if (in_array($transactionStatus, ['capture', 'settlement'], true)) {
-            if ($fraudStatus === 'challenge') {
-                // keep pending (manual review)
-                $order->status = 'pending';
-            } else {
-                $order->status = 'paid';
-                $order->paid_at = now();
-            }
-        } elseif (in_array($transactionStatus, ['cancel', 'deny', 'expire'], true)) {
-            $order->status = 'cancelled';
-            $order->cancelled_at = now();
-        } elseif ($transactionStatus === 'pending') {
-            $order->status = 'pending';
-        }
-
-        $order->save();
-
-        return response()->json(['message' => 'OK']);
-    }
-
-    private function configureMidtrans(): void
-    {
-        MidtransConfig::$serverKey = config('midtrans.server_key');
-        MidtransConfig::$isProduction = (bool) config('midtrans.is_production');
-        MidtransConfig::$isSanitized = (bool) config('midtrans.is_sanitized');
-        MidtransConfig::$is3ds = (bool) config('midtrans.is_3ds');
-    }
-
-    private function buildMidtransSnapPayload(Order $order): array
-    {
-        $order->loadMissing(['items.addons', 'user']);
-
-        $grossAmount = (int) round((float) $order->gross_amount);
-        if ($grossAmount < 1) {
-            $grossAmount = 1;
-        }
-
-        $itemDetails = [];
-
-        foreach ($order->items as $item) {
-            $productName = (string) ($item->product_name_snapshot ?: 'Product');
-            $itemDetails[] = [
-                'id' => 'product-' . $item->product_id,
-                'price' => (int) round((float) $item->unit_price_snapshot),
-                'quantity' => (int) $item->quantity,
-                'name' => Str::limit($productName, 50, ''),
-            ];
-
-            foreach ($item->addons as $addon) {
-                $addonName = (string) ($addon->addon_name_snapshot ?: 'Addon');
-                $itemDetails[] = [
-                    'id' => 'addon-' . $addon->addon_id,
-                    'price' => (int) round((float) $addon->addon_price_snapshot),
-                    'quantity' => (int) $item->quantity,
-                    'name' => Str::limit($addonName, 50, ''),
-                ];
-            }
-        }
-
-        // Add delivery fee as line item if applicable
-        $deliveryFee = (int) round((float) $order->delivery_fee_snapshot);
-        if ($deliveryFee > 0) {
-            $itemDetails[] = [
-                'id' => 'delivery-fee',
-                'price' => $deliveryFee,
-                'quantity' => 1,
-                'name' => 'Biaya Pengiriman',
-            ];
-        }
-
-        $customerDetails = [
-            'first_name' => (string) ($order->user_name_snapshot ?? ''),
-            'email' => (string) ($order->user?->email ?? ''),
-            'phone' => (string) ($order->user_phone_snapshot ?? ''),
-        ];
-
-        return [
-            'transaction_details' => [
-                'order_id' => (string) $order->order_code,
-                'gross_amount' => $grossAmount,
-            ],
-            'item_details' => $itemDetails,
-            'customer_details' => $customerDetails,
-        ];
     }
 
     /**
