@@ -51,6 +51,11 @@ class MerchantSeeder extends Seeder
         $paguyubans = Paguyuban::where('is_active', true)->get();
         $adminUser = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->first();
 
+        if ($segmentations->isEmpty()) {
+            $this->command->warn('No segmentations found. Skipping merchant seeding.');
+            return;
+        }
+
         $merchantCount = 0;
 
         // Create approved merchants (1-3 per user randomly)
@@ -64,7 +69,7 @@ class MerchantSeeder extends Seeder
                     ->create([
                         'user_id' => $user->id,
                         'segmentation_id' => $segmentations->random()->id,
-                        'paguyuban_id' => $paguyubans->random()?->id,
+                        'paguyuban_id' => $paguyubans->isNotEmpty() ? $paguyubans->random()?->id : null,
                         'reviewed_by' => $adminUser?->id,
                         'operational_hours' => $operationalHours,
                     ]);

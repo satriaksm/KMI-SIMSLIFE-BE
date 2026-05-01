@@ -42,7 +42,7 @@ class Merchant extends Model
         'operational_hours' => 'array',
     ];
 
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now'];
+    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'address', 'alamat'];
 
     protected static function boot()
     {
@@ -135,6 +135,7 @@ class Merchant extends Model
         return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
+
     // Relasi ke paguyuban
     public function paguyuban(): BelongsTo
     {
@@ -159,6 +160,19 @@ class Merchant extends Model
         return $this->morphOne(Address::class, 'addressable')
             ->where('label', 'utama')
             ->latest();
+    }
+
+    // Accessor alamat utama (string singkat), diambil dari primaryAddress.detail
+    public function getAddressAttribute(): ?string
+    {
+        $primary = $this->primaryAddress;
+        return $primary?->detail;
+    }
+
+    // Alias "alamat" untuk kompatibilitas FE lama
+    public function getAlamatAttribute(): ?string
+    {
+        return $this->address;
     }
 
     // Accessor untuk Logo URL
@@ -260,5 +274,11 @@ class Merchant extends Model
     public function reports()
     {
         return $this->morphMany(ContentReport::class, 'reportable');
+    }
+
+    // 🆕 Rating System
+    public function ratings(): HasMany
+    {
+        return $this->hasMany(Rating::class);
     }
 }

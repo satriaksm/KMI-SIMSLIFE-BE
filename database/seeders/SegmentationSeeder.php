@@ -15,7 +15,9 @@ class SegmentationSeeder extends Seeder
         ];
 
         foreach ($segmentations as $segmentation) {
-            DB::table('segmentations')->insert($segmentation);
+            DB::table('segmentations')->insertOrIgnore($segmentation);
         }
+        
+        $this->command->info('Segmentations seeded successfully!');
     }
 }

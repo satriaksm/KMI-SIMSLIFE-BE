@@ -116,4 +116,15 @@ class Product extends Model
     {
         return $this->morphMany(ContentReport::class, 'reportable');
     }
+
+    // 🆕 Rating System
+    public function ratings(): MorphMany
+    {
+        return $this->morphMany(Rating::class, 'rateable');
+    }
+
+    public function ratingSummary(): MorphOne
+    {
+        return $this->morphOne(RatingSummary::class, 'rateable');
+    }
 }
