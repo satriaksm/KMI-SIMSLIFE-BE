@@ -253,4 +253,12 @@ class Merchant extends Model
     {
         return $query->where('status', 'rejected');
     }
+
+    /**
+     * ✅ NEW: Reports about this merchant
+     */
+    public function reports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
+    }
 }

@@ -16,7 +16,6 @@ use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PaguyubanController;
-use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\SegmentationController;
 use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\Admin\AdminUserController;
@@ -32,6 +31,7 @@ use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\ReportController;
 
 // ============================================================
 // HEALTH CHECK

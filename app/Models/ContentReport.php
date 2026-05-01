@@ -2,10 +2,10 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class ContentReport extends Model
 {
@@ -13,25 +13,29 @@ class ContentReport extends Model
 
     protected $fillable = [
         'user_id',
-        'report_reason_id',
         'reportable_type',
         'reportable_id',
+        'report_reason_id',
         'report_comment',
         'status',
         'reviewed_by',
         'admin_note',
         'reviewed_at',
-    ];
-
-    protected $guarded = [
-        'id',
+        // ✅ NEW: Forwarding fields
+        'forwarded_to',
+        'forwarded_by',
+        'forwarded_at',
+        'forward_message',
+        // ✅ NEW: Action tracking
+        'action_taken',
     ];
 
     protected $casts = [
         'reviewed_at' => 'datetime',
+        'forwarded_at' => 'datetime',
     ];
 
-    // Relations
+    // ✅ Relationships
     public function reporter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
@@ -52,7 +56,18 @@ class ContentReport extends Model
         return $this->morphTo();
     }
 
-    // Scopes
+    // ✅ NEW: Forwarding relationships
+    public function forwardedToUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'forwarded_to');
+    }
+
+    public function forwardedByAdmin(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'forwarded_by');
+    }
+
+    // ✅ Scopes
     public function scopePending($query)
     {
         return $query->where('status', 'pending');
@@ -71,5 +86,13 @@ class ContentReport extends Model
     public function scopeDismissed($query)
     {
         return $query->where('status', 'dismissed');
+    }
+
+    // ✅ Helper: Check if "Lainnya" reason requires comment
+    public function requiresComment(): bool
+    {
+        return $this->reason && 
+               strtolower($this->reason->reason_title) === 'lainnya' &&
+               empty($this->report_comment);
     }
 }

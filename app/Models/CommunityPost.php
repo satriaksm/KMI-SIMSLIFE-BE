@@ -165,4 +165,12 @@ class CommunityPost extends Model
     {
         return $query->latest('created_at');
     }
+
+    /**
+     * ✅ NEW: Reports about this post
+     */
+    public function reports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
+    }
 }

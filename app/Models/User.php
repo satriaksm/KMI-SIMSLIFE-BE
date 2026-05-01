@@ -238,4 +238,28 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $query->whereIn('status', ['suspended', 'inactive']);
     }
+
+    /**
+     * ✅ NEW: User's submitted reports
+     */
+    public function submittedReports()
+    {
+        return $this->hasMany(ContentReport::class, 'user_id');
+    }
+
+    /**
+     * ✅ NEW: Reports about this user
+     */
+    public function receivedReports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
+    }
+
+    /**
+     * ✅ NEW: Reports forwarded to this user
+     */
+    public function forwardedReports()
+    {
+        return $this->hasMany(ContentReport::class, 'forwarded_to');
+    }
 }
