@@ -6,9 +6,6 @@ use App\Http\Controllers\JasaController;
 use App\Http\Controllers\JasaCategoryController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PackageController;
-use App\Http\Controllers\JasaCategoryController;
-use App\Http\Controllers\OrderController;
-use App\Http\Controllers\PackageController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\SearchController;
@@ -18,6 +15,7 @@ use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\HomeController;
 use App\Http\Controllers\PaguyubanController;
 use App\Http\Controllers\SegmentationController;
 use App\Http\Controllers\CommunityPostController;
@@ -35,10 +33,9 @@ use App\Http\Controllers\Product\ProductOptionValueImageController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ReportController;
-use App\Http\Controllers\Product\ProductOptionValueImageController;
-use App\Http\Controllers\ChatController;
-use App\Http\Controllers\UserController;
 use App\Http\Controllers\RatingController;
+use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\Public\PublicProfileController;
 use App\Models\Conversation;
 
 // ============================================================
@@ -134,24 +131,30 @@ Route::prefix('public')->name('public.')->group(function () {
 
     //  Homepage specific endpoints
     Route::prefix('home')->name('home.')->group(function () {
-        Route::get('recommended-merchants', [\App\Http\Controllers\HomeController::class, 'recommendedMerchants'])
+        Route::get('recommended-merchants', [HomeController::class, 'recommendedMerchants'])
             ->name('recommended-merchants');
-        Route::get('map-carousel-merchants', [\App\Http\Controllers\HomeController::class, 'mapCarouselMerchants'])
+        Route::get('map-carousel-merchants', [HomeController::class, 'mapCarouselMerchants'])
             ->name('map-carousel-merchants');
-        Route::get('statistics', [\App\Http\Controllers\HomeController::class, 'statistics'])
+        Route::get('statistics', [HomeController::class, 'statistics'])
             ->name('statistics');
     });
 
-    //  Homepage specific endpoints
-    Route::prefix('home')->name('home.')->group(function () {
-        Route::get('recommended-merchants', [\App\Http\Controllers\HomeController::class, 'recommendedMerchants'])
-            ->name('recommended-merchants');
-        Route::get('map-carousel-merchants', [\App\Http\Controllers\HomeController::class, 'mapCarouselMerchants'])
-            ->name('map-carousel-merchants');
-        Route::get('statistics', [\App\Http\Controllers\HomeController::class, 'statistics'])
-            ->name('statistics');
-    });
+    // Public Profiles
+    Route::get('profiles/{id}', [PublicProfileController::class, 'show'])->name('profiles.show');
+
 });
+
+// ============================================================
+// ASSETS & MEDIA (Public Streaming)
+// ============================================================
+Route::get('community-images/{image}', [CommunityPostController::class, 'showImage'])->name('community-images.show');
+Route::get('community_images/{image}', [CommunityPostController::class, 'showImage'])->name('community_images.show');
+Route::get('user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])->name('user.profile');
+Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])->name('event-banners.show');
+Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])->name('event_banners.show');
+Route::get('merchant-logo/{merchant}', [AdminMerchantController::class, 'showLogo'])->name('merchant.logo');
+Route::get('merchant-banner/{merchant}', [AdminMerchantController::class, 'showBanner'])->name('merchant.banner');
+
 
 
 // Public Community Posts (harusnya masuk ke prefix public)
@@ -175,11 +178,9 @@ Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot']
 //     ->name('images.product-option-value.show');
 
 Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
-Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile-pictures.show');
 
 // Backward/alternate naming (underscore) for clients that expect it
-Route::get('profile_pictures/{user}', [UserController::class, 'profilePictureShow'])
 Route::get('profile_pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile_pictures.show');
 
@@ -271,7 +272,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('community.comments.destroy');
         Route::get('/my-comments', [PostCommentController::class, 'myComments'])
             ->name('community.comments.my-comments');
-        Route::delete('/', 'destroy')->name('profile.destroy');
+    });
+
+    // ===== REPORTS (USER) =====
+    Route::get('/report-reasons', [ReportController::class, 'reasons'])->name('reports.reasons');
+    Route::prefix('reports')->name('reports.')->group(function () {
+        Route::get('/my', [ReportController::class, 'myReports'])->name('my');
+        Route::get('/{id}', [ReportController::class, 'show'])->whereNumber('id')->name('show');
+        Route::post('/', [ReportController::class, 'store'])->name('store');
     });
 
     // ===== RATINGS (for all authenticated users) =====
@@ -336,7 +344,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
         //     ->whereNumber('merchantId');
 
         Route::prefix('merchant/{merchant:slug}')->group(function () {
-        Route::prefix('merchant/{merchant:slug}')->group(function () {
 
             Route::get(
                 'dashboard',
@@ -353,23 +360,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
             //     Route::post('/{id}', [EventController::class, 'approvalByMerchant'])->name('approval');
             // });
-
             Route::prefix('products')->name('merchant.products.')->group(function () {
                 Route::get('', [ProductController::class, 'index'])->name('index');
                 Route::post('', [ProductController::class, 'store'])->name('store');
 
                 Route::post('bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
                 Route::post('bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
-                Route::post('bulk-delete', [ProductController::class, 'bulkDelete'])->name('bulk-delete');
-                Route::post('bulk-update-status', [ProductController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
 
-                Route::get('export/excel', [ProductController::class, 'exportExcel']);
-                Route::get('export/pdf', [ProductController::class, 'exportPdf']);
-
-                Route::prefix('{product:slug}')->group(function () {
-                    Route::get('', [ProductController::class, 'show'])
-                        ->where('product', '^[a-z0-9-]+$')
-                        ->name('show');
                 Route::get('export/excel', [ProductController::class, 'exportExcel']);
                 Route::get('export/pdf', [ProductController::class, 'exportPdf']);
 
@@ -385,13 +382,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                     Route::patch('', [ProductController::class, 'update'])
                         ->where('product', '^[a-z0-9-]+$')
                         ->name('update.patch');
-                    Route::patch('', [ProductController::class, 'update'])
-                        ->where('product', '^[a-z0-9-]+$')
-                        ->name('update.patch');
 
-                    Route::delete('', [ProductController::class, 'destroy'])
-                        ->where('product', '^[a-z0-9-]+$')
-                        ->name('destroy');
                     Route::delete('', [ProductController::class, 'destroy'])
                         ->where('product', '^[a-z0-9-]+$')
                         ->name('destroy');
@@ -512,12 +503,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::put('/{id}', [AdminEventController::class, 'update'])->name('update');
             Route::delete('/{id}', [AdminEventController::class, 'destroy'])->name('destroy');
             Route::post('/{event}/invite-merchants', [AdminEventController::class, 'inviteMerchants'])->name('invite-merchants');
-            Route::post('/{event}/vouchers/attach', [AdminEventController::class, 'attachVoucher']);
+            Route::post('/{event}/vouchers/attach', [AdminEventController::class, 'attachVoucher'])->name('vouchers.attach');
             Route::delete('/{event}/vouchers/{voucher}', [AdminEventController::class, 'detachVoucher']);
             Route::get('/vouchers/available', [AdminEventController::class, 'availableVouchers']);
             Route::delete('/{event}/merchants/{merchant}', [AdminEventController::class, 'removeMerchant']);
             Route::post('/{event}/merchants/{merchant}/restore', [AdminEventController::class, 'restoreMerchant']);
             Route::get('/{event}/merchants/removed', [AdminEventController::class, 'removedMerchants']);
+
+            // Removed streaming routes from here to public area
         });
 
         // ===== VOUCHER MANAGEMENT =====
@@ -534,7 +527,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
         Route::prefix('reports')->name('reports.')->group(function () {
             Route::get('/', [ContentReportController::class, 'index'])->name('index');
+            Route::get('/export-pdf', [ContentReportController::class, 'exportPdf'])->name('export-pdf');
             Route::get('/{id}', [ContentReportController::class, 'show'])->name('show');
+            Route::get('/{id}/export-pdf', [ContentReportController::class, 'exportReportDetailPdf'])->name('exportReportDetailPdf');
             Route::put('/{id}', [ContentReportController::class, 'update'])->name('update');
             Route::patch('/{id}/review', [ContentReportController::class, 'review'])->name('review');
             Route::delete('/{id}', [ContentReportController::class, 'destroy'])->name('destroy');
@@ -558,25 +553,3 @@ Route::middleware(['auth', 'verified'])->group(function () {
         });
     });
 });
-
-// Event banner streaming route (should already exist)
-Route::get('event-banners/{event}', [AdminEventController::class, 'showBanner'])
-    ->name('event-banners.show');
-
-Route::get('event_banners/{event}', [AdminEventController::class, 'showBanner'])
-    ->name('event_banners.show');
-
-Route::get('/merchant-logo/{merchant}', [AdminMerchantController::class, 'showLogo'])
-    ->name('merchant.logo');
-
-// User profile picture streaming route
-Route::get('/user-profile/{user}', [AdminUserController::class, 'showProfilePicture'])
-    ->name('user.profile');
-
-// Community post image streaming route
-Route::get('community-images/{image}', [CommunityPostController::class, 'showImage'])
-    ->name('community-images.show');
-
-// Backward compatibility (underscore naming)
-Route::get('community_images/{image}', [CommunityPostController::class, 'showImage'])
-    ->name('community_images.show');

@@ -13,8 +13,13 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\Product;
 use App\Models\CommunityPost;
 use App\Models\PostComment;
+use App\Models\Merchant;
+use App\Models\Jasa;
+use App\Models\User;
 use App\Notifications\ReportNotification;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class ContentReportController extends Controller
 {
@@ -35,8 +40,9 @@ class ContentReportController extends Controller
         }
 
         // Filter by type
-        if ($request->has('reportable_type')) {
-            $query->where('reportable_type', $request->reportable_type);
+        if ($request->filled('reportable_type')) {
+            $types = $this->resolveReportableTypeFilter($request->reportable_type);
+            $query->whereIn('reportable_type', $types);
         }
 
         // Search
@@ -59,11 +65,65 @@ class ContentReportController extends Controller
         $report = ContentReport::with([
             'reporter:id,name,email,phone',
             'reviewer:id,name',
-            'reason:id,reason_title,applies_to',
-            'reportable'
+            'reason:id,reason_title,reason_description,applies_to',
+            'reportable' => function (MorphTo $morphTo) {
+                $morphTo->morphWith([
+                    Product::class => ['images', 'merchant'],
+                    CommunityPost::class => ['images', 'user'],
+                    PostComment::class => ['user'],
+                    Merchant::class => ['user'],
+                    Jasa::class => ['images', 'merchant'],
+                    User::class => [],
+                ]);
+            },
         ])->findOrFail($id);
 
         return response()->json(['data' => $report]);
+    }
+
+    /**
+     * Update report fields (admin note/status)
+     */
+    public function update(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'status' => 'nullable|in:pending,in_review,resolved,dismissed',
+            'admin_note' => 'nullable|string|max:500',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $report = ContentReport::findOrFail($id);
+
+        $updates = [];
+
+        if ($request->filled('status')) {
+            $updates['status'] = $request->status;
+
+            if ($request->status !== 'pending') {
+                $updates['reviewed_by'] = Auth::id();
+                $updates['reviewed_at'] = now();
+            } else {
+                $updates['reviewed_by'] = null;
+                $updates['reviewed_at'] = null;
+            }
+        }
+
+        if ($request->has('admin_note')) {
+            $updates['admin_note'] = $request->admin_note;
+        }
+
+        $report->update($updates);
+
+        return response()->json([
+            'message' => 'Report updated successfully',
+            'data' => $report->fresh()->load(['reporter', 'reviewer', 'reason']),
+        ]);
     }
 
     /**
@@ -591,6 +651,120 @@ class ContentReportController extends Controller
     }
 
     // ============================================
+    // EXPORT METHODS
+    // ============================================
+
+    /**
+     * Export list of reports to PDF
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $admin = $request->user();
+
+            $query = ContentReport::with([
+                'reporter:id,name,email',
+                'reviewer:id,name',
+                'reason:id,reason_title,reason_description,applies_to',
+            ]);
+
+            if ($request->filled('status')) {
+                $query->where('status', $request->status);
+            }
+
+            if ($request->filled('reportable_type')) {
+                $types = $this->resolveReportableTypeFilter($request->reportable_type);
+                $query->whereIn('reportable_type', $types);
+            }
+
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->where('report_comment', 'like', "%{$search}%");
+            }
+
+            $reports = $query->latest()->limit(500)->get();
+
+            $metadata = [
+                'generated_at'       => now()->format('d F Y, H:i:s'),
+                'generated_by'       => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'total_reports'      => $reports->count(),
+                'filters' => [
+                    'status' => $request->input('status') ?: 'Semua',
+                    'type'   => $request->input('reportable_type') ?: 'Semua',
+                    'search' => $request->input('search') ?: '-',
+                ],
+            ];
+
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            if (file_exists($logoPath)) {
+                $logoBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath));
+            }
+
+            $pdf = Pdf::loadView('exports.admin.admin-report', [
+                'reports'    => $reports,
+                'metadata'   => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            return $pdf->download('content-reports-' . now()->format('Ymd-His') . '.pdf');
+        } catch (\Exception $e) {
+            Log::error('[ContentReport] Export PDF failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Gagal membuat laporan PDF'], 500);
+        }
+    }
+
+    /**
+     * Export single report detail to PDF
+     */
+    public function exportReportDetailPdf(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+
+            $report = ContentReport::with([
+                'reporter:id,name,email,phone',
+                'reviewer:id,name',
+                'reason:id,reason_title,reason_description,applies_to',
+            ])->findOrFail($id);
+
+            $metadata = [
+                'generated_at'       => now()->format('d F Y, H:i:s'),
+                'generated_by'       => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+            ];
+
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            if (file_exists($logoPath)) {
+                $logoBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath));
+            }
+
+            $pdf = Pdf::loadView('exports.admin.admin-report-detail', [
+                'report'     => $report,
+                'metadata'   => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'portrait')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            return $pdf->download('report-detail-' . $report->id . '-' . now()->format('Ymd-His') . '.pdf');
+        } catch (\Exception $e) {
+            Log::error('[ContentReport] Export detail PDF failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Gagal membuat laporan PDF'], 500);
+        }
+    }
+
+    // ============================================
     // HELPER METHODS
     // ============================================
 
@@ -617,6 +791,25 @@ class ContentReportController extends Controller
         return null;
     }
 
+    private function resolveReportableTypeFilter(string $type): array
+    {
+        $key = strtolower(class_basename($type));
+
+        $map = [
+            'product' => [Product::class],
+            'merchant' => [Merchant::class],
+            'post' => [CommunityPost::class],
+            'communitypost' => [CommunityPost::class],
+            'post_comment' => [PostComment::class],
+            'postcomment' => [PostComment::class],
+            'service' => [Jasa::class, 'jasa'],
+            'jasa' => [Jasa::class, 'jasa'],
+            'user' => [User::class],
+        ];
+
+        return $map[$key] ?? [$type];
+    }
+
     private function normalizeReportableType(string $fullClass): string
     {
         $type = strtolower(class_basename($fullClass));
@@ -624,6 +817,7 @@ class ContentReportController extends Controller
         return match($type) {
             'communitypost' => 'post',
             'postcomment' => 'post_comment',
+            'jasa' => 'service',
             default => $type,
         };
     }
