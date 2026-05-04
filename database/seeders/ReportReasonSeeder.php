@@ -44,26 +44,26 @@ class ReportReasonSeeder extends Seeder
 
             // Merchant Reports
             [
-                'reason_title' => 'Merchant tidak responsif',
-                'reason_description' => 'Merchant tidak merespons pertanyaan atau pesanan',
+                'reason_title' => 'UMKM tidak responsif',
+                'reason_description' => 'UMKM tidak merespons pertanyaan atau pesanan',
                 'applies_to' => 'merchant',
                 'is_active' => true,
             ],
             [
                 'reason_title' => 'Merchant melanggar kebijakan',
-                'reason_description' => 'Merchant melakukan tindakan yang melanggar aturan platform',
+                'reason_description' => 'UMKM melakukan tindakan yang melanggar aturan platform',
                 'applies_to' => 'merchant',
                 'is_active' => true,
             ],
             [
                 'reason_title' => 'Informasi palsu',
-                'reason_description' => 'Informasi merchant tidak akurat atau palsu',
+                'reason_description' => 'Informasi UMKM tidak akurat atau palsu',
                 'applies_to' => 'merchant',
                 'is_active' => true,
             ],
             [
                 'reason_title' => 'Penipuan',
-                'reason_description' => 'Merchant diduga melakukan penipuan terhadap pembeli',
+                'reason_description' => 'UMKM diduga melakukan penipuan terhadap pembeli',
                 'applies_to' => 'merchant',
                 'is_active' => true,
             ],
