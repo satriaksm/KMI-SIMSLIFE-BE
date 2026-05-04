@@ -19,7 +19,7 @@ return new class extends Migration
             // Optional offer fields
             $table->unsignedBigInteger('jasa_id')->nullable();
             $table->integer('offer_price')->nullable();
-            $table->string('offer_status')->nullable(); // pending, accepted, rejected, cancelled
+            $table->enum('offer_status', ['pending', 'accepted', 'rejected'])->nullable();
 
             $table->timestamp('read_at')->nullable();
             $table->timestamps();

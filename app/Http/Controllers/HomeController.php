@@ -62,24 +62,23 @@ class HomeController extends Controller
 
     /**
      * Get merchants for map carousel
-     * ✅ UPDATED: Handle optional limit parameter
      */
     public function mapCarouselMerchants(Request $request)
     {
         try {
-            // ✅ Jika tidak ada limit, tampilkan semua (atau set default tinggi)
             $limit = $request->input('limit') ? (int)$request->input('limit') : null;
 
             $query = Merchant::query()
                 ->where('merchants.status', 'approved')
                 ->with(['segmentation', 'primaryAddress'])
+                ->whereNotNull('logo_path')
+                ->whereNotNull('cover_path')
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
                           ->whereNotNull('longitude');
                 })
                 ->inRandomOrder();
 
-            // ✅ Hanya apply limit jika ada
             if ($limit) {
                 $query->limit($limit);
             }

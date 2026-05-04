@@ -508,11 +508,63 @@ class VoucherController extends Controller
             'voucher_status' => ['required', 'in:active,inactive'],
         ]);
 
-        $voucher->update([
-            'voucher_status' => $data['voucher_status'],
-        ]);
+        // If it's a merchant's own voucher
+        if ((int) $voucher->merchant_id === (int) $merchant->id) {
+            $voucher->update([
+                'voucher_status' => $data['voucher_status'],
+            ]);
+        } else {
+            // It's an event voucher, update the pivot status
+            $voucher->merchantsVoucher()->updateExistingPivot($merchant->id, [
+                'status' => $data['voucher_status'],
+                'activated_at' => $data['voucher_status'] === 'active' ? now() : null,
+            ]);
+        }
 
         return ApiResponse::success($voucher->fresh(), 'Status voucher berhasil diperbarui.');
+    }
+
+    /**
+     * MERCHANT: Get restricted products for an event voucher
+     */
+    public function getRestrictedProducts(Merchant $merchant, Voucher $voucher)
+    {
+        $this->authorize('view', [$voucher, $merchant]);
+
+        $products = $voucher->restrictedProducts()
+            ->wherePivot('merchant_id', $merchant->id)
+            ->get(['products.id', 'products.name', 'products.slug']);
+
+        return ApiResponse::success($products, 'Daftar produk terlarang berhasil dimuat.');
+    }
+
+    /**
+     * MERCHANT: Set restricted products for an event voucher
+     */
+    public function setRestrictedProducts(Request $request, Merchant $merchant, Voucher $voucher)
+    {
+        $this->authorize('update', [$voucher, $merchant]);
+
+        $data = $request->validate([
+            'product_ids' => ['nullable', 'array'],
+            'product_ids.*' => ['integer', 'exists:products,id'],
+        ]);
+
+        DB::transaction(function () use ($voucher, $merchant, $data) {
+            // Remove existing for this merchant
+            $voucher->restrictedProducts()->wherePivot('merchant_id', $merchant->id)->detach();
+
+            // Attach new
+            if (!empty($data['product_ids'])) {
+                foreach ($data['product_ids'] as $productId) {
+                    $voucher->restrictedProducts()->attach($productId, [
+                        'merchant_id' => $merchant->id
+                    ]);
+                }
+            }
+        });
+
+        return ApiResponse::success(null, 'Pembatasan produk berhasil diperbarui.');
     }
 
 
@@ -646,6 +698,107 @@ class VoucherController extends Controller
                 'usages_count',
                 'user_usages_count',
                 'voucher_end_date',
+            ]);
+        });
+
+        return ApiResponse::success($vouchers, 'Daftar voucher tersedia');
+    }
+
+    /**
+     * PUBLIC: Get available vouchers for a merchant by ID
+     * GET /api/public/merchants/{merchantId}/vouchers
+     * Used by customer during checkout (no auth required)
+     */
+    public function publicVouchersByMerchantId(Request $request, $merchantId)
+    {
+        $merchant = Merchant::find($merchantId);
+        
+        if (!$merchant) {
+            return response()->json([
+                'message' => 'Merchant tidak ditemukan'
+            ], 404);
+        }
+
+        // Get accepted event IDs for this merchant
+        $acceptedEventIds = DB::table('event_merchants')
+            ->select('event_id')
+            ->where('merchant_id', $merchant->id)
+            ->where('status', 'accepted')
+            ->pluck('event_id');
+
+        $query = Voucher::query()
+            ->where(function ($q) use ($merchant, $acceptedEventIds) {
+                $q->where('merchant_id', $merchant->id)
+                    ->orWhereIn('event_id', $acceptedEventIds);
+            })
+            ->active()
+            ->withCount('usages');
+
+        // Filter by minimum purchase amount if provided
+        if ($request->has('amount')) {
+            $amount = (float) $request->amount;
+            $query->where(function ($q) use ($amount) {
+                $q->whereNull('min_purchase_amount')
+                    ->orWhere('min_purchase_amount', '<=', $amount);
+            });
+        }
+
+        // If user is authenticated, count their usage
+        $userId = $request->user()?->id;
+        if ($userId) {
+            $query->withCount([
+                'usages as user_usages_count' => function ($q) use ($userId) {
+                    $q->where('user_id', $userId);
+                }
+            ]);
+        }
+
+        $vouchers = $query->get([
+            'id',
+            'merchant_id',
+            'event_id',
+            'voucher_name',
+            'voucher_code',
+            'voucher_type',
+            'voucher_description',
+            'voucher_end_date',
+            'value',
+            'max_discount_amount',
+            'min_purchase_amount',
+            'usage_limit_per_user',
+            'usage_limit',
+        ]);
+
+        // Filter out vouchers that reached their limit
+        $vouchers = $vouchers->filter(function ($voucher) use ($userId) {
+            $totalUsed = $voucher->usages_count ?? 0;
+
+            // Check total usage limit
+            if ($voucher->usage_limit !== null && $totalUsed >= $voucher->usage_limit) {
+                return false;
+            }
+
+            // Check per-user limit if user is authenticated
+            if ($userId && $voucher->usage_limit_per_user !== null) {
+                $userUsed = $voucher->user_usages_count ?? 0;
+                if ($userUsed >= $voucher->usage_limit_per_user) {
+                    return false;
+                }
+            }
+
+            return true;
+        })->values();
+
+        // Transform response
+        $vouchers->each(function ($voucher) {
+            $voucher->usage = ($voucher->usages_count ?? 0) . ' / ' . ($voucher->usage_limit ?? '∞');
+            $voucher->is_expired = $voucher->voucher_end_date
+                ? Carbon::parse($voucher->voucher_end_date)->isPast()
+                : false;
+
+            $voucher->makeHidden([
+                'usages_count',
+                'user_usages_count',
             ]);
         });
 

@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\Log;
 
 class JasaController extends Controller
 {
@@ -29,6 +30,9 @@ class JasaController extends Controller
         $srcUrl = $isPublic
             ? route('images.show', ['image' => $cover->id])
             : URL::signedRoute('images.show', ['image' => $cover->id], now()->addMinutes(60));
+
+        // Sinkronkan field legacy `image` agar semua endpoint FE konsisten
+        $jasa->setAttribute('image', $cover->image_path);
 
         $jasa->setAttribute('cover_img', [
             'id' => $cover->id,
@@ -90,7 +94,7 @@ class JasaController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Jasa::with(['categories'])
+        $query = Jasa::with(['categories', 'images'])
             // Tampilkan jasa lama di atas, yang baru di urutan terakhir
             ->orderBy('id', 'asc');
 
@@ -103,6 +107,25 @@ class JasaController extends Controller
 
         $jasas->each(function ($jasa) {
             $this->attachCategoryAliases($jasa);
+            
+            // Normalize images for frontend
+            if ($jasa->images && $jasa->images->count() > 0) {
+                $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
+                    || ($jasa->status === null && (bool) $jasa->is_active);
+
+                $jasa->images->transform(function ($image) use ($isPublic) {
+                    $image->path = $image->image_path;
+                    $image->url = $isPublic
+                        ? route('images.show', ['image' => $image->id])
+                        : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+                    $image->src_url = $image->url;
+
+                    $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+                    return $image;
+                });
+
+                $this->attachCoverImg($jasa, $isPublic);
+            }
         });
 
         // Selalu kembalikan array (termasuk [] jika kosong) agar frontend konsisten
@@ -318,22 +341,64 @@ class JasaController extends Controller
     }
 
     /**
+     * PUBLIC: GET /api/public/jasas/{slug}
+     * Detail jasa untuk halaman customer by slug (preferred endpoint).
+     */
+    public function publicShowBySlug($slug)
+    {
+        // Detail jasa untuk customer: hanya tampilkan jasa yang benar-benar dipublish.
+        $jasa = Jasa::with([
+            'categories',
+            'merchant.segmentation',
+            'merchant.primaryAddress',
+            'images',
+        ])
+            ->where(function ($q) {
+                $q->whereIn('status', ['published', 'active'])
+                    ->orWhere(function ($sub) {
+                        $sub->whereNull('status')->where('is_active', true);
+                    });
+            })
+            ->where('slug', $slug)
+            ->first();
+
+        if (!$jasa) {
+            return response()->json(['message' => 'Jasa tidak ditemukan'], 404);
+        }
+
+        $this->attachCategoryAliases($jasa);
+
+        // Normalisasi struktur images untuk FE
+        if ($jasa->images) {
+            $jasa->images->transform(function ($image) {
+                $image->path = $image->image_path;
+                $image->url = route('images.show', ['image' => $image->id]);
+                $image->src_url = $image->url;
+                $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+                return $image;
+            });
+
+            $this->attachCoverImg($jasa, true);
+        }
+
+        return response()->json($jasa);
+    }
+
+    /**
      * PUBLIC: GET /api/public/jasas/{id}
      * Detail jasa untuk halaman customer, termasuk relasi merchant.
      */
     public function publicShow($id)
     {
         // Detail jasa untuk customer: hanya tampilkan jasa yang benar-benar dipublish.
-        // Aturan sama seperti listing publik:
-        // - Skema baru: status = 'published'
-        // - Skema lama: status NULL dan is_active = true
         $jasa = Jasa::with([
             'categories',
             'merchant.segmentation',
+            'merchant.primaryAddress',
             'images',
         ])
             ->where(function ($q) {
-                $q->where('status', 'published')
+                $q->whereIn('status', ['published', 'active'])
                     ->orWhere(function ($sub) {
                         $sub->whereNull('status')->where('is_active', true);
                     });
@@ -347,18 +412,16 @@ class JasaController extends Controller
 
         $this->attachCategoryAliases($jasa);
 
-        // Normalisasi struktur images untuk FE (path, is_cover, display_order)
+        // Normalisasi struktur images untuk FE
         if ($jasa->images) {
             $jasa->images->transform(function ($image) {
                 $image->path = $image->image_path;
                 $image->url = route('images.show', ['image' => $image->id]);
                 $image->src_url = $image->url;
-
                 $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                 return $image;
             });
 
-            // public endpoint => always public URL
             $this->attachCoverImg($jasa, true);
         }
 
@@ -439,10 +502,37 @@ class JasaController extends Controller
             'jasa_subcategory_id' => 'nullable|integer|exists:categories,id',
 
             // Gambar layanan (multiple file) dari Editjasa.vue (opsional)
-            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
+            'images' => 'nullable|array|max:10',
+            'images.*' => 'file|image|mimes:jpg,jpeg,png,webp|max:5120',
         ]);
 
         $data = $validated;
+
+        // Sinkronkan alamat layanan sesuai tipe layanan
+        if (array_key_exists('service_type', $data)) {
+            if ($data['service_type'] === 'at_location') {
+                $merchant = $jasa->merchant;
+                $primary = $merchant?->primary_address;
+
+                $location = trim(implode(', ', array_filter([
+                    data_get($primary, 'detail'),
+                    data_get($primary, 'village'),
+                    data_get($primary, 'district'),
+                    data_get($primary, 'city'),
+                    data_get($primary, 'province'),
+                ])));
+
+                if ($location === '') {
+                    $location = $merchant->address ?? $merchant->alamat ?? '';
+                }
+
+                $data['location_address'] = $location;
+            }
+
+            if ($data['service_type'] === 'online' || $data['service_type'] === 'on_site') {
+                $data['location_address'] = '';
+            }
+        }
 
         // Kategori Jasa disimpan via pivot table `categorizables`
         unset($data['jasa_category_id'], $data['jasa_subcategory_id']);
@@ -571,7 +661,7 @@ class JasaController extends Controller
             // Pembayaran & status
             'payment_methods' => 'nullable|string|max:255',
             'status' => 'required|string|in:draft,active,inactive,published,archived',
-            'operating_days' => 'required|string|max:255',
+            'operating_days' => 'nullable|string|max:255',
             'operating_times' => 'nullable|string|max:255',
 
             // Kategori (nama field yang dipakai FE)
@@ -579,10 +669,42 @@ class JasaController extends Controller
             'jasa_subcategory_id' => 'nullable|integer|exists:categories,id',
 
             // Gambar layanan (multiple file) dari Createjasa.vue
-            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
+            'images' => 'nullable|array|max:10',
+            'images.*' => 'file|image|mimes:jpg,jpeg,png,webp|max:5120',
         ]);
 
         $data = $validated;
+
+        // Sinkronkan alamat layanan sesuai tipe layanan
+        if (($data['service_type'] ?? null) === 'at_location') {
+            $primary = $merchant->primary_address;
+            $location = trim(implode(', ', array_filter([
+                data_get($primary, 'detail'),
+                data_get($primary, 'village'),
+                data_get($primary, 'district'),
+                data_get($primary, 'city'),
+                data_get($primary, 'province'),
+            ])));
+
+            if ($location === '') {
+                $location = $merchant->address ?? $merchant->alamat ?? '';
+            }
+
+            $data['location_address'] = $location;
+        }
+
+        if (($data['service_type'] ?? null) === 'online' || ($data['service_type'] ?? null) === 'on_site') {
+            $data['location_address'] = '';
+        }
+
+        // Field jadwal sekarang opsional dari FE.
+        // Default aman: tersedia setiap hari, tanpa batasan jam spesifik.
+        if (empty($data['operating_days'])) {
+            $data['operating_days'] = '1,2,3,4,5,6,7';
+        }
+        if (!array_key_exists('operating_times', $data) || $data['operating_times'] === null) {
+            $data['operating_times'] = '';
+        }
 
         // Sinkronkan legacy price untuk kompatibilitas listing lama
         $fixed = $data['fixed_price'] ?? null;
@@ -613,7 +735,7 @@ class JasaController extends Controller
                     $path = $file->store("jasa/{$jasa->id}", 'public');
 
                     $imagesToInsert[] = [
-                        'imageable_type' => 'jasa',
+                        'imageable_type' => 'App\\Models\\Jasa',
                         'imageable_id' => $jasa->id,
                         'image_path' => $path,
                         'display_order' => $index,

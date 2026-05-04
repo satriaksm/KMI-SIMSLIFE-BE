@@ -10,6 +10,16 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use App\Notifications\ReportReviewedNotification;
 use Illuminate\Support\Facades\Validator;
+use App\Models\Product;
+use App\Models\CommunityPost;
+use App\Models\PostComment;
+use App\Models\Merchant;
+use App\Models\Jasa;
+use App\Models\User;
+use App\Notifications\ReportNotification;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class ContentReportController extends Controller
 {
@@ -30,8 +40,9 @@ class ContentReportController extends Controller
         }
 
         // Filter by type
-        if ($request->has('reportable_type')) {
-            $query->where('reportable_type', $request->reportable_type);
+        if ($request->filled('reportable_type')) {
+            $types = $this->resolveReportableTypeFilter($request->reportable_type);
+            $query->whereIn('reportable_type', $types);
         }
 
         // Search
@@ -54,11 +65,65 @@ class ContentReportController extends Controller
         $report = ContentReport::with([
             'reporter:id,name,email,phone',
             'reviewer:id,name',
-            'reason:id,reason_title,applies_to',
-            'reportable'
+            'reason:id,reason_title,reason_description,applies_to',
+            'reportable' => function (MorphTo $morphTo) {
+                $morphTo->morphWith([
+                    Product::class => ['images', 'merchant'],
+                    CommunityPost::class => ['images', 'user'],
+                    PostComment::class => ['user'],
+                    Merchant::class => ['user'],
+                    Jasa::class => ['images', 'merchant'],
+                    User::class => [],
+                ]);
+            },
         ])->findOrFail($id);
 
         return response()->json(['data' => $report]);
+    }
+
+    /**
+     * Update report fields (admin note/status)
+     */
+    public function update(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'status' => 'nullable|in:pending,in_review,resolved,dismissed',
+            'admin_note' => 'nullable|string|max:500',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $report = ContentReport::findOrFail($id);
+
+        $updates = [];
+
+        if ($request->filled('status')) {
+            $updates['status'] = $request->status;
+
+            if ($request->status !== 'pending') {
+                $updates['reviewed_by'] = Auth::id();
+                $updates['reviewed_at'] = now();
+            } else {
+                $updates['reviewed_by'] = null;
+                $updates['reviewed_at'] = null;
+            }
+        }
+
+        if ($request->has('admin_note')) {
+            $updates['admin_note'] = $request->admin_note;
+        }
+
+        $report->update($updates);
+
+        return response()->json([
+            'message' => 'Report updated successfully',
+            'data' => $report->fresh()->load(['reporter', 'reviewer', 'reason']),
+        ]);
     }
 
     /**
@@ -278,5 +343,482 @@ class ContentReportController extends Controller
     public function resolve(Request $request, $id)
     {
         return $this->review($request, $id);
+    }
+
+    /**
+     * Forward report to merchant/user
+     * POST /admin/reports/{id}/forward
+     */
+    public function forward(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'user_id' => 'required|exists:users,id',
+            'message' => 'required|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $report = ContentReport::with(['reportable'])->findOrFail($id);
+
+        DB::transaction(function () use ($report, $request) {
+            // Update report
+            $report->update([
+                'forwarded_to' => $request->user_id,
+                'forwarded_by' => Auth::id(),
+                'forwarded_at' => now(),
+                'forward_message' => $request->message,
+                'status' => 'in_review',
+                'reviewed_by' => Auth::id(),
+                'reviewed_at' => now(),
+            ]);
+
+            // Send notification to target user
+            $targetUser = \App\Models\User::find($request->user_id);
+            if ($targetUser) {
+                $targetUser->notify(new ReportNotification($report, 'forwarded'));
+            }
+
+            // Log action
+            \App\Models\AdminAction::create([
+                'admin_id' => Auth::id(),
+                'action_type' => 'forward_report',
+                'target_type' => ContentReport::class,
+                'target_id' => $report->id,
+                'reason' => 'Forwarded to user: ' . $targetUser->name,
+                'metadata' => [
+                    'forwarded_to' => $request->user_id,
+                    'message' => $request->message,
+                ],
+            ]);
+        });
+
+        return response()->json([
+            'message' => 'Report forwarded successfully',
+            'data' => $report->fresh(['reporter', 'reviewer', 'reason', 'forwardedToUser']),
+        ]);
+    }
+
+    /**
+     * Suspend user related to report
+     * POST /admin/reports/{id}/actions/suspend-user
+     */
+    public function suspendUser(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'reason' => 'required|string|max:500',
+            'duration_days' => 'nullable|integer|min:1|max:365',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $report = ContentReport::with(['reportable'])->findOrFail($id);
+
+        // Get user to suspend
+        $targetUser = $this->getUserFromReportable($report->reportable);
+
+        if (!$targetUser) {
+            return response()->json(['message' => 'Cannot determine user to suspend'], 400);
+        }
+
+        DB::transaction(function () use ($report, $targetUser, $request) {
+            // Suspend user
+            $oldStatus = $targetUser->status;
+            $targetUser->update(['status' => 'suspended']);
+
+            // Log admin action
+            \App\Models\AdminAction::create([
+                'admin_id' => Auth::id(),
+                'action_type' => 'suspend_user',
+                'target_type' => \App\Models\User::class,
+                'target_id' => $targetUser->id,
+                'reason' => $request->reason,
+                'status_before' => $oldStatus,
+                'status_after' => 'suspended',
+                'metadata' => [
+                    'duration_days' => $request->duration_days,
+                    'expires_at' => $request->duration_days ? now()->addDays($request->duration_days) : null,
+                    'via_report_id' => $report->id,
+                ],
+            ]);
+
+            // Update report
+            $report->update([
+                'action_taken' => 'user_suspended',
+                'status' => 'resolved',
+                'reviewed_by' => Auth::id(),
+                'reviewed_at' => now(),
+            ]);
+
+            // Notify reporter
+            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+        });
+
+        return response()->json([
+            'message' => 'User suspended successfully',
+            'data' => $report->fresh(['reporter', 'reviewer', 'reason']),
+        ]);
+    }
+
+    /**
+     * Warn user related to report
+     * POST /admin/reports/{id}/actions/warn-user
+     */
+    public function warnUser(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'message' => 'required|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $report = ContentReport::with(['reportable'])->findOrFail($id);
+
+        $targetUser = $this->getUserFromReportable($report->reportable);
+
+        if (!$targetUser) {
+            return response()->json(['message' => 'Cannot determine user to warn'], 400);
+        }
+
+        DB::transaction(function () use ($report, $targetUser, $request) {
+            // Log admin action
+            \App\Models\AdminAction::create([
+                'admin_id' => Auth::id(),
+                'action_type' => 'warn_user',
+                'target_type' => \App\Models\User::class,
+                'target_id' => $targetUser->id,
+                'reason' => 'Warning via report',
+                'metadata' => [
+                    'message' => $request->message,
+                    'via_report_id' => $report->id,
+                ],
+            ]);
+
+            // Update report
+            $report->update([
+                'action_taken' => 'user_warned',
+                'status' => 'resolved',
+                'reviewed_by' => Auth::id(),
+                'reviewed_at' => now(),
+                'admin_note' => $request->message,
+            ]);
+
+            // Send warning notification
+            $targetUser->notify(new ReportNotification($report, 'forwarded'));
+
+            // Notify reporter
+            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+        });
+
+        return response()->json([
+            'message' => 'User warned successfully',
+            'data' => $report->fresh(['reporter', 'reviewer', 'reason']),
+        ]);
+    }
+
+    /**
+     * Delete content related to report
+     * POST /admin/reports/{id}/actions/delete-content
+     */
+    public function deleteContent(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'reason' => 'required|string|max:500',
+            'notify_owner' => 'boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $report = ContentReport::with(['reportable'])->findOrFail($id);
+
+        $reportable = $report->reportable;
+
+        if (!$reportable) {
+            return response()->json(['message' => 'Reportable content not found'], 404);
+        }
+
+        DB::transaction(function () use ($report, $reportable, $request) {
+            $actionType = 'content_deleted';
+
+            // Handle deletion based on type
+            if ($reportable instanceof Product) {
+                $reportable->update(['status' => 'archived']);
+                $actionType = 'product_archived';
+            } elseif ($reportable instanceof CommunityPost) {
+                $reportable->delete(); // soft delete
+                $actionType = 'post_deleted';
+            } elseif ($reportable instanceof PostComment) {
+                $reportable->delete(); // soft delete
+                $actionType = 'comment_deleted';
+            }
+
+            // Log admin action
+            \App\Models\AdminAction::create([
+                'admin_id' => Auth::id(),
+                'action_type' => 'delete_content',
+                'target_type' => get_class($reportable),
+                'target_id' => $reportable->id,
+                'reason' => $request->reason,
+                'metadata' => [
+                    'via_report_id' => $report->id,
+                    'notify_owner' => $request->notify_owner ?? false,
+                ],
+            ]);
+
+            // Update report
+            $report->update([
+                'action_taken' => $actionType,
+                'status' => 'resolved',
+                'reviewed_by' => Auth::id(),
+                'reviewed_at' => now(),
+                'admin_note' => $request->reason,
+            ]);
+
+            // Notify content owner if requested
+            if ($request->notify_owner ?? false) {
+                $owner = $this->getUserFromReportable($reportable);
+                if ($owner) {
+                    // TODO: Send notification to owner
+                }
+            }
+
+            // Notify reporter
+            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+        });
+
+        return response()->json([
+            'message' => 'Content deleted successfully',
+            'data' => $report->fresh(['reporter', 'reviewer', 'reason']),
+        ]);
+    }
+
+    /**
+     * Get report statistics for dashboard
+     * GET /admin/reports/statistics
+     */
+    public function statistics(Request $request)
+    {
+        try {
+            $period = $request->input('period', 'last_30_days');
+            $startDate = $period === 'last_30_days' ? now()->subDays(30) : null;
+
+            $query = ContentReport::query();
+
+            if ($startDate) {
+                $query->where('created_at', '>=', $startDate);
+            }
+
+            $stats = [
+                'total' => (clone $query)->count(),
+                'pending' => (clone $query)->where('status', 'pending')->count(),
+                'in_review' => (clone $query)->where('status', 'in_review')->count(),
+                'resolved' => (clone $query)->where('status', 'resolved')->count(),
+                'dismissed' => (clone $query)->where('status', 'dismissed')->count(),
+                'by_type' => ContentReport::selectRaw('reportable_type, COUNT(*) as count')
+                    ->when($startDate, fn($q) => $q->where('created_at', '>=', $startDate))
+                    ->groupBy('reportable_type')
+                    ->get()
+                    ->map(function ($item) {
+                        return [
+                            'type' => $this->normalizeReportableType($item->reportable_type),
+                            'count' => $item->count,
+                        ];
+                    }),
+                'by_action' => ContentReport::selectRaw('action_taken, COUNT(*) as count')
+                    ->when($startDate, fn($q) => $q->where('created_at', '>=', $startDate))
+                    ->where('action_taken', '!=', 'none')
+                    ->groupBy('action_taken')
+                    ->get(),
+            ];
+
+            return response()->json($stats);
+        } catch (\Exception $e) {
+            Log::error('[ContentReport] Statistics failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to load statistics',
+            ], 500);
+        }
+    }
+
+    // ============================================
+    // EXPORT METHODS
+    // ============================================
+
+    /**
+     * Export list of reports to PDF
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $admin = $request->user();
+
+            $query = ContentReport::with([
+                'reporter:id,name,email',
+                'reviewer:id,name',
+                'reason:id,reason_title,reason_description,applies_to',
+            ]);
+
+            if ($request->filled('status')) {
+                $query->where('status', $request->status);
+            }
+
+            if ($request->filled('reportable_type')) {
+                $types = $this->resolveReportableTypeFilter($request->reportable_type);
+                $query->whereIn('reportable_type', $types);
+            }
+
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->where('report_comment', 'like', "%{$search}%");
+            }
+
+            $reports = $query->latest()->limit(500)->get();
+
+            $metadata = [
+                'generated_at'       => now()->format('d F Y, H:i:s'),
+                'generated_by'       => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'total_reports'      => $reports->count(),
+                'filters' => [
+                    'status' => $request->input('status') ?: 'Semua',
+                    'type'   => $request->input('reportable_type') ?: 'Semua',
+                    'search' => $request->input('search') ?: '-',
+                ],
+            ];
+
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            if (file_exists($logoPath)) {
+                $logoBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath));
+            }
+
+            $pdf = Pdf::loadView('exports.admin.admin-report', [
+                'reports'    => $reports,
+                'metadata'   => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            return $pdf->download('content-reports-' . now()->format('Ymd-His') . '.pdf');
+        } catch (\Exception $e) {
+            Log::error('[ContentReport] Export PDF failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Gagal membuat laporan PDF'], 500);
+        }
+    }
+
+    /**
+     * Export single report detail to PDF
+     */
+    public function exportReportDetailPdf(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+
+            $report = ContentReport::with([
+                'reporter:id,name,email,phone',
+                'reviewer:id,name',
+                'reason:id,reason_title,reason_description,applies_to',
+            ])->findOrFail($id);
+
+            $metadata = [
+                'generated_at'       => now()->format('d F Y, H:i:s'),
+                'generated_by'       => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+            ];
+
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            if (file_exists($logoPath)) {
+                $logoBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath));
+            }
+
+            $pdf = Pdf::loadView('exports.admin.admin-report-detail', [
+                'report'     => $report,
+                'metadata'   => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+                ->setPaper('a4', 'portrait')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10);
+
+            return $pdf->download('report-detail-' . $report->id . '-' . now()->format('Ymd-His') . '.pdf');
+        } catch (\Exception $e) {
+            Log::error('[ContentReport] Export detail PDF failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Gagal membuat laporan PDF'], 500);
+        }
+    }
+
+    // ============================================
+    // HELPER METHODS
+    // ============================================
+
+    private function getUserFromReportable($reportable): ?\App\Models\User
+    {
+        if (!$reportable) return null;
+
+        if ($reportable instanceof \App\Models\User) {
+            return $reportable;
+        }
+
+        if ($reportable instanceof Product) {
+            return $reportable->merchant?->user;
+        }
+
+        if ($reportable instanceof \App\Models\Merchant) {
+            return $reportable->user;
+        }
+
+        if ($reportable instanceof CommunityPost || $reportable instanceof PostComment) {
+            return $reportable->user;
+        }
+
+        return null;
+    }
+
+    private function resolveReportableTypeFilter(string $type): array
+    {
+        $key = strtolower(class_basename($type));
+
+        $map = [
+            'product' => [Product::class],
+            'merchant' => [Merchant::class],
+            'post' => [CommunityPost::class],
+            'communitypost' => [CommunityPost::class],
+            'post_comment' => [PostComment::class],
+            'postcomment' => [PostComment::class],
+            'service' => [Jasa::class, 'jasa'],
+            'jasa' => [Jasa::class, 'jasa'],
+            'user' => [User::class],
+        ];
+
+        return $map[$key] ?? [$type];
+    }
+
+    private function normalizeReportableType(string $fullClass): string
+    {
+        $type = strtolower(class_basename($fullClass));
+        
+        return match($type) {
+            'communitypost' => 'post',
+            'postcomment' => 'post_comment',
+            'jasa' => 'service',
+            default => $type,
+        };
     }
 }

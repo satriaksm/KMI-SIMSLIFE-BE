@@ -117,8 +117,8 @@ class AdminDashboardController extends Controller
 
             $stats = [
                 'users' => [
-                    'current' => $this->safeCount(User::where('created_at', '>=', $startDate)),
-                    'previous' => $this->safeCount(User::whereBetween('created_at', [$previousStartDate, $previousEndDate])),
+                    'current' => $this->safeCount(User::whereNotNull('email_verified_at')->where('created_at', '>=', $startDate)),
+                    'previous' => $this->safeCount(User::whereNotNull('email_verified_at')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
                 ],
                 'paguyubans' => [
                     'current' => $this->safeCount(Paguyuban::where('is_active', true)->where('created_at', '>=', $startDate)),
@@ -147,7 +147,7 @@ class AdminDashboardController extends Controller
         // All time
         return [
             'users' => [
-                'current' => $this->safeCount(User::query()),
+                'current' => $this->safeCount(User::whereNotNull('email_verified_at')),
                 'previous' => null,
                 'growth' => null
             ],

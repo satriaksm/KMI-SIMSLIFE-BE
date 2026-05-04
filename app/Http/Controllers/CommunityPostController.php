@@ -391,28 +391,8 @@ class CommunityPostController
     }
 
     /**
-     * Delete Community Post
-     *
-     * Deletes a specific community post. Only the post owner can delete their post.
-     *
-     * @authenticated
-     *
-     * @urlParam id integer required The ID of the post. Example: 1
-     *
-     * @response 200 {
-     *   "success": true,
-     *   "message": "Post deleted successfully"
-     * }
-     *
-     * @response 403 {
-     *   "success": false,
-     *   "message": "Unauthorized"
-     * }
-     *
-     * @response 404 {
-     *   "success": false,
-     *   "message": "Post not found"
-     * }
+     * Delete Community Post (User - Own Post Only)
+     * DELETE /api/posts/{id}
      */
     public function destroy($id)
     {
@@ -432,11 +412,67 @@ class CommunityPostController
             ], 403);
         }
 
-        $post->delete();
+        // ✅ FIX: Delete images from storage before deleting post
+        if ($post->images) {
+            foreach ($post->images as $image) {
+                if (Storage::disk('public')->exists($image->post_image_path)) {
+                    Storage::disk('public')->delete($image->post_image_path);
+                }
+            }
+        }
+
+        $post->delete(); // soft delete
 
         return response()->json([
             'success' => true,
             'message' => 'Post deleted successfully'
+        ], 200);
+    }
+
+    /**
+     * Delete Community Post (Admin - Any Post)
+     * DELETE /admin/posts/{id}
+     */
+    public function adminDestroy(Request $request, $id)
+    {
+        // Verify admin role
+        $admin = $request->user();
+        if (!$admin || !$admin->hasRole('admin')) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $post = CommunityPost::findOrFail($id);
+
+        if (!$post) {
+            return response()->json(['message' => 'Post not found'], 404);
+        }
+
+        // Delete images from storage
+        if ($post->images) {
+            foreach ($post->images as $image) {
+                if (Storage::disk('public')->exists($image->post_image_path)) {
+                    Storage::disk('public')->delete($image->post_image_path);
+                }
+            }
+        }
+
+        // Log admin action
+        \App\Models\AdminAction::create([
+            'admin_id' => $admin->id,
+            'action_type' => 'delete_content',
+            'target_type' => CommunityPost::class,
+            'target_id' => $post->id,
+            'reason' => $request->input('reason', 'Deleted by admin'),
+            'metadata' => [
+                'post_title' => $post->post_title,
+                'post_author_id' => $post->user_id,
+            ],
+        ]);
+
+        $post->delete(); // soft delete
+
+        return response()->json([
+            'message' => 'Post deleted successfully by admin'
         ], 200);
     }
 

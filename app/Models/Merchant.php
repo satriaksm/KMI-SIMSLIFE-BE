@@ -42,7 +42,7 @@ class Merchant extends Model
         'operational_hours' => 'array',
     ];
 
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now'];
+    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'address', 'alamat'];
 
     protected static function boot()
     {
@@ -135,6 +135,7 @@ class Merchant extends Model
         return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
+
     // Relasi ke paguyuban
     public function paguyuban(): BelongsTo
     {
@@ -161,6 +162,19 @@ class Merchant extends Model
             ->latest();
     }
 
+    // Accessor alamat utama (string singkat), diambil dari primaryAddress.detail
+    public function getAddressAttribute(): ?string
+    {
+        $primary = $this->primaryAddress;
+        return $primary?->detail;
+    }
+
+    // Alias "alamat" untuk kompatibilitas FE lama
+    public function getAlamatAttribute(): ?string
+    {
+        return $this->address;
+    }
+
     // Accessor untuk Logo URL
     public function getLogoUrlAttribute()
     {
@@ -168,10 +182,9 @@ class Merchant extends Model
             return null;
         }
 
-        // Include a version segment derived from the stored filename.
-        // This makes the URL change whenever the file changes, so clients can cache safely.
         return route('merchant_profile_pictures.show', [
             'merchant' => $this->id,
+            // Query param for cache-busting (no extra path segment)
             'v' => basename((string) $this->logo_path),
         ]);
     }
@@ -185,6 +198,7 @@ class Merchant extends Model
 
         return route('merchant_banner.show', [
             'merchant' => $this->id,
+            // Query param for cache-busting (no extra path segment)
             'v' => basename((string) $this->cover_path),
         ]);
     }
@@ -252,5 +266,19 @@ class Merchant extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+    }
+
+    /**
+     * ✅ NEW: Reports about this merchant
+     */
+    public function reports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
+    }
+
+    // 🆕 Rating System
+    public function ratings(): HasMany
+    {
+        return $this->hasMany(Rating::class);
     }
 }

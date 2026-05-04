@@ -115,6 +115,7 @@ class AdminUserController extends Controller
                 $userTrend[] = [
                     'date' => $date,
                     'active' => User::where('status', 'active')
+                        ->whereNotNull('email_verified_at')
                         ->whereDate('updated_at', '<=', $date)
                         ->count(),
                     'watchlist' => User::where('status', 'watchlist')
@@ -173,7 +174,9 @@ class AdminUserController extends Controller
 
         return [
             'total_users' => User::count(),
-            'active_users' => User::where('status', 'active')->count(),
+            'active_users' => User::where('status', 'active')
+                ->whereNotNull('email_verified_at')
+                ->count(),
             'declining_users' => User::where('status', 'declining')->count(),
             'watchlist_users' => User::where('status', 'watchlist')->count(),
             'suspended_users' => User::where('status', 'suspended')->count(),
@@ -348,6 +351,13 @@ class AdminUserController extends Controller
             $query->where('status', $status);
         }
 
+        // ✅ Exclude users with 'admin' role if exclude_admin is true
+        if ($request->boolean('exclude_admin')) {
+            $query->whereDoesntHave('roles', function ($q) {
+                $q->where('name', 'admin');
+            });
+        }
+
         // Filter by role
         if ($request->filled('role')) {
             if ($request->role === 'customer') {
@@ -412,7 +422,7 @@ class AdminUserController extends Controller
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'nik' => $user->nik,
-                'profile_picture_path' => $user->profile_picture_path, // ✅ ADD THIS
+                'profile_picture_path' => $user->profile_picture_path,
                 'status' => $user->status ?? 'active',
                 'roles' => $user->roles->pluck('name'),
                 'merchants' => $user->merchants->map(function ($m) {

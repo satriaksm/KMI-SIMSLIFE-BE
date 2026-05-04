@@ -1351,21 +1351,36 @@ class ProductController extends Controller
                 // MODE TANPA VARIAN (SINGLE SKU)
                 // ==============================
 
-                // 1️⃣ Hapus SEMUA relasi varian lama
-                $product->variants()->each(function (ProductVariant $variant) {
-                    $variant->optionValues()->detach(); // pivot
-                    $variant->delete();
-                });
+                // 1) Pastikan hanya ada 1 variant, dan usahakan reuse variant existing
+                $existingVariants = $product->variants()->orderBy('id')->get();
+                $keptVariant = $existingVariants->first();
 
-                // 2️⃣ Hapus semua product options
+                if ($keptVariant) {
+                    // Single-SKU variant should not have optionValues
+                    $keptVariant->optionValues()->detach();
+
+                    // Delete extra variants (if any)
+                    $existingVariants->slice(1)->each(function (ProductVariant $variant) {
+                        $variant->optionValues()->detach();
+                        $variant->delete();
+                    });
+
+                    // Update existing variant instead of creating a new one (keeps id)
+                    $keptVariant->update([
+                        'sku' => $data['sku'] ?? null,
+                        'price' => $data['price'],
+                        'stock' => $data['stock'],
+                    ]);
+                } else {
+                    $product->variants()->create([
+                        'sku' => $data['sku'] ?? null,
+                        'price' => $data['price'],
+                        'stock' => $data['stock'],
+                    ]);
+                }
+
+                // 2) Hapus semua product options (karena mode tanpa varian)
                 $product->options()->delete();
-
-                // 3️⃣ Buat 1 single variant baru
-                $product->variants()->create([
-                    'sku' => $data['sku'] ?? null,
-                    'price' => $data['price'],
-                    'stock' => $data['stock'],
-                ]);
             }
 
             // 5. UPDATE ADDON GROUPS

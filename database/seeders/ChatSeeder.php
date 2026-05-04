@@ -8,108 +8,149 @@ use App\Models\Merchant;
 use App\Models\Jasa;
 use App\Models\Conversation;
 use App\Models\Message;
+use Carbon\Carbon;
 
 class ChatSeeder extends Seeder
 {
     public function run(): void
     {
-        // Ambil atau buat satu user pembeli demo
-        $buyer = User::firstOrCreate(
-            ['email' => 'customer@example.com'],
-            [
-                'name' => 'Demo Customer',
-                'password' => bcrypt('123123123'),
-                'email_verified_at' => now(),
-            ]
-        );
+        $this->command->info('Creating sample chat conversations and messages...');
 
-        // Pastikan punya peran customer (jika relasi roles ada)
-        if (method_exists($buyer, 'roles')) {
-            $customerRole = \App\Models\Role::firstOrCreate(['name' => 'customer']);
-            $buyer->roles()->syncWithoutDetaching([$customerRole->id]);
-        }
+        // Get sample users and merchants with their jasas
+        $merchants = Merchant::with('jasas')->get();
+        $customers = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))->limit(5)->get();
 
-        // Ambil satu merchant (punya user umkm-owner)
-        $merchant = Merchant::first();
-        if (! $merchant) {
-            $this->command?->warn('Tidak ada merchant, lewati ChatSeeder.');
+        if ($merchants->isEmpty() || $customers->isEmpty()) {
+            $this->command->warn('Not enough merchants or customers. Skipping chat seeding.');
             return;
         }
 
-        // Ambil satu jasa milik merchant tersebut (atau jasa pertama kalau belum ada relasi)
-        $jasa = Jasa::where('merchant_id', $merchant->id)->first() ?? Jasa::first();
-        if (! $jasa) {
-            $this->command?->warn('Tidak ada jasa, lewati ChatSeeder.');
+        // Filter merchants that have jasas
+        $merchantsWithJasas = $merchants->filter(function($merchant) {
+            return $merchant->jasas && $merchant->jasas->count() > 0;
+        });
+
+        if ($merchantsWithJasas->isEmpty()) {
+            $this->command->warn('No merchants with jasas found. Skipping chat seeding.');
             return;
         }
 
-        // Buat atau ambil conversation antara buyer demo dan merchant untuk jasa ini
-        $conversation = Conversation::firstOrCreate(
-            [
-                'buyer_id' => $buyer->id,
-                'merchant_id' => $merchant->id,
-                'jasa_id' => $jasa->id,
-            ],
-            [
-                'status' => 'open',
-                'last_message_at' => now(),
-            ]
-        );
+        // Sample messages from buyers
+        $buyerMessages = [
+            'Halo, apakah layanan ini tersedia hari ini?',
+            'Berapa harga jika untuk 5 unit?',
+            'Bisa buat konsultasi terlebih dahulu?',
+            'Seberapa lama waktu pengerjaan?',
+            'Ada garansi ngga untuk layanan ini?',
+            'Lokasi saya di Jakarta Selatan, bisa handle?',
+            'Kapan bisa datang?',
+            'Saya butuh layanan ini segera, urgent.',
+        ];
 
-        // Hapus pesan lama demo agar tidak dobel
-        $conversation->messages()->delete();
+        // Sample messages from merchants
+        $merchantMessages = [
+            'Halo, terima kasih sudah menghubungi kami. Iya tersedia, kami buka sampai jam 21:00.',
+            'Untuk pembelian dalam jumlah besar kami bisa berikan harga spesial. Berapa kebutuhan Anda?',
+            'Tentu saja! Silakan hubungi kami untuk jadwal konsultasi.',
+            'Rata-rata pengerjaan membutuhkan waktu 2-3 jam tergantung kondisi.',
+            'Semua layanan kami dijamin kualitasnya. Kepuasan pelanggan adalah prioritas kami.',
+            'Kami melayani daerah Jakarta Selatan dengan biaya service Rp 50.000. Tidak masalah!',
+            'Kami bisa datang besok pagi, jam 09:00 OK?',
+            'Siap melayani dengan secepatnya. Silakan konfirmasi detail kebutuhan Anda.',
+        ];
 
-        // Pesan awal dari pembeli
-        $msg1 = Message::create([
-            'conversation_id' => $conversation->id,
-            'sender_id' => $buyer->id,
-            'sender_role' => 'buyer',
-            'type' => 'message',
-            'body' => 'Halo, saya tertarik dengan jasa ini. Apakah masih tersedia untuk minggu ini?',
-        ]);
+        // Sample offers
+        $offers = [
+            ['price' => 150000, 'description' => 'Paket Standar - 3 jam service'],
+            ['price' => 200000, 'description' => 'Paket Premium - 5 jam service + maintenance'],
+            ['price' => 250000, 'description' => 'Paket VIP - Full service + garansi 1 bulan'],
+            ['price' => 100000, 'description' => 'Konsultasi gratis + quotation'],
+            ['price' => 300000, 'description' => 'Paket Tahunan - Maintenance bulanan'],
+        ];
 
-        // Balasan dari merchant (gunakan user pemilik merchant jika ada)
-        $merchantOwner = $merchant->user ?? User::whereHas('roles', function ($q) {
-            $q->where('name', 'umkm-owner');
-        })->first();
+        $conversationCount = 0;
 
-        if ($merchantOwner) {
-            $msg2 = Message::create([
-                'conversation_id' => $conversation->id,
-                'sender_id' => $merchantOwner->id,
-                'sender_role' => 'merchant',
-                'type' => 'message',
-                'body' => 'Halo, tersedia. Boleh info kebutuhan detailnya? Kami bisa jadwalkan hari Sabtu.',
-            ]);
+        // Create conversations for each combination of merchant and random customers
+        foreach ($merchantsWithJasas as $merchant) {
+            // Pick 3-5 random customers per merchant
+            $selectedCustomers = $customers->random(min(rand(3, 5), $customers->count()));
 
-            // Penawaran harga dari penjual
-            $msg3 = Message::create([
-                'conversation_id' => $conversation->id,
-                'sender_id' => $merchantOwner->id,
-                'sender_role' => 'merchant',
-                'type' => 'offer',
-                'body' => 'Untuk paket standar, kami bisa berikan harga khusus.',
-                'jasa_id' => $jasa->id,
-                'offer_price' => 150000,
-                'offer_status' => 'pending',
-            ]);
+            foreach ($selectedCustomers as $customer) {
+                // Pick random jasa from this merchant
+                if ($merchant->jasas->isEmpty()) {
+                    continue;
+                }
+                
+                $merchantJasa = $merchant->jasas->random();
 
-            // Simulasikan: pembeli menolak penawaran dan mengajukan harga balasan
-            $msg3->offer_status = 'rejected';
-            $msg3->save();
+                // Create conversation
+                $conversation = Conversation::create([
+                    'buyer_id' => $customer->id,
+                    'merchant_id' => $merchant->id,
+                    'jasa_id' => $merchantJasa->id,
+                    'status' => $this->getRandomStatus(),
+                    'last_message_at' => now()->subHours(rand(1, 72)),
+                ]);
 
-            // Counter-offer dari pembeli (dalam bentuk pesan biasa)
-            $msg4 = Message::create([
-                'conversation_id' => $conversation->id,
-                'sender_id' => $buyer->id,
-                'sender_role' => 'buyer',
-                'type' => 'message',
-                'body' => 'Terima kasih tawarannya, tapi saya hanya bisa di Rp130.000. Apakah bisa?',
-            ]);
+                $conversationCount++;
+
+                // Create 3-8 messages per conversation
+                $messageCount = rand(3, 8);
+                $currentTime = now()->subHours(rand(24, 72));
+
+                for ($i = 0; $i < $messageCount; $i++) {
+                    // Alternate between buyer and merchant
+                    $isBuyerMessage = $i % 2 === 0;
+                    
+                    $messageData = [
+                        'conversation_id' => $conversation->id,
+                        'sender_id' => $isBuyerMessage ? $customer->id : $merchant->user_id,
+                        'sender_role' => $isBuyerMessage ? 'buyer' : 'merchant',
+                        'type' => 'text',
+                        'body' => $isBuyerMessage 
+                            ? $buyerMessages[array_rand($buyerMessages)]
+                            : $merchantMessages[array_rand($merchantMessages)],
+                    ];
+
+                    // Sometimes add an offer message from merchant
+                    if (!$isBuyerMessage && rand(0, 3) === 0) {
+                        $offer = $offers[array_rand($offers)];
+                        $messageData['type'] = 'offer';
+                        $messageData['body'] = 'Silakan lihat penawaran harga berikut: ' . $offer['description'];
+                        $messageData['offer_price'] = $offer['price'];
+                        $messageData['offer_status'] = $this->getRandomOfferStatus();
+                    }
+
+                    $messageData['created_at'] = $currentTime;
+                    $messageData['updated_at'] = $currentTime;
+
+                    Message::create($messageData);
+                    
+                    // Increment time for next message
+                    $currentTime = $currentTime->addMinutes(rand(5, 30));
+                }
+
+                // Update last_message_at
+                $conversation->update([
+                    'last_message_at' => $currentTime->subMinutes(5),
+                ]);
+
+                $this->command->line("✓ Created conversation #{$conversation->id} between {$customer->name} (buyer) and {$merchant->user->name} (merchant)");
+            }
         }
 
-        $conversation->update(['last_message_at' => now()]);
+        $this->command->info("✅ Successfully created {$conversationCount} sample conversations with messages!");
+    }
 
-        $this->command?->info('ChatSeeder: contoh percakapan demo berhasil dibuat.');
+    private function getRandomStatus(): string
+    {
+        $statuses = ['active', 'pending_offer', 'deal_accepted', 'completed'];
+        return $statuses[array_rand($statuses)];
+    }
+
+    private function getRandomOfferStatus(): string
+    {
+        $statuses = ['pending', 'accepted', 'rejected'];
+        return $statuses[array_rand($statuses)];
     }
 }

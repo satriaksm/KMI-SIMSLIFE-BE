@@ -12,6 +12,7 @@ return new class extends Migration {
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
             $table->foreignId('merchant_id')->constrained('merchants')->onDelete('cascade');
             $table->foreignId('jasa_id')->nullable()->constrained('jasas')->onDelete('cascade');
+            $table->foreignId('package_id')->nullable()->constrained('packages')->nullOnDelete();
             $table->string('nama');
             $table->string('tel');
             $table->text('alamat');
@@ -22,6 +23,7 @@ return new class extends Migration {
             $table->enum('metode_pembayaran', ['COD', 'QRIS'])->default('COD');
             $table->string('promo_code')->nullable();
             $table->integer('total')->default(0);
+            $table->enum('status', ['pending','proses','selesai','batal'])->default('pending');
             $table->timestamps();
         });
     }
