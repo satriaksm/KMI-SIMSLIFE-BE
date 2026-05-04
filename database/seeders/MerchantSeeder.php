@@ -26,82 +26,127 @@ class MerchantSeeder extends Seeder
             'sunday' => ['is_open' => true, 'open' => '06:00', 'close' => '18:00'],
         ];
 
-        // Get users with customer role
-        $customers = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))
-            ->get();
+        // ========================
+        // 🔥 AMBIL DATA WILAYAH REAL
+        // ========================
+        $province = DB::table('provinces')->where('name', 'JAWA TENGAH')->first();
+        $city = DB::table('cities')->where('name', 'KOTA SURAKARTA')->first();
+
+        if (!$province || !$city) {
+            $this->command->error('❌ Province / City tidak ditemukan. Jalankan MasterDataSeeder dulu.');
+            return;
+        }
+
+        // ========================
+        // 👥 AMBIL USER CUSTOMER
+        // ========================
+        $customers = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))->get();
 
         if ($customers->isEmpty()) {
             $this->command->warn('No customers found. Creating sample users...');
             $customers = User::factory()->count(10)->create();
+
             $customerRole = Role::where('name', 'customer')->first();
             if ($customerRole) {
                 foreach ($customers as $user) {
                     $user->roles()->attach($customerRole->id);
                 }
             }
-            // Refresh $customers collection after attach
+
             $customers = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))->get();
         }
 
         if ($customers->isEmpty()) {
-            $this->command->warn('Still no customers found after creation. Skipping merchant seeding.');
+            $this->command->warn('Still no customers found. Skip.');
             return;
         }
+
         $segmentations = Segmentation::all();
         $paguyubans = Paguyuban::where('is_active', true)->get();
         $adminUser = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->first();
 
         if ($segmentations->isEmpty()) {
-            $this->command->warn('No segmentations found. Skipping merchant seeding.');
+            $this->command->warn('No segmentations found. Skip.');
             return;
         }
 
         $merchantCount = 0;
 
-        // Create approved merchants (1-3 per user randomly)
-        $this->command->info('- Creating approved merchants (1-3 per user)...');
-        foreach ($customers->random(min(20, $customers->count())) as $user) {
-            $merchantTotal = rand(1, 3);
-            for ($m = 0; $m < $merchantTotal; $m++) {
-                $merchant = Merchant::factory()
-                    ->approved()
-                    ->merchantFactory()
-                    ->create([
-                        'user_id' => $user->id,
-                        'segmentation_id' => $segmentations->random()->id,
-                        'paguyuban_id' => $paguyubans->isNotEmpty() ? $paguyubans->random()?->id : null,
-                        'reviewed_by' => $adminUser?->id,
-                        'operational_hours' => $operationalHours,
-                    ]);
+        // ========================
+        // ✅ APPROVED MERCHANT
+        // ========================
+        $this->command->info('- Creating approved merchants...');
 
-                // Create address for merchant
-                $merchant->addresses()->create([
-                    'province_id' => 1, // Jawa Tengah
-                    'city_id' => 1, // Surakarta
-                    'district_id' => 1, // Banjarsari
-                    'village_id' => 1, // Banyuanyar
-                    'detail' => fake()->streetAddress(),
-                    'label' => 'utama',
-                    'latitude' => -7.5568 + (rand(-100, 100) / 10000),
-                    'longitude' => 110.8282 + (rand(-100, 100) / 10000),
+        foreach ($customers->random(min(20, $customers->count())) as $user) {
+
+            // ambil district & village random dari kota Surakarta
+            $district = DB::table('districts')
+                ->where('city_id', $city->id)
+                ->inRandomOrder()
+                ->first();
+
+            $village = DB::table('villages')
+                ->where('district_id', $district->id)
+                ->inRandomOrder()
+                ->first();
+
+            if (!$district || !$village) {
+                $this->command->warn('⚠️ District/Village kosong, skip user...');
+                continue;
+            }
+
+            $merchant = Merchant::factory()
+                ->approved()
+                ->merchantFactory()
+                ->create([
+                    'user_id' => $user->id,
+                    'segmentation_id' => $segmentations->random()->id,
+                    'paguyuban_id' => $paguyubans->isNotEmpty() ? $paguyubans->random()?->id : null,
+                    'reviewed_by' => $adminUser?->id,
+                    'operational_hours' => $operationalHours,
                 ]);
 
-                // Add umkm-owner role to user
-                $umkmRole = Role::where('name', 'umkm-owner')->first();
-                if ($umkmRole && !$user->roles()->where('role_id', $umkmRole->id)->exists()) {
-                    $user->roles()->attach($umkmRole->id);
-                }
+            // alamat
+            $merchant->addresses()->create([
+                'province_id' => $province->id,
+                'city_id' => $city->id,
+                'district_id' => $district->id,
+                'village_id' => $village->id,
+                'detail' => fake()->streetAddress(),
+                'label' => 'utama',
+                'latitude' => -7.566 + (rand(-100, 100) / 10000),
+                'longitude' => 110.82 + (rand(-100, 100) / 10000),
+            ]);
 
-                $merchantCount++;
+            // assign role UMKM
+            $umkmRole = Role::where('name', 'umkm-owner')->first();
+            if ($umkmRole && !$user->roles()->where('role_id', $umkmRole->id)->exists()) {
+                $user->roles()->attach($umkmRole->id);
             }
+
+            $merchantCount++;
         }
 
-        // Create pending merchants
-        $this->command->info('- Creating pending merchants (5)...');
+        // ========================
+        // ⏳ PENDING MERCHANT
+        // ========================
+        $this->command->info('- Creating pending merchants...');
+
         foreach ($customers->random(min(5, $customers->count())) as $user) {
-            // Skip if user already has merchant
-            if ($user->merchants()->exists())
-                continue;
+
+            if ($user->merchants()->exists()) continue;
+
+            $district = DB::table('districts')
+                ->where('city_id', $city->id)
+                ->inRandomOrder()
+                ->first();
+
+            $village = DB::table('villages')
+                ->where('district_id', $district->id)
+                ->inRandomOrder()
+                ->first();
+
+            if (!$district || !$village) continue;
 
             $merchant = Merchant::factory()
                 ->pending()
@@ -114,10 +159,10 @@ class MerchantSeeder extends Seeder
                 ]);
 
             $merchant->addresses()->create([
-                'province_id' => 1,
-                'city_id' => 1,
-                'district_id' => 1,
-                'village_id' => 1,
+                'province_id' => $province->id,
+                'city_id' => $city->id,
+                'district_id' => $district->id,
+                'village_id' => $village->id,
                 'detail' => fake()->streetAddress(),
                 'label' => 'utama',
             ]);
@@ -125,7 +170,7 @@ class MerchantSeeder extends Seeder
             $merchantCount++;
         }
 
-        $this->command->info("Merchants seeded successfully!");
-        $this->command->info("   Total: {$merchantCount}");
+        $this->command->info("✅ Merchants seeded successfully!");
+        $this->command->info("Total: {$merchantCount}");
     }
 }

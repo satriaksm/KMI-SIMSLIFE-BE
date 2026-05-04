@@ -200,22 +200,12 @@ class AuthController extends Controller
         return response()->json([
             'id' => $user->id,
             'name' => $user->name,
-            'profile_picture' => $profilePictureUrl,
             'email' => $user->email,
             'phone' => $user->phone,
+            'profile_picture' => $profilePictureUrl,
             'roles' => $user->roles->pluck('name'),
-            'merchants' => $user->merchants->map(function ($merchant) {
-                return [
-                    'id' => $merchant->id,
-                    'slug' => $merchant->slug,
-                    'name' => $merchant->name,
-                    'status' => $merchant->status,
-                    'segmentation' => $merchant->segmentation ? [
-                        'id' => $merchant->segmentation->id,
-                        'name' => $merchant->segmentation->name,
-                    ] : null,
-                ];
-            }),
+            'merchants' => $user->merchants,
+            'is_super_admin' => (bool) $user->is_super_admin,
         ]);
     }
 

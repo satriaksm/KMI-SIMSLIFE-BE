@@ -169,4 +169,12 @@ class PostComment extends Model
 
         return $this->parent->getNestingLevel() + 1;
     }
+
+    /**
+     * ✅ NEW: Reports about this comment
+     */
+    public function reports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
+    }
 }

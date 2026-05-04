@@ -508,11 +508,63 @@ class VoucherController extends Controller
             'voucher_status' => ['required', 'in:active,inactive'],
         ]);
 
-        $voucher->update([
-            'voucher_status' => $data['voucher_status'],
-        ]);
+        // If it's a merchant's own voucher
+        if ((int) $voucher->merchant_id === (int) $merchant->id) {
+            $voucher->update([
+                'voucher_status' => $data['voucher_status'],
+            ]);
+        } else {
+            // It's an event voucher, update the pivot status
+            $voucher->merchantsVoucher()->updateExistingPivot($merchant->id, [
+                'status' => $data['voucher_status'],
+                'activated_at' => $data['voucher_status'] === 'active' ? now() : null,
+            ]);
+        }
 
         return ApiResponse::success($voucher->fresh(), 'Status voucher berhasil diperbarui.');
+    }
+
+    /**
+     * MERCHANT: Get restricted products for an event voucher
+     */
+    public function getRestrictedProducts(Merchant $merchant, Voucher $voucher)
+    {
+        $this->authorize('view', [$voucher, $merchant]);
+
+        $products = $voucher->restrictedProducts()
+            ->wherePivot('merchant_id', $merchant->id)
+            ->get(['products.id', 'products.name', 'products.slug']);
+
+        return ApiResponse::success($products, 'Daftar produk terlarang berhasil dimuat.');
+    }
+
+    /**
+     * MERCHANT: Set restricted products for an event voucher
+     */
+    public function setRestrictedProducts(Request $request, Merchant $merchant, Voucher $voucher)
+    {
+        $this->authorize('update', [$voucher, $merchant]);
+
+        $data = $request->validate([
+            'product_ids' => ['nullable', 'array'],
+            'product_ids.*' => ['integer', 'exists:products,id'],
+        ]);
+
+        DB::transaction(function () use ($voucher, $merchant, $data) {
+            // Remove existing for this merchant
+            $voucher->restrictedProducts()->wherePivot('merchant_id', $merchant->id)->detach();
+
+            // Attach new
+            if (!empty($data['product_ids'])) {
+                foreach ($data['product_ids'] as $productId) {
+                    $voucher->restrictedProducts()->attach($productId, [
+                        'merchant_id' => $merchant->id
+                    ]);
+                }
+            }
+        });
+
+        return ApiResponse::success(null, 'Pembatasan produk berhasil diperbarui.');
     }
 
 

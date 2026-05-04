@@ -26,6 +26,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'profile_picture_path',
         'nik',
         'status',
+        'is_super_admin',
         'email_verified_at',
         'password',
     ];
@@ -50,6 +51,7 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return [
             'email_verified_at' => 'datetime',
+            'is_super_admin' => 'boolean',
             'password' => 'hashed',
         ];
     }
@@ -89,6 +91,21 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->roles->contains(fn($r) => in_array(strtolower($r->name), $roles, true));
     }
 
+    public function isSystemAdmin(): bool
+    {
+        return (bool) $this->is_system_admin;
+    }
+
+    public function canManageAdmins(): bool
+    {
+        return $this->isSystemAdmin();
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->hasRole('admin') || $this->isSystemAdmin();
+    }
+    
     public function getProfilePictureAttribute()
     {
         if (empty($this->profile_picture_path)) {
@@ -226,5 +243,29 @@ class User extends Authenticatable implements MustVerifyEmail
     public function scopeBlocked($query)
     {
         return $query->whereIn('status', ['suspended', 'inactive']);
+    }
+
+    /**
+     * ✅ NEW: User's submitted reports
+     */
+    public function submittedReports()
+    {
+        return $this->hasMany(ContentReport::class, 'user_id');
+    }
+
+    /**
+     * ✅ NEW: Reports about this user
+     */
+    public function receivedReports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
+    }
+
+    /**
+     * ✅ NEW: Reports forwarded to this user
+     */
+    public function forwardedReports()
+    {
+        return $this->hasMany(ContentReport::class, 'forwarded_to');
     }
 }

@@ -130,10 +130,6 @@ class Merchant extends Model
         return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
-    public function jasas(): HasMany
-    {
-        return $this->hasMany(Jasa::class, 'merchant_id');
-    }
 
     // Relasi ke paguyuban
     public function paguyuban(): BelongsTo
@@ -265,6 +261,14 @@ class Merchant extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+    }
+
+    /**
+     * ✅ NEW: Reports about this merchant
+     */
+    public function reports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
     }
 
     // 🆕 Rating System
