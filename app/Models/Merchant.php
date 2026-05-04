@@ -109,11 +109,6 @@ class Merchant extends Model
         return $this->hasMany(Product::class, 'merchant_id');
     }
 
-    // Relasi ke Jasa
-    public function jasas(): HasMany
-    {
-        return $this->hasMany(Jasa::class, 'merchant_id');
-    }
 
     public function user(): BelongsTo
     {

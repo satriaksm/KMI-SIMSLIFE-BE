@@ -270,8 +270,10 @@ class SearchController extends Controller
             $jasaQuery = Jasa::query()
                 ->select([
                     'jasas.id',
+                    'jasas.slug',
                     'jasas.merchant_id',
                     'jasas.title',
+                    'jasas.image',
                     'jasas.fixed_price',
                     'jasas.base_price',
                     'jasas.price',
@@ -436,8 +438,10 @@ class SearchController extends Controller
                     // Build explicit payload (avoid leaking raw select keys like COALESCE(...)).
                     $payload = [
                         'id' => $jasa->id,
+                        'slug' => $jasa->slug,
                         'merchant_id' => $jasa->merchant_id,
                         'created_at' => $jasa->created_at,
+                        'image' => $jasa->image,
 
                         'min_price' => $jasa->min_price,
                         'max_price' => $jasa->max_price,
@@ -548,12 +552,10 @@ class SearchController extends Controller
                         });
                 },
                 'jasas as jasas_count' => function ($q) {
-                    $q->where(function ($sub) {
-                        $sub->whereIn('status', ['published', 'active'])
-                            ->orWhere(function ($sub2) {
-                                $sub2->whereNull('status')->where('is_active', true);
-                            });
-                    });
+                    // Count jasas where is_active=true (this covers newly created jasas
+                    // that have default status='draft' but is_active=true, as well as
+                    // jasas with status='active'/'published' synced to is_active=true).
+                    $q->where('is_active', true);
                 },
             ]);
 

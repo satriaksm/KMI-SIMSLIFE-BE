@@ -14,6 +14,12 @@ class Jasa extends Model
 {
     use HasFactory;
 
+    /**
+     * Hide legacy 'image' field from JSON response.
+     * Frontend should use 'cover_img.src_url' instead (API URL).
+     */
+    protected $hidden = ['image'];
+
     protected $fillable = [
         'merchant_id',
         'title',
@@ -32,6 +38,7 @@ class Jasa extends Model
         'service_area',
         'special_notes',
         'payment_methods',
+        'status',
         'operating_days',
         'operating_times',
 
@@ -104,7 +111,13 @@ class Jasa extends Model
 
     public function categories(): MorphToMany
     {
-        return $this->belongsTo(JasaCategory::class, 'jasa_category_id');
+        return $this->morphToMany(
+            Category::class,
+            'categorizable',
+            'categorizables',
+            'categorizable_id',
+            'category_id'
+        )->withTimestamps();
     }
 
     public function packages(): HasMany

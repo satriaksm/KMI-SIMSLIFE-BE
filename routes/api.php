@@ -97,16 +97,6 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/{merchantSlug}/jasas', [JasaController::class, 'publicByMerchant'])
             ->where('merchantSlug', '^[A-Za-z0-9-]+$')
             ->name('jasas');
-
-        // Merchant's ratings/reviews (public endpoint)
-        Route::get('/{merchantSlug}/ratings/summary', [RatingController::class, 'merchantSummaryBySlug'])
-            ->where('merchantSlug', '^[A-Za-z0-9-]+$')
-            ->name('ratings.summary');
-
-        // Merchant's individual ratings (public endpoint - for merchant reviews page)
-        Route::get('/{merchantSlug}/ratings', [RatingController::class, 'indexForMerchantBySlug'])
-            ->where('merchantSlug', '^[A-Za-z0-9-]+$')
-            ->name('ratings');
     });
 
     // Category Routes
@@ -175,8 +165,8 @@ Route::get('images/{image}', [ImageController::class, 'show'])
 // Cart item snapshot images (served via API - avoids direct /storage access)
 Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot'])
     ->name('cart-snapshots.show');
-// Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
-//     ->name('images.product-option-value.show');
+Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
+    ->name('images.product-option-value.show');
 
 Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile-pictures.show');
@@ -283,25 +273,30 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/', [ReportController::class, 'store'])->name('store');
     });
 
-    // ===== RATINGS (for all authenticated users) =====
-    Route::prefix('ratings')->name('ratings.')->group(function () {
-        Route::post('/', [RatingController::class, 'store'])->name('store');
-        Route::get('/{ratingId}', [RatingController::class, 'show'])->name('show');
-        Route::put('/{ratingId}', [RatingController::class, 'update'])->name('update');
-        Route::delete('/{ratingId}', [RatingController::class, 'destroy'])->name('destroy');
-    });
+    // PROTECTED Community Actions (require auth)
+    Route::prefix('community')->group(function () {
 
-    // ===== CHATS/MESSAGING (for all authenticated users) =====
-    Route::prefix('chats')->name('chats.')->group(function () {
-        Route::post('/start', [ChatController::class, 'start'])->name('start');
-        Route::get('/', [ChatController::class, 'index'])->name('index');
-        Route::get('/{conversation}', [ChatController::class, 'show'])->name('show');
-        Route::post('/{conversation}/messages', [ChatController::class, 'sendMessage'])->name('messages.store');
-        Route::post('/{conversation}/buyer-messages', [ChatController::class, 'sendBuyerMessage'])->name('messages.buyer.store');
-        Route::post('/{conversation}/offer', [ChatController::class, 'makeOffer'])->name('offer.store');
-        Route::put('/{conversation}/offer/accept', [ChatController::class, 'acceptOffer'])->name('offer.accept');
-        Route::put('/{conversation}/status', [ChatController::class, 'updateStatus'])->name('status.update');
-        Route::delete('/{conversation}', [ChatController::class, 'destroy'])->name('destroy');
+        // My Posts (auth required)
+        Route::get('/my-posts', [CommunityPostController::class, 'myPosts'])
+            ->name('community.posts.my');
+
+        // Create, Update, Delete Posts (auth required)
+        Route::post('/posts', [CommunityPostController::class, 'store'])
+            ->name('community.posts.store');
+        Route::put('/posts/{id}', [CommunityPostController::class, 'update'])
+            ->name('community.posts.update');
+        Route::delete('/posts/{id}', [CommunityPostController::class, 'destroy'])
+            ->name('community.posts.destroy');
+
+        // Comments CRUD (auth required)
+        Route::post('/posts/{postId}/comments', [PostCommentController::class, 'store'])
+            ->name('community.comments.store');
+        Route::post('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'reply'])
+            ->name('community.comments.reply');
+        Route::delete('/posts/{postId}/comments/{commentId}', [PostCommentController::class, 'destroy'])
+            ->name('community.comments.destroy');
+        Route::get('/my-comments', [PostCommentController::class, 'myComments'])
+            ->name('community.comments.my-comments');
     });
 
     // CUSTOMER ONLY: Register Merchant

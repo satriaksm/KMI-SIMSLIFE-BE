@@ -26,7 +26,7 @@ class ChatSeeder extends Seeder
         }
 
         // Filter merchants that have jasas
-        $merchantsWithJasas = $merchants->filter(function($merchant) {
+        $merchantsWithJasas = $merchants->filter(function ($merchant) {
             return $merchant->jasas && $merchant->jasas->count() > 0;
         });
 
@@ -80,7 +80,7 @@ class ChatSeeder extends Seeder
                 if ($merchant->jasas->isEmpty()) {
                     continue;
                 }
-                
+
                 $merchantJasa = $merchant->jasas->random();
 
                 // Create conversation
@@ -101,13 +101,13 @@ class ChatSeeder extends Seeder
                 for ($i = 0; $i < $messageCount; $i++) {
                     // Alternate between buyer and merchant
                     $isBuyerMessage = $i % 2 === 0;
-                    
+
                     $messageData = [
                         'conversation_id' => $conversation->id,
                         'sender_id' => $isBuyerMessage ? $customer->id : $merchant->user_id,
                         'sender_role' => $isBuyerMessage ? 'buyer' : 'merchant',
                         'type' => 'text',
-                        'body' => $isBuyerMessage 
+                        'body' => $isBuyerMessage
                             ? $buyerMessages[array_rand($buyerMessages)]
                             : $merchantMessages[array_rand($merchantMessages)],
                     ];
@@ -125,7 +125,7 @@ class ChatSeeder extends Seeder
                     $messageData['updated_at'] = $currentTime;
 
                     Message::create($messageData);
-                    
+
                     // Increment time for next message
                     $currentTime = $currentTime->addMinutes(rand(5, 30));
                 }

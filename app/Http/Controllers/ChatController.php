@@ -13,7 +13,8 @@ class ChatController extends Controller
 {
     private function isMerchantConversationOwner(Conversation $conversation, $user): bool
     {
-        if (!$user) return false;
+        if (!$user)
+            return false;
         return Merchant::where('id', $conversation->merchant_id)
             ->where('user_id', $user->id)
             ->exists();
@@ -21,7 +22,8 @@ class ChatController extends Controller
 
     private function canAccessConversation(Conversation $conversation, $user): bool
     {
-        if (!$user) return false;
+        if (!$user)
+            return false;
         return $conversation->buyer_id === $user->id
             || $this->isMerchantConversationOwner($conversation, $user)
             || $user->hasRole('admin');
@@ -197,7 +199,7 @@ class ChatController extends Controller
 
         // Validate access (merchant, buyer, or admin)
         $isAuthorized = $this->canAccessConversation($conversation, $user);
-        
+
         if (!$isAuthorized) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
@@ -268,7 +270,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -309,7 +311,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate buyer access
-        if ($conversation->buyer_id !== $user->id && ! $user->hasRole('admin')) {
+        if ($conversation->buyer_id !== $user->id && !$user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -350,7 +352,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -395,7 +397,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if ($conversation->merchant_id !== $user->id && ! $user->hasRole('admin')) {
+        if ($conversation->merchant_id !== $user->id && !$user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -436,7 +438,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -481,7 +483,7 @@ class ChatController extends Controller
         $user = $request->user();
 
         // Validate merchant access
-        if (! $this->isMerchantConversationOwner($conversation, $user) && ! $user->hasRole('admin')) {
+        if (!$this->isMerchantConversationOwner($conversation, $user) && !$user->hasRole('admin')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 

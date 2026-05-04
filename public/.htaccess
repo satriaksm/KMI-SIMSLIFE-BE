@@ -1,9 +1,16 @@
+# ─── Block access to sensitive files ────────────────────────────────────────
+<FilesMatch "(\.env|\.env\..*|composer\.json|composer\.lock|package\.json|pnpm-lock\.yaml|artisan|\.git)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
     <IfModule mod_negotiation.c>
         Options -MultiViews -Indexes
     </IfModule>
 
     RewriteEngine On
+    RewriteBase /backend/
 
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
