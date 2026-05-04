@@ -5,6 +5,7 @@ use App\Http\Controllers\CartController;
 use App\Http\Controllers\JasaController;
 use App\Http\Controllers\JasaCategoryController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\PackageController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
@@ -315,6 +316,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+        Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
     });
 
