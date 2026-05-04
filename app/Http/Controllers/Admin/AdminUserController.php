@@ -115,6 +115,7 @@ class AdminUserController extends Controller
                 $userTrend[] = [
                     'date' => $date,
                     'active' => User::where('status', 'active')
+                        ->whereNotNull('email_verified_at')
                         ->whereDate('updated_at', '<=', $date)
                         ->count(),
                     'watchlist' => User::where('status', 'watchlist')
@@ -173,7 +174,9 @@ class AdminUserController extends Controller
 
         return [
             'total_users' => User::count(),
-            'active_users' => User::where('status', 'active')->count(),
+            'active_users' => User::where('status', 'active')
+                ->whereNotNull('email_verified_at')
+                ->count(),
             'declining_users' => User::where('status', 'declining')->count(),
             'watchlist_users' => User::where('status', 'watchlist')->count(),
             'suspended_users' => User::where('status', 'suspended')->count(),

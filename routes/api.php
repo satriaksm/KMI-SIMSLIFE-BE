@@ -128,6 +128,7 @@ Route::prefix('public')->name('public.')->group(function () {
     //  events endpoint (published only, for homepage banner)
     //  events endpoint (published only, for homepage banner)
     Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
+    Route::get('events/{id}', [EventController::class, 'publicShow'])->name('events.show');
 
     //  Homepage specific endpoints
     Route::prefix('home')->name('home.')->group(function () {
@@ -354,12 +355,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
             Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
 
-            // Route::prefix('events')->name('events.')->group(function () {
-            //     Route::get('/', [EventController::class, 'indexByMerchant'])->name('index');
-            //     Route::get('/{id}', [EventController::class, 'show'])->name('show');
+            Route::prefix('events')->name('events.')->group(function () {
+                Route::get('/', [EventController::class, 'indexByMerchant'])->name('index');
+                Route::get('/{id}', [EventController::class, 'show'])->name('show');
 
-            //     Route::post('/{id}', [EventController::class, 'approvalByMerchant'])->name('approval');
-            // });
+                Route::post('/{id}', [EventController::class, 'approvalByMerchant'])->name('approval');
+            });
             Route::prefix('products')->name('merchant.products.')->group(function () {
                 Route::get('', [ProductController::class, 'index'])->name('index');
                 Route::post('', [ProductController::class, 'store'])->name('store');
@@ -404,6 +405,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
                 Route::post('bulk-delete', [VoucherController::class, 'bulkDelete'])->name('merchant.bulk-delete');
                 Route::post('bulk-update-status', [VoucherController::class, 'bulkUpdateStatus'])->name('merchant.bulk-update-status');
+
+                // Event voucher product restrictions
+                Route::get('{voucher}/restricted-products', [VoucherController::class, 'getRestrictedProducts']);
+                Route::post('{voucher}/restricted-products', [VoucherController::class, 'setRestrictedProducts']);
 
 
             });
@@ -495,6 +500,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/', [AdminEventController::class, 'index'])->name('index');
             Route::post('/', [AdminEventController::class, 'store'])->name('store');
             Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf');
+            Route::get('/{id}/export-pdf', [AdminEventController::class, 'exportEventDetailPdf'])->name('exportEventDetailPdf');
 
             //  Manual trigger auto-archive
             Route::post('/auto-archive', [AdminEventController::class, 'triggerAutoArchive'])->name('auto-archive');

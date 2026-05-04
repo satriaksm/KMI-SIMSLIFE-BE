@@ -51,16 +51,16 @@ class Voucher extends Model
 
     public function merchantsVoucher()
     {
-        return $this->belongsToMany(Merchant::class, 'merchant_vouchers')
+        return $this->belongsToMany(Merchant::class, 'voucher_merchants')
             ->withPivot(['status', 'voucher_type', 'discount_value', 'activated_at'])
             ->withTimestamps();
-        $usedCount = $this->usages_count ?? 0;
+    }
 
-        if ($this->usage_limit === null) {
-            return "{$usedCount} / ∞";
-        }
-
-        return "{$usedCount} / {$this->usage_limit}";
+    public function restrictedProducts()
+    {
+        return $this->belongsToMany(Product::class, 'voucher_merchant_products')
+            ->withPivot(['merchant_id'])
+            ->withTimestamps();
     }
 
     public function scopeActive($query)

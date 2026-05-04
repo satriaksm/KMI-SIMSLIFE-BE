@@ -196,6 +196,10 @@ class AdminEventController extends Controller
             'event_end_date' => 'sometimes|required|date|after_or_equal:event_start_date',
             'banner_img' => 'nullable|mimes:jpeg,jpg,png,webp,svg|max:5120',
             'status' => 'sometimes|required|in:draft,published,archived',
+            'merchant_ids' => 'nullable|array',
+            'merchant_ids.*' => 'exists:merchants,id',
+            'voucher_ids' => 'nullable|array',
+            'voucher_ids.*' => 'exists:vouchers,id',
         ], [
             'event_name.unique' => 'Nama event sudah digunakan. Gunakan nama yang berbeda.', 
             'banner_img.mimes' => 'Format banner harus JPG, PNG, WebP, atau SVG',
@@ -313,8 +317,22 @@ class AdminEventController extends Controller
 
         $event->update($validated);
 
+        // Bulk invite merchants if provided
+        if ($request->has('merchant_ids')) {
+            $event->merchants()->syncWithoutDetaching(
+                collect($request->merchant_ids)->mapWithKeys(fn($id) => [
+                    $id => ['status' => 'pending']
+                ])
+            );
+        }
+
+        // Bulk attach vouchers if provided
+        if ($request->has('voucher_ids')) {
+            Voucher::whereIn('id', $request->voucher_ids)->update(['event_id' => $event->id]);
+        }
+
         // ✅ FIX: Reload event dengan relasi untuk response yang konsisten
-        $event = Event::with(['creator:id,name'])
+        $event = Event::with(['creator:id,name', 'merchants', 'vouchers'])
             ->withCount(['merchants', 'vouchers'])
             ->find($event->id);
 
@@ -359,6 +377,10 @@ class AdminEventController extends Controller
             'event_end_date' => 'required|date|after_or_equal:event_start_date',
             'banner_img' => 'required|mimes:jpeg,jpg,png,webp,svg|max:5120', // ✅ REQUIRED
             'status' => 'required|in:draft,published,archived',
+            'merchant_ids' => 'nullable|array',
+            'merchant_ids.*' => 'exists:merchants,id',
+            'voucher_ids' => 'nullable|array',
+            'voucher_ids.*' => 'exists:vouchers,id',
         ], [
             'event_name.unique' => 'Nama event sudah digunakan. Gunakan nama yang berbeda.', // ✅ ADDED
             'event_start_date.after_or_equal' => 'Tanggal mulai tidak boleh di masa lalu',
@@ -412,9 +434,23 @@ class AdminEventController extends Controller
         }
         $event = Event::create($validated);
 
+        // Bulk invite merchants if provided
+        if (!empty($request->merchant_ids)) {
+            $event->merchants()->syncWithoutDetaching(
+                collect($request->merchant_ids)->mapWithKeys(fn($id) => [
+                    $id => ['status' => 'pending']
+                ])
+            );
+        }
+
+        // Bulk attach vouchers if provided
+        if (!empty($request->voucher_ids)) {
+            Voucher::whereIn('id', $request->voucher_ids)->update(['event_id' => $event->id]);
+        }
+
         return response()->json([
             'message' => 'Event created successfully',
-            'data' => $event,
+            'data' => $event->load(['creator:id,name', 'merchants', 'vouchers']),
         ], 201);
     }
 
@@ -803,6 +839,74 @@ class AdminEventController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal membuat laporan PDF',
+            ], 500);
+        }
+    }
+
+    /**
+     * Export single event detail to PDF
+     */
+    public function exportEventDetailPdf(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+            
+            $event = Event::with([
+                'creator:id,name',
+                'merchants' => function ($query) {
+                    $query->wherePivot('status', 'accepted')
+                        ->with(['segmentation', 'paguyuban']);
+                },
+                'vouchers'
+            ])
+            ->withCount([
+                'merchants as active_merchants_count' => function ($query) {
+                    $query->where('event_merchants.status', 'accepted');
+                },
+                'vouchers'
+            ])
+            ->findOrFail($id);
+
+            $metadata = [
+                'generated_at' => now()->format('d F Y, H:i:s'),
+                'generated_by' => $admin->name ?? 'Admin',
+                'generated_by_email' => $admin->email ?? '-',
+                'title' => 'Laporan Detail Event: ' . $event->event_name,
+            ];
+
+            // Load logo as base64
+            $logoPath = public_path('images/logo-sumilir.png');
+            $logoBase64 = '';
+            
+            if (file_exists($logoPath)) {
+                $logoData = file_get_contents($logoPath);
+                $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
+            }
+
+            // Generate PDF
+            $pdf = Pdf::loadView('exports.admin.admin-event-detail', [
+                'event' => $event,
+                'metadata' => $metadata,
+                'logoBase64' => $logoBase64,
+            ])
+            ->setPaper('a4', 'portrait')
+            ->setOption('margin-top', 10)
+            ->setOption('margin-right', 10)
+            ->setOption('margin-bottom', 10)
+            ->setOption('margin-left', 10);
+
+            $filename = 'event-detail-' . $event->id . '-' . now()->format('Ymd-His') . '.pdf';
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Export Detail PDF failed', [
+                'event_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan detail PDF',
             ], 500);
         }
     }

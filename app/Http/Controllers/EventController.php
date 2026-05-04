@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Event;
+use App\Models\Merchant;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -11,12 +12,13 @@ use enshrined\svgSanitize\Sanitizer;
 
 class EventController extends Controller
 {
-    public function indexByMerchant(Request $request)
+    public function indexByMerchant(Request $request, Merchant $merchant)
     {
-        $merchantId = $request->integer('merchant_id');
-        if (!$merchantId) {
+        $merchantId = (int) $merchant->id;
+        $requestedMerchantId = $request->integer('merchant_id');
+        if ($requestedMerchantId && $requestedMerchantId !== $merchantId) {
             return response()->json([
-                'message' => 'merchant_id is required',
+                'message' => 'merchant_id mismatch',
             ], 422);
         }
 
@@ -96,12 +98,13 @@ class EventController extends Controller
         return response()->json($events);
     }
 
-    public function show(Request $request, $id)
+    public function show(Request $request, Merchant $merchant, $id)
     {
-        $merchantId = $request->integer('merchant_id');
-        if (!$merchantId) {
+        $merchantId = (int) $merchant->id;
+        $requestedMerchantId = $request->integer('merchant_id');
+        if ($requestedMerchantId && $requestedMerchantId !== $merchantId) {
             return response()->json([
-                'message' => 'merchant_id is required',
+                'message' => 'merchant_id mismatch',
             ], 422);
         }
 
@@ -114,6 +117,16 @@ class EventController extends Controller
             return response()->json([
                 'message' => 'Unauthorized merchant',
             ], 403);
+        }
+
+        $eventId = (int) $id;
+        if ($eventId <= 0 && $request->filled('event_id')) {
+            $eventId = (int) $request->input('event_id');
+        }
+        if ($eventId <= 0) {
+            return response()->json([
+                'message' => 'event_id is invalid',
+            ], 422);
         }
 
         $event = Event::whereHas('merchants', function ($q) use ($merchantId) {
@@ -140,7 +153,7 @@ class EventController extends Controller
                     $builder->where('merchants.id', $merchantId)->select('merchants.id');
                 }
             ])
-            ->findOrFail($id);
+            ->findOrFail($eventId);
 
         $merchant = $event->merchants->first();
         $event->invitation_status = $merchant?->pivot?->status;
@@ -157,14 +170,20 @@ class EventController extends Controller
         ]);
     }
 
-    public function approvalByMerchant(Request $request, $id)
+    public function approvalByMerchant(Request $request, Merchant $merchant, $id)
     {
         $validated = $request->validate([
             'merchant_id' => 'required|integer',
             'status' => 'required|in:accepted,rejected',
+            'event_id' => 'nullable|integer',
         ]);
 
-        $merchantId = (int) $validated['merchant_id'];
+        $merchantId = (int) $merchant->id;
+        if ((int) $validated['merchant_id'] !== $merchantId) {
+            return response()->json([
+                'message' => 'merchant_id mismatch',
+            ], 422);
+        }
 
         $ownsMerchant = $request->user()
                 ?->merchants()
@@ -178,6 +197,14 @@ class EventController extends Controller
         }
 
         $eventId = (int) $id;
+        if ($eventId <= 0 && !empty($validated['event_id'])) {
+            $eventId = (int) $validated['event_id'];
+        }
+        if ($eventId <= 0) {
+            return response()->json([
+                'message' => 'event_id is invalid',
+            ], 422);
+        }
 
         $event = Event::whereHas('merchants', function ($q) use ($merchantId) {
             $q->where('merchants.id', $merchantId);
@@ -187,6 +214,21 @@ class EventController extends Controller
             'status' => $validated['status'],
             'responded_at' => now(),
         ]);
+
+        // If accepted, also link all current event vouchers to this merchant
+        if ($validated['status'] === 'accepted') {
+            $eventVouchers = $event->vouchers;
+            foreach ($eventVouchers as $voucher) {
+                $voucher->merchantsVoucher()->syncWithoutDetaching([
+                    $merchantId => [
+                        'status' => 'inactive', // Default inactive until merchant activates or sets products
+                        'voucher_type' => null,
+                        'discount_value' => null,
+                        'activated_at' => null,
+                    ]
+                ]);
+            }
+        }
 
         return response()->json([
             'message' => 'Event invitation ' . $validated['status'] . ' successfully',
@@ -382,11 +424,70 @@ class EventController extends Controller
             ->whereDate('event_end_date', '>=', $today)
             ->select('id', 'event_name', 'event_description', 'banner_img_path', 'event_start_date', 'event_end_date')
             ->orderBy('event_start_date', 'desc')
-            ->limit(10) // Limit to 10 latest events
             ->get();
+
+        $events->transform(function ($event) {
+            $event->banner_url = route('event_banners.show', ['event' => $event->id]);
+            unset($event->banner_img_path);
+            return $event;
+        });
 
         return response()->json([
             'data' => $events,
+        ]);
+    }
+
+    public function publicShow($id)
+    {
+        $event = Event::where('status', 'published')
+            ->with([
+                'vouchers' => function ($q) {
+                    $q->where('voucher_status', 'active')
+                        ->with(['restrictedProducts' => function($pq) {
+                            $pq->published()
+                               ->with(['coverImage', 'merchant:id,name,slug']);
+                        }])
+                        ->select('id', 'event_id', 'voucher_name', 'voucher_code', 'voucher_type', 'value', 'voucher_description', 'voucher_end_date');
+                },
+                'merchants' => function ($q) {
+                    $q->where('event_merchants.status', 'accepted')
+                        ->select('merchants.id', 'merchants.name', 'merchants.slug', 'merchants.logo_path');
+                }
+            ])
+            ->findOrFail($id);
+
+        $event->banner_url = route('event_banners.show', ['event' => $event->id]);
+        
+        // Flatten unique products from all vouchers
+        $allProducts = collect();
+        foreach ($event->vouchers as $voucher) {
+            foreach ($voucher->restrictedProducts as $product) {
+                // Attach event info for the product card tag
+                $product->event = [
+                    'id' => $event->id,
+                    'name' => $event->event_name,
+                    'discount' => $voucher->voucher_type === 'percent' 
+                        ? $voucher->value . '%' 
+                        : 'Rp' . number_format($voucher->value, 0, ',', '.')
+                ];
+                $allProducts->push($product);
+            }
+        }
+        
+        // Unique by product ID
+        $event->products = $allProducts->unique('id')->values();
+
+        // Transform merchant logos
+        $event->merchants->transform(function ($merchant) {
+            $merchant->logo_url = $merchant->logo_path 
+                ? route('merchant.logo', ['merchant' => $merchant->id])
+                : null;
+            unset($merchant->logo_path);
+            return $merchant;
+        });
+
+        return response()->json([
+            'data' => $event,
         ]);
     }
 }
