@@ -117,6 +117,38 @@ class OrderController extends Controller
         );
     }
 
+    public function complete(Order $order)
+    {
+        $user = Auth::user();
+        if (!$user instanceof User) {
+            return ApiResponse::error('Unauthorized', 401);
+        }
+
+        if ((int) $order->user_id !== (int) $user->id) {
+            return ApiResponse::error('Forbidden', 403);
+        }
+
+        if ($order->status !== 'delivered') {
+            return ApiResponse::error('Pesanan hanya dapat diselesaikan jika statusnya sudah diantar (delivered).', 422);
+        }
+
+        $order->status = 'completed';
+        $order->completed_at = now();
+        $order->save();
+
+        // Pindahkan saldo dari balance_pending → balance_available
+        $this->moveBalanceToAvailable($order);
+
+        $updatedOrder = $order->fresh();
+        event(new OrderStatusUpdated($updatedOrder));
+        $this->webPushService->sendOrderStatusUpdate($updatedOrder);
+
+        return ApiResponse::success(
+            $order->load(['items.addons.addon']),
+            'Order completed'
+        );
+    }
+
     public function cancel(Order $order)
     {
         $user = Auth::user();
@@ -293,6 +325,14 @@ class OrderController extends Controller
             $hasPendingPayment = $order->payment()->where('status', 'pending')->exists();
             if ($hasPendingPayment) {
                 return ApiResponse::error('Pesanan belum dibayar. Tunggu pembayaran dari pembeli.', 422);
+            }
+        }
+
+        if ($newStatus === 'completed') {
+            $isPickup = $order->delivery_type === 'pickup';
+            $isCOD = strtoupper($order->payment_method ?? '') === 'COD';
+            if (!$isPickup && !$isCOD) {
+                return ApiResponse::error('Pesanan diantar tidak dapat diselesaikan oleh penjual. Menunggu konfirmasi penerimaan dari pembeli.', 422);
             }
         }
 

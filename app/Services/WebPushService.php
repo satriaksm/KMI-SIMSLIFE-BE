@@ -261,6 +261,18 @@ class WebPushService
         return (string) ($order->delivery_type ?? '') === 'pickup';
     }
 
+    private function isBuyerAlsoMerchantOwner(Order $order): bool
+    {
+        $buyerId = $order->user_id ?? $order->user?->id;
+        $merchantOwnerId = $order->merchant?->user_id ?? $order->merchant?->user?->id;
+
+        if (!$buyerId || !$merchantOwnerId) {
+            return false;
+        }
+
+        return (int) $buyerId === (int) $merchantOwnerId;
+    }
+
     private function subscriptionMatchesAudience(PushSubscription $subscription, string $audience): bool
     {
         $audiences = $subscription->audiences;

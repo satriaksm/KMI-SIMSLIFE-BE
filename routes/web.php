@@ -15,7 +15,7 @@ Route::get('/login', function () {
 })->name('login');
 
 // Auth routes (SPA)
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
 Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth');
 
 // ✅ Tambahkan route untuk mendapatkan data user yang sedang login

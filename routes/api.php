@@ -261,6 +261,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/', [OrderController::class, 'customerIndex']);
             Route::get('/{order}', [OrderController::class, 'customerShow']);
             Route::post('/{order}/cancel', [OrderController::class, 'cancel']);
+            Route::post('/{order}/complete', [OrderController::class, 'complete']);
         });
 
         Route::prefix('shipping')->group(function () {
