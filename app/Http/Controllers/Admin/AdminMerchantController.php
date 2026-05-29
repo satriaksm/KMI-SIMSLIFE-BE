@@ -65,9 +65,6 @@ class AdminMerchantController extends Controller
      *   }
      * }
      */
-    /**
-     * ADMIN: List all merchants with filters
-     */
     public function index(Request $request)
     {
         $query = Merchant::with([
@@ -248,9 +245,6 @@ class AdminMerchantController extends Controller
     }
 
     /**
-     * ADMIN: Get single merchant detail
-     */
-    /**
      * Get Merchant Detail (Admin)
      *
      * Get detail of a merchant by ID, including user, segmentation, addresses, products, vouchers, and events.
@@ -293,8 +287,7 @@ class AdminMerchantController extends Controller
             ])
                 ->withCount(['products', 'vouchers', 'events'])
                 ->findOrFail($id);
-                ->withCount(['products', 'vouchers', 'events'])
-                ->findOrFail($id);
+
 
             // ✅ FIX: Transform products to include complete data from variants
             $merchant->products->transform(function ($product) {
@@ -416,20 +409,21 @@ class AdminMerchantController extends Controller
                     ['created_at' => now(), 'updated_at' => now()]
                 );
             }
-        });
 
-        if ($merchant->user) {
-            $merchant->user->notify(new MerchantApplicationStatusNotification(
-                $merchant->fresh(),
-                'approved'
-            ));
+            if ($merchant->user) {
+                $merchant->user->notify(new MerchantApplicationStatusNotification(
+                    $merchant->fresh(),
+                    'approved'
+                ));
 
-            $webPushService->sendMerchantApplicationDecision(
-                $merchant->user,
-                $merchant->fresh(),
-                'approved'
-            );
-        }
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'approved'
+                );
+            }
+
+            DB::commit();
 
             return response()->json([
                 'message' => 'Merchant disetujui dan slug telah digenerate.',
@@ -481,23 +475,27 @@ class AdminMerchantController extends Controller
             return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
         }
 
-        $merchant->update([
-            'status' => 'rejected',
-            'response_at' => Carbon::now(),
-        ]);
+        DB::beginTransaction();
+        try {
+            $merchant->update([
+                'status' => 'rejected',
+                'response_at' => Carbon::now(),
+            ]);
 
-        if ($merchant->user) {
-            $merchant->user->notify(new MerchantApplicationStatusNotification(
-                $merchant->fresh(),
-                'rejected'
-            ));
+            if ($merchant->user) {
+                $merchant->user->notify(new MerchantApplicationStatusNotification(
+                    $merchant->fresh(),
+                    'rejected'
+                ));
 
-            $webPushService->sendMerchantApplicationDecision(
-                $merchant->user,
-                $merchant->fresh(),
-                'rejected'
-            );
-        }
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'rejected'
+                );
+            }
+
+            DB::commit();
 
             return response()->json([
                 'message' => 'Merchant ditolak.',
