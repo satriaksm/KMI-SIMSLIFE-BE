@@ -188,7 +188,6 @@ class WebhookController extends Controller
 
                 $webPush = app(WebPushService::class);
                 $webPush->sendPaymentStatusUpdate($order, $payment);
-                $webPush->sendOrderStatusUpdate($order);
             }
 
             foreach ($inventoryUpdates as $update) {
@@ -226,7 +225,6 @@ class WebhookController extends Controller
 
             $webPush = app(WebPushService::class);
             $webPush->sendPaymentStatusUpdate($order, $payment);
-            $webPush->sendOrderStatusUpdate($order);
 
             return ApiResponse::success(null, 'Payment expired');
         }

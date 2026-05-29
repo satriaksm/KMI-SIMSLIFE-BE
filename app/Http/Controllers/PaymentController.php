@@ -194,7 +194,6 @@ class PaymentController extends Controller
 
             $webPush = app(WebPushService::class);
             $webPush->sendPaymentStatusUpdate($order, $payment);
-            $webPush->sendOrderStatusUpdate($order);
 
             return ApiResponse::success([
                 'order_status'   => $order->status,
@@ -262,7 +261,6 @@ class PaymentController extends Controller
             event(new OrderStatusUpdated($order->fresh()));
             $webPush = app(WebPushService::class);
             $webPush->sendPaymentStatusUpdate($order, $payment);
-            $webPush->sendOrderStatusUpdate($order);
         }
 
         return ApiResponse::success(null, 'Payment dibatalkan');

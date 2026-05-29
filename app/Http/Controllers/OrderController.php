@@ -142,7 +142,7 @@ class OrderController extends Controller
 
         $updatedOrder = $order->fresh();
         event(new OrderStatusUpdated($updatedOrder));
-        $this->webPushService->sendOrderStatusUpdate($updatedOrder);
+        $this->webPushService->sendOrderStatusUpdate($updatedOrder, 'customer_cancel');
 
         return ApiResponse::success(
             $order->load(['items.addons.addon']),
@@ -320,7 +320,8 @@ class OrderController extends Controller
 
         $updatedOrder = $order->fresh();
         event(new OrderStatusUpdated($updatedOrder));
-        $this->webPushService->sendOrderStatusUpdate($updatedOrder);
+        $cancelContext = $newStatus === 'cancelled' ? 'merchant_reject' : null;
+        $this->webPushService->sendOrderStatusUpdate($updatedOrder, $cancelContext);
 
         return ApiResponse::success(
             $order->load(['items.addons.addon']),
@@ -337,6 +338,12 @@ class OrderController extends Controller
             'delivery_type' => 'nullable|in:pickup,delivery',
             'payment_method'=> 'nullable|string',
             'notes'         => 'nullable|string|max:500',
+        ], [
+            'cart_id.required' => 'Keranjang wajib dipilih.',
+            'cart_id.integer'  => 'ID keranjang tidak valid.',
+            'cart_id.exists'   => 'Keranjang tidak ditemukan. Silakan tambahkan produk ke keranjang lagi.',
+            'address_id.exists'=> 'Alamat pengiriman tidak valid.',
+            'voucher_id.exists'=> 'Voucher tidak valid.',
         ]);
 
         $user = Auth::user();
@@ -604,7 +611,9 @@ class OrderController extends Controller
             ]);
         }
 
-        event(new OrderCreated($order->fresh()));
+        $freshOrder = $order->fresh();
+        event(new OrderCreated($freshOrder));
+        $this->webPushService->notifyOrderCreated($freshOrder);
 
         return ApiResponse::success([
             'order'  => $order->load(['items.addons']),
@@ -702,7 +711,7 @@ class OrderController extends Controller
 
             $updatedOrder = $order->fresh();
             event(new OrderStatusUpdated($updatedOrder));
-            $this->webPushService->sendOrderStatusUpdate($updatedOrder);
+            $this->webPushService->sendOrderStatusUpdate($updatedOrder, 'auto');
         }
 
         return $changed;

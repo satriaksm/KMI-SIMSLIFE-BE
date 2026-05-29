@@ -206,6 +206,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     });
 
     Route::prefix('push-subscriptions')->controller(PushSubscriptionController::class)->group(function () {
+        Route::get('/status', 'status')->name('push-subscriptions.status');
         Route::post('/', 'store')->name('push-subscriptions.store');
         Route::delete('/', 'destroy')->name('push-subscriptions.destroy');
     });

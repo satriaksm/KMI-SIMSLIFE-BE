@@ -11,6 +11,7 @@ class PushSubscription extends Model
 
     protected $fillable = [
         'user_id',
+        'audiences',
         'endpoint',
         'p256dh',
         'auth',
@@ -19,6 +20,7 @@ class PushSubscription extends Model
     ];
 
     protected $casts = [
+        'audiences' => 'array',
         'expiration_time' => 'integer',
     ];
 

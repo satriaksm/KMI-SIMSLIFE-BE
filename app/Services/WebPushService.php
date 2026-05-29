@@ -27,120 +27,268 @@ class WebPushService
     public function sendMerchantApplicationDecision(User $user, Merchant $merchant, string $status = 'approved'): void
     {
         $payload = json_encode($this->buildPayload($merchant, $status), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $this->sendPayloadToUser($user, $payload, 'Merchant decision');
+        $this->sendPayloadToUser($user, $payload, 'Merchant decision', 'merchant');
     }
 
-    public function sendOrderStatusUpdate(Order $order): void
+    /**
+     * Setelah checkout: Transfer → ingatkan bayar (pembeli).
+     * COD → beri tahu UMKM ada pesanan baru.
+     */
+    public function notifyOrderCreated(Order $order): void
     {
-        $status = (string) $order->status;
+        $order = $this->loadOrderRelations($order);
 
-        $messages = [
-            'paid' => ['Pembayaran diterima', 'Pesanan Anda telah dibayar dan sedang diproses.'],
-            'responsed' => ['Pesanan diproses', 'UMKM sudah memproses pesanan Anda.'],
-            'delivered' => ['Pesanan dikirim', 'Pesanan Anda sedang dalam pengiriman.'],
-            'completed' => ['Pesanan selesai', 'Pesanan Anda telah selesai.'],
-            'cancelled' => ['Pesanan dibatalkan', 'Pesanan Anda telah dibatalkan.'],
-        ];
-
-        if (!isset($messages[$status])) {
+        if ($this->isCod($order)) {
+            $this->notifyMerchantNewOrder($order);
             return;
         }
 
-        [$title, $body] = $messages[$status];
-        $baseUrl = rtrim((string) config('app.frontend_url'), '/');
-
-        $payloadCustomer = json_encode([
-            'title' => $title,
-            'body' => $body,
-            'icon' => '/icon192.png',
-            'badge' => '/icon192.png',
-            'tag' => 'order-status-' . $order->id,
-            'data' => [
-                'url' => $baseUrl . '/orders/' . $order->id,
-                'order_id' => $order->id,
-                'status' => $status,
-                'role' => 'customer',
-            ],
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-        if ($order->user) {
-            $this->sendPayloadToUser($order->user, $payloadCustomer, 'Order status customer');
-        }
-
-        $merchantUser = $order->merchant?->user;
-        if ($merchantUser) {
-            $payloadMerchant = json_encode([
-                'title' => 'Update pesanan',
-                'body' => 'Status pesanan berubah menjadi ' . $status . '.',
-                'icon' => '/icon192.png',
-                'badge' => '/icon192.png',
-                'tag' => 'order-status-' . $order->id,
-                'data' => [
-                    'url' => $baseUrl . '/merchant-center/' . ($order->merchant?->slug ?? '') . '/orders/' . $order->id,
-                    'order_id' => $order->id,
-                    'status' => $status,
-                    'role' => 'merchant',
-                ],
-            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-            $this->sendPayloadToUser($merchantUser, $payloadMerchant, 'Order status merchant');
-        }
+        $code = $order->order_code ?: ('#' . $order->id);
+        $this->notifyCustomer(
+            $order,
+            'Bayar tagihan pesanan Anda',
+            "Selesaikan pembayaran pesanan {$code} agar diproses penjual.",
+            'order-pay-' . $order->id,
+        );
     }
 
+    /**
+     * Setelah pembayaran transfer berhasil: hanya UMKM (pesanan baru).
+     * Pembeli tidak di-spam notifikasi "paid".
+     */
     public function sendPaymentStatusUpdate(Order $order, Payment $payment): void
     {
-        $status = (string) $payment->status;
+        $order = $this->loadOrderRelations($order);
+        $paymentStatus = strtolower((string) $payment->status);
+
+        if ($paymentStatus === 'paid') {
+            if (!$this->isCod($order)) {
+                $this->notifyMerchantNewOrder($order);
+            }
+            return;
+        }
+
         $messages = [
-            'paid' => ['Pembayaran berhasil', 'Pembayaran pesanan telah diterima.'],
-            'expired' => ['Pembayaran kedaluwarsa', 'Pembayaran pesanan telah kedaluwarsa.'],
+            'expired' => ['Pembayaran kedaluwarsa', 'Tagihan pesanan Anda telah kedaluwarsa.'],
             'failed' => ['Pembayaran gagal', 'Pembayaran pesanan gagal diproses.'],
         ];
 
-        if (!isset($messages[$status])) {
+        if (!isset($messages[$paymentStatus])) {
             return;
         }
 
-        [$title, $body] = $messages[$status];
+        [$title, $body] = $messages[$paymentStatus];
+        $this->notifyCustomer($order, $title, $body, 'payment-status-' . $payment->id);
+    }
+
+    /**
+     * Perubahan status pesanan (responsed, delivered, completed, cancelled).
+     * Status paid/pending tidak memicu push (hindari duplikat & "paid" langsung).
+     */
+    /**
+     * @param  'merchant_reject'|'customer_cancel'|'auto'|null  $cancelContext
+     */
+    public function sendOrderStatusUpdate(Order $order, ?string $cancelContext = null): void
+    {
+        $order = $this->loadOrderRelations($order);
+        $status = (string) $order->status;
+
+        if (in_array($status, ['pending', 'paid'], true)) {
+            return;
+        }
+
+        match ($status) {
+            'responsed' => $this->notifyOrderAccepted($order),
+            'delivered' => $this->notifyOrderDelivered($order),
+            'completed' => $this->notifyOrderCompleted($order),
+            'cancelled' => $this->notifyOrderCancelled($order, $cancelContext),
+            default => null,
+        };
+    }
+
+    private function notifyOrderAccepted(Order $order): void
+    {
+        if ($this->isCod($order) && $this->isPickup($order)) {
+            $this->notifyCustomer(
+                $order,
+                'Pesanan siap diambil',
+                'Silakan ambil pesanan Anda di toko.',
+                'order-responsed-' . $order->id,
+            );
+            return;
+        }
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan diterima',
+            'Pesanan Anda diterima dan sedang diproses penjual.',
+            'order-responsed-' . $order->id,
+        );
+    }
+
+    private function notifyOrderDelivered(Order $order): void
+    {
+        if ($this->isPickup($order)) {
+            return;
+        }
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan diantar',
+            'Pesanan Anda sedang dalam pengiriman.',
+            'order-delivered-' . $order->id,
+        );
+    }
+
+    private function notifyOrderCompleted(Order $order): void
+    {
+        if ($this->isCod($order)) {
+            $this->notifyCustomer(
+                $order,
+                'Pesanan selesai',
+                'Pesanan telah diambil dan dibayar.',
+                'order-completed-' . $order->id,
+            );
+            $this->notifyMerchant(
+                $order,
+                'Pesanan selesai',
+                'Pesanan COD telah diambil dan dibayar.',
+                'order-completed-' . $order->id,
+            );
+            return;
+        }
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan selesai',
+            'Pesanan telah diterima.',
+            'order-completed-' . $order->id,
+        );
+        $this->notifyMerchant(
+            $order,
+            'Pesanan selesai',
+            'Pesanan telah diterima.',
+            'order-completed-' . $order->id,
+        );
+    }
+
+    private function notifyOrderCancelled(Order $order, ?string $cancelContext = null): void
+    {
+        $body = match ($cancelContext) {
+            'merchant_reject' => 'Pesanan Anda ditolak.',
+            'customer_cancel' => 'Pesanan Anda dibatalkan.',
+            'auto' => 'Pesanan Anda dibatalkan karena batas waktu habis.',
+            default => (!$order->responsed_at && $order->paid_at)
+                ? 'Pesanan Anda ditolak.'
+                : 'Pesanan Anda dibatalkan.',
+        };
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan dibatalkan',
+            $body,
+            'order-cancelled-' . $order->id,
+        );
+    }
+
+    private function notifyMerchantNewOrder(Order $order): void
+    {
+        $productLabel = $this->orderProductLabel($order);
+        $this->notifyMerchant(
+            $order,
+            'Pesanan baru',
+            "Anda mendapatkan pesanan \"{$productLabel}\".",
+            'order-new-' . $order->id,
+        );
+    }
+
+    private function notifyCustomer(Order $order, string $title, string $body, string $tag): void
+    {
+        if (!$order->user) {
+            return;
+        }
+
+        $payload = $this->buildOrderPayload($order, $title, $body, $tag, 'customer');
+        $this->sendPayloadToUser($order->user, $payload, 'Order customer', 'customer');
+    }
+
+    private function notifyMerchant(Order $order, string $title, string $body, string $tag): void
+    {
+        $merchantUser = $order->merchant?->user;
+        if (!$merchantUser || $this->isBuyerAlsoMerchantOwner($order)) {
+            return;
+        }
+
+        $payload = $this->buildOrderPayload($order, $title, $body, $tag, 'merchant');
+        $this->sendPayloadToUser($merchantUser, $payload, 'Order merchant', 'merchant');
+    }
+
+    private function buildOrderPayload(Order $order, string $title, string $body, string $tag, string $role): string
+    {
         $baseUrl = rtrim((string) config('app.frontend_url'), '/');
 
-        $payloadCustomer = json_encode([
+        $url = $role === 'merchant'
+            ? $baseUrl . '/merchant-center/' . ($order->merchant?->slug ?? '') . '/orders/' . $order->id
+            : $baseUrl . '/orders/' . $order->id;
+
+        return json_encode([
             'title' => $title,
             'body' => $body,
             'icon' => '/icon192.png',
             'badge' => '/icon192.png',
-            'tag' => 'payment-status-' . $payment->id,
+            'tag' => $tag,
             'data' => [
-                'url' => $baseUrl . '/orders/' . $order->id,
+                'url' => $url,
                 'order_id' => $order->id,
-                'payment_id' => $payment->id,
-                'status' => $status,
-                'role' => 'customer',
+                'status' => $order->status,
+                'role' => $role,
             ],
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
 
-        if ($order->user) {
-            $this->sendPayloadToUser($order->user, $payloadCustomer, 'Payment status customer');
+    private function loadOrderRelations(Order $order): Order
+    {
+        return $order->loadMissing(['user', 'merchant.user', 'items']);
+    }
+
+    private function isCod(Order $order): bool
+    {
+        return strtoupper((string) ($order->payment_method ?? '')) === 'COD';
+    }
+
+    private function isPickup(Order $order): bool
+    {
+        return (string) ($order->delivery_type ?? '') === 'pickup';
+    }
+
+    private function subscriptionMatchesAudience(PushSubscription $subscription, string $audience): bool
+    {
+        $audiences = $subscription->audiences;
+
+        if (!is_array($audiences) || $audiences === []) {
+            return false;
         }
 
-        $merchantUser = $order->merchant?->user;
-        if ($merchantUser) {
-            $payloadMerchant = json_encode([
-                'title' => 'Status pembayaran',
-                'body' => 'Pembayaran pesanan sekarang ' . $status . '.',
-                'icon' => '/icon192.png',
-                'badge' => '/icon192.png',
-                'tag' => 'payment-status-' . $payment->id,
-                'data' => [
-                    'url' => $baseUrl . '/merchant-center/' . ($order->merchant?->slug ?? '') . '/orders/' . $order->id,
-                    'order_id' => $order->id,
-                    'payment_id' => $payment->id,
-                    'status' => $status,
-                    'role' => 'merchant',
-                ],
-            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return in_array($audience, $audiences, true);
+    }
 
-            $this->sendPayloadToUser($merchantUser, $payloadMerchant, 'Payment status merchant');
+    private function orderProductLabel(Order $order): string
+    {
+        $names = $order->items
+            ->pluck('product_name_snapshot')
+            ->filter(fn ($n) => is_string($n) && trim($n) !== '')
+            ->unique()
+            ->values();
+
+        if ($names->isEmpty()) {
+            return 'produk';
         }
+
+        if ($names->count() === 1) {
+            return $names->first();
+        }
+
+        return $names->first() . ' +' . ($names->count() - 1) . ' lainnya';
     }
 
     private function buildPayload(Merchant $merchant, string $status): array
@@ -175,9 +323,19 @@ class WebPushService
         ]);
     }
 
-    private function sendPayloadToUser(User $user, string $payload, string $context): void
-    {
+    private function sendPayloadToUser(
+        User $user,
+        string $payload,
+        string $context,
+        ?string $audience = null,
+    ): void {
         $subscriptions = $user->pushSubscriptions()->get();
+
+        if ($audience !== null) {
+            $subscriptions = $subscriptions->filter(
+                fn (PushSubscription $sub) => $this->subscriptionMatchesAudience($sub, $audience),
+            );
+        }
 
         if ($subscriptions->isEmpty()) {
             return;

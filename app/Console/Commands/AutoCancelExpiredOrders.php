@@ -35,8 +35,11 @@ class AutoCancelExpiredOrders extends Command
                         'cancelled_at' => now(),
                     ]);
 
-                    event(new OrderStatusUpdated($order->fresh()));
-                    app(WebPushService::class)->sendOrderStatusUpdate($order);
+                    $freshOrder = $order->fresh();
+                    $payment->refresh();
+                    event(new OrderStatusUpdated($freshOrder));
+                    $webPush = app(WebPushService::class);
+                    $webPush->sendPaymentStatusUpdate($freshOrder, $payment);
                 }
             });
             $cancelled++;
@@ -83,7 +86,7 @@ class AutoCancelExpiredOrders extends Command
                 ]);
 
                 event(new OrderStatusUpdated($order->fresh()));
-                app(WebPushService::class)->sendOrderStatusUpdate($order);
+                app(WebPushService::class)->sendOrderStatusUpdate($order->fresh(), 'auto');
             });
             $cancelled++;
         }
