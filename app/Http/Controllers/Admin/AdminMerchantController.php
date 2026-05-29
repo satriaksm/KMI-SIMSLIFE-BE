@@ -801,4 +801,40 @@ class AdminMerchantController extends Controller
             'Cache-Control' => 'public, max-age=31536000',
         ]);
     }
+
+    /**
+     * Change merchant status (Admin)
+     */
+    public function changeStatus(Request $request, $id)
+    {
+        $merchant = \App\Models\Merchant::findOrFail($id);
+
+        $validated = $request->validate([
+            'status' => 'required|in:pending,approved,rejected,suspended,archived',
+        ]);
+
+        $oldStatus = $merchant->status;
+        $newStatus = $validated['status'];
+
+        $merchant->update(['status' => $newStatus]);
+
+        // (Tokens deletion removed as it throws 500 without Sanctum DB)
+
+        \App\Models\AdminAction::create([
+            'admin_id'      => \Auth::id(),
+            'action_type'   => 'status_change',
+            'target_type'   => \App\Models\Merchant::class,
+            'target_id'     => $merchant->id,
+            'reason'        => $request->reason ?? 'Perubahan status manual oleh admin',
+            'status_before' => $oldStatus,
+            'status_after'  => $newStatus,
+        ]);
+
+        return response()->json([
+            'message' => 'Status merchant berhasil diubah',
+            'data'    => $merchant->fresh(),
+        ]);
+    }
+
 }
+

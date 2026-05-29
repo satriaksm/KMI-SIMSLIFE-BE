@@ -24,10 +24,32 @@ use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use App\Helpers\ApiResponse;
+use App\Services\Moderation\ContentModerationService;
 
 class ProductController extends Controller
 {
     private const MAX_VARIANT_COMBINATIONS = 50;
+
+    public function __construct(
+        private readonly ContentModerationService $moderationService
+    ) {
+    }
+
+    private function productPublishBlockedResponse(Product $product)
+    {
+        $meta = $this->moderationService->productModerationBlockMeta($product) ?? [];
+
+        return ApiResponse::error(
+            $this->moderationService->productPublishBlockedMessage(),
+            403,
+            null,
+            array_merge($meta, [
+                'product_name' => $product->name,
+                'product_slug' => $product->slug,
+            ]),
+            'moderation_blocked'
+        );
+    }
     private const MAX_VARIANTS = 2;
     private const MAX_ADDON_GROUPS = 10;
     private const MAX_ADDON_GROUP_OPTIONS = 10;
@@ -506,7 +528,10 @@ class ProductController extends Controller
                 });
             }
 
-            // C. Bersihkan object product
+            // C. Moderation block info (for archived-by-admin products)
+            $product->moderation_block = $this->moderationService->productModerationBlockMeta($product);
+
+            // D. Bersihkan object product
             // Kita sembunyikan 'images' agar tidak muncul di JSON
             $product->makeHidden(['images', 'created_at', 'updated_at', 'description']);
 
@@ -1332,6 +1357,9 @@ class ProductController extends Controller
             }
 
             if (isset($data['status'])) {
+                if ($data['status'] === 'published' && $this->moderationService->hasActiveProductSanction($product)) {
+                    return $this->productPublishBlockedResponse($product);
+                }
                 $updateData['status'] = $data['status'];
             }
 
@@ -1921,6 +1949,11 @@ class ProductController extends Controller
         // 2) Product-level permission
         $this->authorize('manage', $product);
 
+        // 3) Block publishing if product has active violation
+        if ($data['status'] === 'published' && $this->moderationService->hasActiveProductSanction($product)) {
+            return $this->productPublishBlockedResponse($product);
+        }
+
         try {
             $product->update(['status' => $data['status']]);
             return ApiResponse::success(null, 'Status produk diperbarui.', 200);
@@ -2168,6 +2201,12 @@ class ProductController extends Controller
                 // Product-level permission (policy) without throwing mid-loop
                 $ability = Gate::forUser($user)->inspect('manage', $product);
                 if ($ability->denied()) {
+                    $unauthorizedCount++;
+                    continue;
+                }
+
+                // Block publishing if product has active violation
+                if ($newStatus === 'published' && $this->moderationService->hasActiveProductSanction($product)) {
                     $unauthorizedCount++;
                     continue;
                 }

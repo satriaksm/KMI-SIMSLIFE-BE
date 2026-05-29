@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Storage;
+use App\Http\Requests\Admin\ChangeUserStatusRequest;
 
 class AdminUserController extends Controller
 {
@@ -717,6 +718,8 @@ class AdminUserController extends Controller
                 'status' => $newStatus, 
             ]);
 
+            // (Tokens deletion removed as it throws 500 without Sanctum DB)
+
             // Log action
             AdminAction::create([
                 'admin_id' => auth()->id(),
@@ -878,6 +881,7 @@ class AdminUserController extends Controller
         $user->update([
             'status' => 'suspended', 
         ]);
+        // (Tokens deletion removed)
 
         // Log action
         AdminAction::create([

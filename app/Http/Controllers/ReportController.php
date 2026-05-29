@@ -10,8 +10,10 @@ use App\Models\CommunityPost;
 use App\Models\PostComment;
 use App\Models\Jasa;
 use App\Models\User;
+use App\Notifications\NewReportAdminNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class ReportController extends Controller
@@ -97,19 +99,32 @@ class ReportController extends Controller
         }
 
         $report = ContentReport::create([
-            'user_id' => $request->user()->id,
-            'reportable_type' => $reportableClass,
-            'reportable_id' => $reportable->id,
+            'user_id'          => $request->user()->id,
+            'reportable_type'  => $reportableClass,
+            'reportable_id'    => $reportable->id,
             'report_reason_id' => $reason->id,
-            'report_comment' => $request->input('report_comment'),
-            'status' => 'pending',
+            'report_comment'   => $request->input('report_comment'),
+            'status'           => 'pending',
         ]);
 
         $report->load(['reason:id,reason_title,reason_description', 'reviewer:id,name', 'reportable']);
 
+        // ✅ Notify all admins via email
+        try {
+            $admins = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))
+                ->orWhere('is_super_admin', true)
+                ->get();
+
+            foreach ($admins as $admin) {
+                $admin->notify(new NewReportAdminNotification($report));
+            }
+        } catch (\Exception $e) {
+            Log::warning('[ReportController] Failed to notify admins: ' . $e->getMessage());
+        }
+
         return response()->json([
             'message' => 'Laporan berhasil dikirim',
-            'data' => $this->transformReportForUser($report),
+            'data'    => $this->transformReportForUser($report),
         ], 201);
     }
 
@@ -131,16 +146,28 @@ class ReportController extends Controller
     }
 
     /**
-     * Show a report detail (owned by user).
+     * Show a report detail (owned by user OR targeting the user).
      */
     public function show(Request $request, $id)
     {
         $report = ContentReport::with(['reason:id,reason_title,reason_description', 'reviewer:id,name', 'reportable'])
-            ->where('user_id', $request->user()->id)
             ->findOrFail($id);
 
+        $currentUser = $request->user();
+        $isReporter = $report->user_id === $currentUser->id;
+        
+        $targetUser = $report->getTargetUser();
+        $isTarget = $targetUser && $targetUser->id === $currentUser->id;
+
+        if (!$isReporter && !$isTarget) {
+            abort(403, 'Anda tidak berhak melihat laporan ini');
+        }
+
         return response()->json([
-            'data' => $this->transformReportForUser($report),
+            'data' => array_merge($this->transformReportForUser($report), [
+                'is_target' => $isTarget,
+                'action_taken' => $report->action_taken, // ensure action_taken is included
+            ]),
         ]);
     }
 

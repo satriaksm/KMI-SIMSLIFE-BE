@@ -30,10 +30,12 @@ use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
 use App\Http\Controllers\Admin\AdminManagementController;
 use App\Http\Controllers\Admin\AdminVoucherController;
+use App\Http\Controllers\Admin\ReportAppealController as AdminReportAppealController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\ReportAppealController;
 use App\Http\Controllers\RatingController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\Public\PublicProfileController;
@@ -272,6 +274,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/my', [ReportController::class, 'myReports'])->name('my');
         Route::get('/{id}', [ReportController::class, 'show'])->whereNumber('id')->name('show');
         Route::post('/', [ReportController::class, 'store'])->name('store');
+        // ✅ Appeal routes (user/terlapor)
+        Route::post('/{reportId}/appeal', [ReportAppealController::class, 'store'])->name('appeal.store');
+        Route::get('/{reportId}/appeals', [ReportAppealController::class, 'index'])->name('appeal.index');
     });
 
     // PROTECTED Community Actions (require auth)
@@ -470,6 +475,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
             Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
             Route::patch('/{id}/toggle-status', [AdminMerchantController::class, 'toggleStatus'])->name('toggle-status');
+            Route::patch('/{id}/status', [AdminMerchantController::class, 'changeStatus'])->name('change-status');
             Route::get('/{id}/statistics', [AdminMerchantController::class, 'statistics'])->name('statistics');
         });
 
@@ -527,15 +533,23 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
         });
 
-        // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
+        // ===== CONTENT REPORTS =====
         Route::prefix('reports')->name('reports.')->group(function () {
             Route::get('/', [ContentReportController::class, 'index'])->name('index');
+            Route::get('/statistics', [ContentReportController::class, 'statistics'])->name('statistics');
             Route::get('/export-pdf', [ContentReportController::class, 'exportPdf'])->name('export-pdf');
             Route::get('/{id}', [ContentReportController::class, 'show'])->name('show');
             Route::get('/{id}/export-pdf', [ContentReportController::class, 'exportReportDetailPdf'])->name('exportReportDetailPdf');
             Route::put('/{id}', [ContentReportController::class, 'update'])->name('update');
             Route::patch('/{id}/review', [ContentReportController::class, 'review'])->name('review');
             Route::delete('/{id}', [ContentReportController::class, 'destroy'])->name('destroy');
+
+            // ✅ NEW: Unified moderation action
+            Route::post('/{id}/take-action', [ContentReportController::class, 'takeAction'])->name('take-action');
+
+            // ✅ NEW: Appeals management (admin view)
+            Route::get('/{reportId}/appeals', [AdminReportAppealController::class, 'index'])->name('appeals.index');
+            Route::patch('/{reportId}/appeals/{appealId}/review', [AdminReportAppealController::class, 'review'])->name('appeals.review');
         });
 
         // Report Reasons

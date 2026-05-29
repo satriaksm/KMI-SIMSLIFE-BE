@@ -29,7 +29,7 @@ class ChangeUserStatusRequest extends FormRequest
                 Rule::in(['active', 'declining', 'watchlist', 'suspended', 'inactive'])
             ],
             'reason' => [
-                'required',
+                'nullable',
                 'string',
                 'max:500',
                 'min:10'
