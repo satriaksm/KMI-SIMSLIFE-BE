@@ -19,6 +19,8 @@ class Order extends Model
         'net_amount',
         'delivery_fee_snapshot',
         'delivery_type',
+        'payment_method',
+        'notes',
 
         'status',
         'responsed_at',
@@ -26,6 +28,7 @@ class Order extends Model
         'delivered_at',
         'completed_at',
         'cancelled_at',
+        'confirm_deadline',
 
         'user_name_snapshot',
         'user_phone_snapshot',
@@ -36,6 +39,15 @@ class Order extends Model
         'village_name_snapshot',
         'latitude_snapshot',
         'longitude_snapshot',
+    ];
+
+    protected $casts = [
+        'responsed_at' => 'datetime',
+        'paid_at' => 'datetime',
+        'delivered_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'confirm_deadline' => 'datetime',
     ];
 
     public function address()

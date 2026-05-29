@@ -16,16 +16,18 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Middleware aliases
         $middleware->alias([
+            'auth' => \App\Http\Middleware\Authenticate::class,
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'audit' => \App\Http\Middleware\AuditLogMiddleware::class,
             'sanitize' => \App\Http\Middleware\SanitizeInputMiddleware::class,
         ]);
-        $middleware->append([
-            AllowOptions::class,
+        $middleware->prepend([
             HandleCors::class,
+            AllowOptions::class,
         ]);
         $middleware->validateCsrfTokens(except: [
-            '/webhook/xendit'
+            '/webhook/xendit',
+            '/broadcasting/auth',
         ]);
 
         // Enable Sanctum SPA (cookie-based) authentication for API routes.
@@ -34,7 +36,15 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->statefulApi();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->render(function (AuthenticationException $e, Request $request) {
+            // Memaksa respons JSON 401 jika request ke API atau Broadcasting gagal otentikasi
+            if ($request->is('api/*') || $request->is('broadcasting/auth')) {
+                return response()->json([
+                    'message' => 'Unauthenticated.'
+                ], 401);
+            }
+        });
     })->withProviders([
             App\Providers\AuthServiceProvider::class,
+            App\Providers\BroadcastServiceProvider::class,
         ])->create();

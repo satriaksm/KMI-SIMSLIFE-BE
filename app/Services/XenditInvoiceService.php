@@ -4,18 +4,11 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\Payment;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
-use Xendit\Configuration;
-use Xendit\Invoice\CreateInvoiceRequest;
-use Xendit\Invoice\InvoiceApi;
 
 class XenditInvoiceService
 {
-    public function __construct()
-    {
-        Configuration::setXenditKey((string) config('services.xendit.secret_key'));
-    }
-
     public function createOrGetPendingInvoice(Order $order): Payment
     {
         if ($order->status !== 'pending') {
@@ -37,30 +30,51 @@ class XenditInvoiceService
             $invoiceDuration = 7200;
         }
 
-        $externalId = 'order-' . $order->id . '-' . Str::random(6);
+        $externalId = 'order-' . $order->id;
+
+        $frontendUrl = rtrim((string) config('services.xendit.frontend_url', config('app.frontend_url', 'http://localhost:5173')), '/');
 
         $params = [
-            'external_id' => $externalId,
-            'amount' => max(1, (int) round((float) $order->gross_amount)),
-            'payer_email' => (string) ($order->user?->email ?? 'guest@email.com'),
-            'description' => 'Order #' . $order->order_code,
+            'external_id'      => $externalId,
+            'amount'           => max(1, (int) round((float) ($order->gross_amount ?? $order->total ?? 0))),
+            'payer_email'      => (string) ($order->user?->email ?? 'guest@email.com'),
+            'description'      => 'Order #' . ($order->order_code ?? $order->id),
             'invoice_duration' => $invoiceDuration,
+            'success_redirect_url' => $frontendUrl . '/orders/' . $order->id . '?payment=success',
+            'failure_redirect_url' => $frontendUrl . '/orders/' . $order->id . '?payment=failed',
         ];
 
-        $invoiceApi = new InvoiceApi();
-        $invoiceRequest = new CreateInvoiceRequest($params);
-        $invoice = $invoiceApi->createInvoice($invoiceRequest);
+        $paymentMethodsList = [
+            'BCA', 'BNI', 'BRI', 'MANDIRI', 'PERMATA', 'CIMB', 'SAHABAT_SAMPOERNA',
+            'ALFAMART', 'INDOMARET', 'OVO', 'DANA', 'SHOPEEPAY', 'LINKAJA', 'QRIS'
+        ];
+
+        $method = strtoupper($order->payment_method ?? '');
+        if (in_array($method, $paymentMethodsList)) {
+            $params['payment_methods'] = [$method];
+        }
+
+        $response = Http::withBasicAuth((string) config('services.xendit.secret_key'), '')
+            ->acceptJson()
+            ->asJson()
+            ->post(rtrim((string) config('services.xendit.base_url', 'https://api.xendit.co'), '/') . '/v2/invoices', $params);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException($response->json('message') ?: 'Gagal membuat invoice Xendit');
+        }
+
+        $invoice = $response->json();
 
         return Payment::query()->create([
-            'order_id' => $order->id,
-            'external_id' => $externalId,
-            'xendit_invoice_id' => $invoice->getId(),
-            'invoice_url' => $invoice->getInvoiceUrl(),
-            'payment_method' => null,
-            'expired_at' => now()->addSeconds($invoiceDuration),
-            'amount' => $order->gross_amount,
-            'status' => 'pending',
-            'raw_response' => json_decode(json_encode($invoice), true),
+            'order_id'          => $order->id,
+            'external_id'       => $externalId,
+            'xendit_invoice_id' => $invoice['id'] ?? null,
+            'invoice_url'       => $invoice['invoice_url'] ?? null,
+            'payment_method'    => null,
+            'expired_at'        => now()->addSeconds($invoiceDuration),
+            'amount'            => $order->gross_amount ?? $order->total ?? 0,
+            'status'            => 'pending',
+            'raw_response'      => $invoice,
         ]);
     }
 }

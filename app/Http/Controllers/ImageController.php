@@ -70,7 +70,7 @@ class ImageController extends Controller
     public function cartSnapshot(Request $request, CartItem $cartItem)
     {
         if ($request->hasValidSignature()) {
-            return $this->streamCartSnapshot($cartItem);
+            return $this->streamSnapshot($cartItem);
         }
 
         $userId = $request->user()?->id ?? Auth::id();
@@ -79,7 +79,29 @@ class ImageController extends Controller
         $cartItem->loadMissing('cart:id,user_id');
         abort_if((int) $cartItem->cart?->user_id !== (int) $userId, 403, 'Forbidden');
 
-        return $this->streamCartSnapshot($cartItem);
+        return $this->streamSnapshot($cartItem);
+    }
+
+    public function orderSnapshot(Request $request, \App\Models\ProductOrderItem $orderItem)
+    {
+        if ($request->hasValidSignature()) {
+            return $this->streamSnapshot($orderItem);
+        }
+
+        $userId = $request->user()?->id ?? Auth::id();
+        abort_if(!$userId, 401, 'Unauthenticated');
+
+        $orderItem->loadMissing(['order.merchant']);
+        $order = $orderItem->order;
+        
+        abort_if(!$order, 404, 'Order not found');
+
+        $isCustomer = (int) $order->user_id === (int) $userId;
+        $isMerchant = $order->merchant && (int) $order->merchant->user_id === (int) $userId;
+
+        abort_if(!$isCustomer && !$isMerchant, 403, 'Forbidden');
+
+        return $this->streamSnapshot($orderItem);
     }
 
     private function resolveDiskForImage(Image $image): string
@@ -113,9 +135,9 @@ class ImageController extends Controller
         ]);
     }
 
-    private function streamCartSnapshot(CartItem $cartItem)
+    private function streamSnapshot($item)
     {
-        $path = $cartItem->image_snapshot_path;
+        $path = $item->image_snapshot_path;
         abort_if(empty($path), 404);
 
         /** @var FilesystemAdapter $disk */

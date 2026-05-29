@@ -7,6 +7,8 @@ use Carbon\Carbon;
 use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Notifications\MerchantApplicationStatusNotification;
+use App\Services\WebPushService;
 use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
@@ -286,17 +288,17 @@ class AdminMerchantController extends Controller
                 'vouchers',
                 'events',
             ])
-            ->withCount(['products', 'vouchers', 'events'])
-            ->findOrFail($id);
+                ->withCount(['products', 'vouchers', 'events'])
+                ->findOrFail($id);
 
             // ✅ FIX: Transform products to include complete data from variants
             $merchant->products->transform(function ($product) {
                 // Ambil data dari variants
                 $variants = $product->variants;
-                
+
                 // Untuk single variant, ambil data pertama
                 $firstVariant = $variants->first();
-                
+
                 return [
                     'id' => $product->id,
                     'name' => $product->name,
@@ -364,7 +366,7 @@ class AdminMerchantController extends Controller
      *   "message": "Merchant sudah disetujui."
      * }
      */
-    public function approve(Request $request, Merchant $merchant)
+    public function approve(Request $request, Merchant $merchant, WebPushService $webPushService)
     {
         // Validasi role admin - Using hasRole helper for safety
         $admin = $request->user();
@@ -410,6 +412,19 @@ class AdminMerchantController extends Controller
             }
         });
 
+        if ($merchant->user) {
+            $merchant->user->notify(new MerchantApplicationStatusNotification(
+                $merchant->fresh(),
+                'approved'
+            ));
+
+            $webPushService->sendMerchantApplicationDecision(
+                $merchant->user,
+                $merchant->fresh(),
+                'approved'
+            );
+        }
+
         return response()->json([
             'message' => 'Merchant disetujui dan slug telah digenerate.',
             'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
@@ -437,7 +452,7 @@ class AdminMerchantController extends Controller
      *   "message": "Merchant sudah ditolak."
      * }
      */
-    public function reject(Request $request, Merchant $merchant)
+    public function reject(Request $request, Merchant $merchant, WebPushService $webPushService)
     {
         $admin = $request->user();
         // Using hasRole helper for safety
@@ -456,6 +471,19 @@ class AdminMerchantController extends Controller
             'status' => 'rejected',
             'response_at' => Carbon::now(),
         ]);
+
+        if ($merchant->user) {
+            $merchant->user->notify(new MerchantApplicationStatusNotification(
+                $merchant->fresh(),
+                'rejected'
+            ));
+
+            $webPushService->sendMerchantApplicationDecision(
+                $merchant->user,
+                $merchant->fresh(),
+                'rejected'
+            );
+        }
 
         return response()->json([
             'message' => 'Merchant ditolak.',
@@ -495,9 +523,9 @@ class AdminMerchantController extends Controller
 
         // Produk terorder per kategori 30 hari terakhir
         $productOrders = OrderItem::whereHas('order', function ($q) use ($id) {
-                $q->where('merchant_id', $id)
-                  ->where('created_at', '>=', now()->subDays(30));
-            })
+            $q->where('merchant_id', $id)
+                ->where('created_at', '>=', now()->subDays(30));
+        })
             ->with('product.categories')
             ->get()
             ->flatMap(function ($item) {
@@ -587,7 +615,7 @@ class AdminMerchantController extends Controller
             // Load logo as base64
             $logoPath = public_path('images/logo-sumilir.png');
             $logoBase64 = '';
-            
+
             if (file_exists($logoPath)) {
                 $logoData = file_get_contents($logoPath);
                 $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
@@ -637,7 +665,7 @@ class AdminMerchantController extends Controller
     {
         try {
             $admin = $request->user();
-            
+
             // ✅ FIX: Load merchant dengan relasi yang sama seperti show()
             $merchant = Merchant::with([
                 'user',
@@ -652,17 +680,17 @@ class AdminMerchantController extends Controller
                 'vouchers',
                 'events',
             ])
-            ->withCount(['products', 'vouchers', 'events'])
-            ->findOrFail($id);
+                ->withCount(['products', 'vouchers', 'events'])
+                ->findOrFail($id);
 
             // ✅ FIX: Transform products data (sama seperti di show())
             $merchant->products->transform(function ($product) {
                 // Ambil data dari variants
                 $variants = $product->variants;
-                
+
                 // Untuk single variant, ambil data pertama
                 $firstVariant = $variants->first();
-                
+
                 return [
                     'id' => $product->id,
                     'name' => $product->name,
@@ -716,7 +744,7 @@ class AdminMerchantController extends Controller
             // Load logo
             $logoPath = public_path('images/logo-sumilir.png');
             $logoBase64 = '';
-            
+
             if (file_exists($logoPath)) {
                 $logoData = file_get_contents($logoPath);
                 $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);

@@ -2,12 +2,17 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\InventoryStockUpdated;
+use App\Events\OrderStatusUpdated;
+use App\Events\PaymentStatusUpdated;
 use App\Helpers\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\Payment;
+use App\Models\ProductVariant;
 use App\Models\MerchantWalletHistory;
 use App\Models\Payout;
+use App\Services\WebPushService;
 
 class WebhookController extends Controller
 {
@@ -86,13 +91,15 @@ class WebhookController extends Controller
             return ApiResponse::error('Invalid amount', 400);
         }
 
-        if ($order->status !== 'pending' && $status === 'PAID') {
+        if (!in_array($order->status, ['pending'], true) && $status === 'PAID') {
             return ApiResponse::error('Invalid order state', 400);
         }
 
         // 🔹 HANDLE PAID
         if ($status === 'PAID') {
-            DB::transaction(function () use ($data, $externalId) {
+            $inventoryUpdates = [];
+
+            DB::transaction(function () use ($data, $externalId, &$inventoryUpdates) {
 
                 $payment = Payment::where('external_id', $externalId)
                     ->lockForUpdate()
@@ -116,10 +123,37 @@ class WebhookController extends Controller
                 }
 
                 // 2. UPDATE ORDER
+                $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
+
                 $order->update([
-                    'status' => 'paid',
-                    'paid_at' => now(),
+                    'status'           => 'paid',
+                    'paid_at'          => now(),
+                    'confirm_deadline' => now()->addMinutes($confirmMinutes),
                 ]);
+
+                $order->load('items');
+
+                foreach ($order->items as $item) {
+                    if (!$item->product_variant_id) {
+                        continue;
+                    }
+
+                    $quantity = (int) $item->quantity;
+                    if ($quantity <= 0) {
+                        continue;
+                    }
+
+                    ProductVariant::query()
+                        ->where('id', $item->product_variant_id)
+                        ->update([
+                            'stock' => DB::raw('GREATEST(stock - ' . $quantity . ', 0)'),
+                        ]);
+
+                    $inventoryUpdates[] = [
+                        'product_id' => (int) $item->product_id,
+                        'variant_id' => (int) $item->product_variant_id,
+                    ];
+                }
 
                 $merchant = $order->merchant;
                 if (!$merchant) {
@@ -145,6 +179,30 @@ class WebhookController extends Controller
                 ]);
             });
 
+            $payment->refresh();
+            event(new PaymentStatusUpdated($payment));
+
+            $order = $payment->order;
+            if ($order) {
+                event(new OrderStatusUpdated($order->fresh()));
+
+                $webPush = app(WebPushService::class);
+                $webPush->sendPaymentStatusUpdate($order, $payment);
+                $webPush->sendOrderStatusUpdate($order);
+            }
+
+            foreach ($inventoryUpdates as $update) {
+                $stock = (int) ProductVariant::query()
+                    ->where('id', $update['variant_id'])
+                    ->value('stock');
+
+                event(new InventoryStockUpdated(
+                    (int) $update['product_id'],
+                    (int) $update['variant_id'],
+                    $stock
+                ));
+            }
+
             return ApiResponse::success(null, 'Payment processed');
         }
 
@@ -162,6 +220,14 @@ class WebhookController extends Controller
                 ]);
             }
 
+            $payment->refresh();
+            event(new PaymentStatusUpdated($payment));
+            event(new OrderStatusUpdated($order->fresh()));
+
+            $webPush = app(WebPushService::class);
+            $webPush->sendPaymentStatusUpdate($order, $payment);
+            $webPush->sendOrderStatusUpdate($order);
+
             return ApiResponse::success(null, 'Payment expired');
         }
 
@@ -171,6 +237,14 @@ class WebhookController extends Controller
                 'status' => 'failed',
                 'raw_response' => $data,
             ]);
+
+            $payment->refresh();
+            event(new PaymentStatusUpdated($payment));
+
+            $webPush = app(WebPushService::class);
+            if ($payment->order) {
+                $webPush->sendPaymentStatusUpdate($payment->order, $payment);
+            }
 
             return ApiResponse::success(null, 'Payment failed');
         }
@@ -204,7 +278,6 @@ class WebhookController extends Controller
         // 🔹 SUCCESS
         if ($status === 'COMPLETED') {
             DB::transaction(function () use ($payout, $data) {
-
                 $payout = Payout::query()
                     ->where('id', $payout->id)
                     ->lockForUpdate()
@@ -218,20 +291,6 @@ class WebhookController extends Controller
                     'status' => 'success',
                     'processed_at' => now(),
                 ]);
-
-                $merchant = $payout->merchant;
-
-                // 💸 KURANGI SALDO AVAILABLE
-                $merchant->decrement('balance_available', $payout->amount);
-
-                MerchantWalletHistory::create([
-                    'merchant_id' => $merchant->id,
-                    'type' => 'debit',
-                    'amount' => $payout->amount,
-                    'reference_type' => 'payout',
-                    'reference_id' => $payout->id,
-                    'description' => 'Payout to bank',
-                ]);
             });
 
             return ApiResponse::success(null, 'Payout success');
@@ -239,10 +298,33 @@ class WebhookController extends Controller
 
         // 🔹 FAILED
         if ($status === 'FAILED') {
-            $payout->update([
-                'status' => 'failed',
-                'failure_reason' => $data['failure_reason'] ?? null,
-            ]);
+            DB::transaction(function () use ($payout, $data) {
+                $payout = Payout::query()
+                    ->where('id', $payout->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$payout || in_array($payout->status, ['success', 'failed'])) {
+                    return;
+                }
+
+                $payout->update([
+                    'status' => 'failed',
+                    'failure_reason' => $data['failure_reason'] ?? null,
+                ]);
+
+                $merchant = $payout->merchant;
+                $merchant->increment('balance_available', $payout->amount);
+
+                MerchantWalletHistory::create([
+                    'merchant_id' => $merchant->id,
+                    'type' => 'refund',
+                    'amount' => $payout->amount,
+                    'reference_type' => 'payout',
+                    'reference_id' => $payout->id,
+                    'description' => 'Payout failed, balance refunded',
+                ]);
+            });
 
             return ApiResponse::success(null, 'Payout failed');
         }

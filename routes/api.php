@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\PasswordResetController;
@@ -18,10 +19,12 @@ use App\Http\Controllers\EventController;
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\JasaController;
 use App\Http\Controllers\LocationController;
+use App\Http\Controllers\PushSubscriptionController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PaguyubanController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\PayoutController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\Product\ProductController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
@@ -130,8 +133,13 @@ Route::get('images/{image}', [ImageController::class, 'show'])
 // Cart item snapshot images (served via API - avoids direct /storage access)
 Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot'])
     ->name('cart-snapshots.show');
+Route::get('order-snapshots/{orderItem}', [ImageController::class, 'orderSnapshot'])
+    ->name('order-snapshots.show');
 Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
     ->name('images.product-option-value.show');
+
+Route::get('push/public-key', [PushSubscriptionController::class, 'publicKey'])
+    ->name('push.public-key');
 
 Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile-pictures.show');
@@ -197,6 +205,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/', 'destroy')->name('profile.destroy');
     });
 
+    Route::prefix('push-subscriptions')->controller(PushSubscriptionController::class)->group(function () {
+        Route::post('/', 'store')->name('push-subscriptions.store');
+        Route::delete('/', 'destroy')->name('push-subscriptions.destroy');
+    });
+
 
     // PROTECTED Community Actions (require auth)
     Route::prefix('community')->group(function () {
@@ -260,8 +273,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
             // 🔹 Create Invoice (checkout)
             Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice']);
 
-            // 🔹 Get Payment Status
+            // 🔹 Get Payment Status (dari DB)
             Route::get('/{orderId}/status', [PaymentController::class, 'getStatus']);
+
+            // 🔹 Verify Payment — cek ke Xendit API & update status jika PAID
+            Route::post('/{orderId}/verify', [PaymentController::class, 'verifyPayment']);
 
             // 🔹 Cancel Payment (optional)
             Route::post('/{orderId}/cancel', [PaymentController::class, 'cancel']);
@@ -360,6 +376,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 Route::get('/{order}', [OrderController::class, 'merchantShow']);
                 Route::post('/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
             });
+
+            Route::post('payouts', [PayoutController::class, 'requestPayout'])->name('merchant.payouts');
         });
     });
 
@@ -487,6 +505,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::prefix('products')->name('products.')->group(function () {
             Route::get('/', [ProductController::class, 'adminIndex'])->name('index');
             Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
+        });
+
+        // ===== PLATFORM SETTINGS =====
+        Route::prefix('settings')->name('settings.')->group(function () {
+            Route::get('/shipping', [AdminSettingsController::class, 'shippingIndex'])->name('shipping.index');
+            Route::put('/shipping', [AdminSettingsController::class, 'shippingUpdate'])->name('shipping.update');
+            Route::get('/payment-fees', [AdminSettingsController::class, 'paymentFeesIndex'])->name('payment-fees.index');
+            Route::put('/payment-fees/{id}', [AdminSettingsController::class, 'paymentFeeUpdate'])->name('payment-fees.update');
         });
     });
 });

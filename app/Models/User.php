@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Merchant;
+use App\Models\PushSubscription;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
@@ -62,6 +63,11 @@ class User extends Authenticatable implements MustVerifyEmail
     public function merchants(): HasMany
     {
         return $this->hasMany(Merchant::class);
+    }
+
+    public function pushSubscriptions(): HasMany
+    {
+        return $this->hasMany(PushSubscription::class);
     }
 
     // Banyak alamat (polimorfik)

@@ -53,7 +53,7 @@ class Merchant extends Model
         'last_payout_at' => 'datetime',
     ];
 
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now'];
+    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'balance_held', 'balance_withdrawable'];
 
     protected static function boot()
     {
@@ -278,5 +278,25 @@ class Merchant extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+    }
+
+    /**
+     * Get balance that is currently held (completed within the last 24 hours)
+     */
+    public function getBalanceHeldAttribute()
+    {
+        return \App\Models\MerchantWalletHistory::where('merchant_id', $this->id)
+            ->where('type', 'release')
+            ->where('reference_type', 'order')
+            ->where('created_at', '>', now()->subHours(24))
+            ->sum('amount');
+    }
+
+    /**
+     * Get the balance that is actually withdrawable (available - held)
+     */
+    public function getBalanceWithdrawableAttribute()
+    {
+        return max(0, $this->balance_available - $this->balance_held);
     }
 }

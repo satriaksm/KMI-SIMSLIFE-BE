@@ -7,11 +7,8 @@ return [
         'login',
         'logout',
         'me',
-        // 'admin/*',
-        // 'broadcasting/auth',
-        // 'auth/*',
-        // 'profile',
-        // 'profile/*'
+        'broadcasting/auth',
+
     ],
 
     'allowed_methods' => ['*'],
