@@ -37,6 +37,8 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RatingController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\Public\PublicProfileController;
+use App\Http\Controllers\ServiceOrderController;
+use App\Http\Controllers\ServiceConsultationController;
 use App\Models\Conversation;
 
 // ============================================================
@@ -77,9 +79,13 @@ Route::prefix('public')->name('public.')->group(function () {
             ->where('slug', '^[A-Za-z0-9-]+$')
             ->name('show');
 
-        // Product Ratings (public - view only)
-        Route::get('/{productId}/ratings', [RatingController::class, 'indexForProduct'])->name('ratings');
-        Route::get('/{productId}/ratings/summary', [RatingController::class, 'productSummary'])->name('ratings.summary');
+        // Product Ratings (public - view only) - accept slug or id
+        Route::get('/{productId}/ratings', [RatingController::class, 'indexForProduct'])
+            ->where('productId', '^[A-Za-z0-9-]+$')
+            ->name('ratings');
+        Route::get('/{productId}/ratings/summary', [RatingController::class, 'productSummary'])
+            ->where('productId', '^[A-Za-z0-9-]+$')
+            ->name('ratings.summary');
     });
 
     // Public Merchants
@@ -98,6 +104,14 @@ Route::prefix('public')->name('public.')->group(function () {
         Route::get('/{merchantSlug}/jasas', [JasaController::class, 'publicByMerchant'])
             ->where('merchantSlug', '^[A-Za-z0-9-]+$')
             ->name('jasas');
+
+        // Merchant rating summary by slug
+        Route::get('/{merchantSlug}/ratings/summary', [RatingController::class, 'merchantSummaryBySlug'])
+            ->name('ratings.summary');
+
+        // Merchant individual ratings (reviews) by slug
+        Route::get('/{merchantSlug}/ratings', [RatingController::class, 'indexForMerchantBySlug'])
+            ->name('ratings');
     });
 
     // Category Routes
@@ -318,6 +332,29 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
+        // ===== SERVICE ORDERS (CUSTOMER) =====
+        // Service Orders (Customer)
+        // Full lifecycle: create → merchant accept/reject → evidence → customer confirm → review
+        Route::prefix('service-orders')->name('service-orders.')->group(function () {
+            Route::post('/', [ServiceOrderController::class, 'create'])->name('create');
+            Route::get('/', [ServiceOrderController::class, 'getCustomerHistory'])->name('customer-history');
+            Route::get('/{id}', [ServiceOrderController::class, 'getCustomerOrderDetail'])->name('show');
+            Route::post('/{id}/confirm', [ServiceOrderController::class, 'confirmCompleted'])->name('confirm');
+            Route::post('/{id}/review', [ServiceOrderController::class, 'submitReview'])->name('review');
+        });
+
+        // Service Consultations (Customer)
+        Route::prefix('service-consultations')->name('service-consultations.')->group(function () {
+            Route::post('/', [ServiceConsultationController::class, 'store'])->name('create');
+            Route::get('/', [ServiceConsultationController::class, 'getCustomerHistory'])->name('customer-history');
+            Route::get('/{id}', [ServiceConsultationController::class, 'show'])->name('show');
+            Route::post('/{id}/note', [ServiceConsultationController::class, 'addNote'])->name('add-note');
+            Route::post('/{id}/messages', [ServiceConsultationController::class, 'sendMessage'])->name('send-message');
+            Route::post('/{id}/accept-offer', [ServiceConsultationController::class, 'acceptOffer'])->name('accept-offer');
+            Route::post('/{id}/book', [ServiceConsultationController::class, 'bookConsultation'])->name('book');
+            Route::post('/{id}/close', [ServiceConsultationController::class, 'closeConsultation'])->name('close');
+        });
+
     });
 
 
@@ -351,6 +388,25 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
             Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
             Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
+
+            // ===== SERVICE ORDERS (MERCHANT) =====
+            // Full lifecycle with status validation, evidence upload, rejection
+            Route::prefix('service-orders')->name('service-orders.')->group(function () {
+                Route::get('/', [ServiceOrderController::class, 'getMerchantHistory'])->name('merchant-history');
+                Route::get('/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('show');
+                Route::patch('/{id}/status', [ServiceOrderController::class, 'updateStatus'])->name('update-status');
+            });
+
+            // ===== SERVICE CONSULTATIONS (MERCHANT) =====
+            Route::prefix('service-consultations')->name('consultations.')->group(function () {
+                Route::get('/', [ServiceConsultationController::class, 'getMerchantHistory'])->name('merchant-history');
+                Route::get('/{id}', [ServiceConsultationController::class, 'merchantShow'])->name('show');
+                Route::post('/{id}/respond', [ServiceConsultationController::class, 'respond'])->name('respond');
+                Route::post('/{id}/note', [ServiceConsultationController::class, 'merchantAddNote'])->name('add-note');
+                Route::post('/{id}/messages', [ServiceConsultationController::class, 'merchantSendMessage'])->name('send-message');
+                Route::post('/{id}/accept', [ServiceConsultationController::class, 'merchantAccept'])->name('accept');
+                Route::post('/{id}/close', [ServiceConsultationController::class, 'closeConsultation'])->name('close');
+            });
 
             Route::prefix('events')->name('events.')->group(function () {
                 Route::get('/', [EventController::class, 'indexByMerchant'])->name('index');
