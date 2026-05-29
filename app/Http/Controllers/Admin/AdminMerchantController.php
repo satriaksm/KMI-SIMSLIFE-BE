@@ -14,6 +14,9 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\MerchantApprovalMail;
+use App\Mail\MerchantRejectionMail;
 
 class AdminMerchantController extends Controller
 {
@@ -290,6 +293,8 @@ class AdminMerchantController extends Controller
             ])
                 ->withCount(['products', 'vouchers', 'events'])
                 ->findOrFail($id);
+                ->withCount(['products', 'vouchers', 'events'])
+                ->findOrFail($id);
 
             // ✅ FIX: Transform products to include complete data from variants
             $merchant->products->transform(function ($product) {
@@ -381,7 +386,8 @@ class AdminMerchantController extends Controller
             return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
         }
 
-        DB::transaction(function () use ($merchant) {
+        DB::beginTransaction();
+        try {
             // Ensure slug exists (safety check)
             if (empty($merchant->slug)) {
                 $merchant->slug = Merchant::generateUniqueSlug($merchant->name);
@@ -425,10 +431,18 @@ class AdminMerchantController extends Controller
             );
         }
 
-        return response()->json([
-            'message' => 'Merchant disetujui dan slug telah digenerate.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
+            return response()->json([
+                'message' => 'Merchant disetujui dan slug telah digenerate.',
+                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('[AdminMerchant] Failed to approve merchant: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => 'Gagal menyetujui merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     // Admin menolak pendaftaran -> status rejected
@@ -485,10 +499,18 @@ class AdminMerchantController extends Controller
             );
         }
 
-        return response()->json([
-            'message' => 'Merchant ditolak.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
+            return response()->json([
+                'message' => 'Merchant ditolak.',
+                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('[AdminMerchant] Failed to reject merchant: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => 'Gagal menolak merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
