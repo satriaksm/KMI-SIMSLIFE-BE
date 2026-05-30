@@ -379,6 +379,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 Route::post('/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
             });
 
+            Route::prefix('reports')->group(function () {
+                Route::get('transactions', [App\Http\Controllers\MerchantReportController::class, 'index']);
+                Route::get('transactions/export/pdf', [App\Http\Controllers\MerchantReportController::class, 'exportPdf']);
+                Route::get('transactions/export/excel', [App\Http\Controllers\MerchantReportController::class, 'exportExcel']);
+            });
+
             Route::post('payouts', [PayoutController::class, 'requestPayout'])->name('merchant.payouts');
         });
     });

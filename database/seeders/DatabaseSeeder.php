@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
                 // PostCommentSeeder::class,
             ReportReasonSeeder::class,
             ShippingSettingSeeder::class,
+            PaymentFeeSeeder::class,
             // ContentReportSeeder::class,
             // AddressSeeder::class,
             // EventSeeder::class,

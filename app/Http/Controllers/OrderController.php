@@ -211,17 +211,43 @@ class OrderController extends Controller
             ->with([
                 'items.addons.addon',
                 'payment'
-            ])
-            ->latest();
+            ]);
 
-        if ($request->filled('status')) {
-            $query->where('status', $request->string('status'));
+        if ($request->filled('q')) {
+            $search = $request->string('q');
+            $query->where(function($qBuilder) use ($search) {
+                $qBuilder->where('order_code', 'like', "%{$search}%")
+                         ->orWhere('user_name_snapshot', 'like', "%{$search}%")
+                         ->orWhereHas('items', function($itemQ) use ($search) {
+                             $itemQ->where('product_name_snapshot', 'like', "%{$search}%");
+                         });
+            });
+        }
+
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $startDate = \Carbon\Carbon::parse($request->input('start_date'))->startOfDay();
+            $endDate = \Carbon\Carbon::parse($request->input('end_date'))->endOfDay();
+            $query->whereBetween('created_at', [$startDate, $endDate]);
+        }
+
+        if ($request->filled('status') && $request->input('status') !== 'all') {
+            if ($request->input('status') === 'processing') {
+                $query->whereIn('status', ['processing', 'ready', 'shipped']);
+            } else {
+                $query->where('status', $request->input('status'));
+            }
         } else {
-            // Sembunyikan pesanan pending (belum bayar) transfer, tampilkan jika COD
-            $query->where(function ($q) {
-                $q->where('status', '!=', 'pending')
+            $query->where(function ($qBuilder) {
+                $qBuilder->where('status', '!=', 'pending')
                   ->orWhere('payment_method', 'COD');
             });
+        }
+
+        $sortBy = $request->input('sort_by', 'newest');
+        if ($sortBy === 'oldest') {
+            $query->orderBy('created_at', 'asc');
+        } else {
+            $query->orderBy('created_at', 'desc');
         }
 
         $perPage = (int) $request->input('per_page', 10);
