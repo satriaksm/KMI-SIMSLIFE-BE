@@ -677,6 +677,62 @@ class ServiceConsultationController extends Controller
      * - ditolak (DITOLAK)
      * - closed (DITUTUP)
      */
+    public function customerRespond(Request $request, int $id)
+    {
+        Log::info('[CustomerRespond] Request received', [
+            'consultation_id' => $id,
+            'user_id' => Auth::id(),
+        ]);
+
+        $data = $request->validate([
+            'response' => 'required|in:bisa_dikerjakan,perlu_penyesuaian,tidak_bisa_dikerjakan,accept,reject,counter',
+            'customer_note' => 'nullable|string|max:1000',
+        ]);
+
+        $consultation = ServiceConsultation::with(['jasa', 'merchant'])->find($id);
+
+        if (!$consultation) {
+            Log::warning('[CustomerRespond] Consultation not found', ['id' => $id]);
+            return ApiResponse::error('Konsultasi tidak ditemukan', 404);
+        }
+
+        if ($consultation->customer_id !== Auth::id()) {
+            Log::warning('[CustomerRespond] Access denied', [
+                'consultation_id' => $id,
+                'owner_id' => $consultation->customer_id,
+                'requester_id' => Auth::id(),
+            ]);
+            return ApiResponse::error('Tidak memiliki akses', 403);
+        }
+
+        $response = $data['response'];
+        $customerNote = $data['customer_note'] ?? null;
+
+        if ($response === 'accept' || $response === 'bisa_dikerjakan') {
+            return $this->acceptOffer($request, $id);
+        } elseif ($response === 'reject' || $response === 'tidak_bisa_dikerjakan') {
+            $consultation->status = ServiceConsultation::STATUS_CLOSED;
+            $consultation->customer_accepted = false;
+            $consultation->save();
+
+            ConsultationMessage::create([
+                'service_consultation_id' => $consultation->id,
+                'sender_id' => Auth::id(),
+                'sender_type' => 'customer',
+                'message' => $customerNote ? "Customer menolak penawaran. Alasan: {$customerNote}" : "Customer menolak penawaran",
+            ]);
+
+            Log::info('[CustomerRespond] Offer rejected by customer', ['consultation_id' => $id]);
+            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Penawaran ditolak');
+        } else {
+            Log::info('[CustomerRespond] Counter response', [
+                'consultation_id' => $id,
+                'response' => $response,
+            ]);
+            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Tanggapan diterima');
+        }
+    }
+
     public function acceptOffer(Request $request, int $id)
     {
         Log::info('[AcceptOffer] Request received', [

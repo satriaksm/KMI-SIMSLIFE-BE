@@ -350,6 +350,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/{id}', [ServiceConsultationController::class, 'show'])->name('show');
             Route::post('/{id}/note', [ServiceConsultationController::class, 'addNote'])->name('add-note');
             Route::post('/{id}/messages', [ServiceConsultationController::class, 'sendMessage'])->name('send-message');
+            Route::post('/{id}/respond', [ServiceConsultationController::class, 'customerRespond'])->name('respond');
             Route::post('/{id}/accept-offer', [ServiceConsultationController::class, 'acceptOffer'])->name('accept-offer');
             Route::post('/{id}/book', [ServiceConsultationController::class, 'bookConsultation'])->name('book');
             Route::post('/{id}/close', [ServiceConsultationController::class, 'closeConsultation'])->name('close');

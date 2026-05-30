@@ -35,24 +35,24 @@ class JasaController extends Controller
 
         if (!$cover) {
             $jasa->setAttribute('cover_img', null);
+            // image_url handled by getImageUrlAttribute() accessor
             return;
         }
 
-        $srcUrl = $isPublic
-            ? route('images.show', ['image' => $cover->id])
-            : URL::signedRoute('images.show', ['image' => $cover->id], now()->addMinutes(60));
-
-        // Also add image_url for frontend compatibility
+        // Always use public URL via asset() + /storage/ — no signed URL complexity
+        // asset() respects APP_URL in production
         $imageUrl = asset('storage/' . $cover->image_path);
 
-        // Field legacy `image` juga gunakan API URL agar tidak 403 di production
-        $jasa->setAttribute('image', $srcUrl);
-        $jasa->setAttribute('image_url', $imageUrl);
+        // Also add the Image model ID so FE can call /api/images/{id}
+        $srcUrl = route('images.show', ['image' => $cover->id]);
 
+        $jasa->setAttribute('image', $imageUrl);
         $jasa->setAttribute('cover_img', [
             'id' => $cover->id,
-            'src_url' => $srcUrl,
+            'path' => $cover->image_path,
             'url' => $imageUrl,
+            'src_url' => $srcUrl,
+            'image_url' => $imageUrl,
         ]);
     }
 
@@ -123,18 +123,18 @@ class JasaController extends Controller
 
         $jasas->each(function ($jasa) {
             $this->attachCategoryAliases($jasa);
-            
-            // Normalize images for frontend
+
+            // Normalize images for frontend — always use public URLs
             if ($jasa->images && $jasa->images->count() > 0) {
                 $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
                     || ($jasa->status === null && (bool) $jasa->is_active);
 
                 $jasa->images->transform(function ($image) use ($isPublic) {
                     $image->path = $image->image_path;
-                    $image->url = $isPublic
-                        ? route('images.show', ['image' => $image->id])
-                        : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
-                    $image->src_url = $image->url;
+                    // Always use public URL (ImageController handles access control)
+                    $publicUrl = route('images.show', ['image' => $image->id]);
+                    $image->url = $publicUrl;
+                    $image->src_url = $publicUrl;
                     $image->image_url = asset('storage/' . $image->image_path);
 
                     $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
@@ -161,17 +161,17 @@ class JasaController extends Controller
         // FE menggunakan jasa_category_id & jasa_subcategory_id
         $this->attachCategoryAliases($jasa);
 
-        // Normalisasi struktur images untuk FE (path, is_cover, display_order)
+        // Normalisasi struktur images untuk FE (path, is_cover, display_order) — always public URLs
         if ($jasa->images) {
             $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
                 || ($jasa->status === null && (bool) $jasa->is_active);
 
             $jasa->images->transform(function ($image) use ($isPublic) {
                 $image->path = $image->image_path;
-                $image->url = $isPublic
-                    ? route('images.show', ['image' => $image->id])
-                    : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
-                $image->src_url = $image->url;
+                // Always use public URL (ImageController handles access control)
+                $publicUrl = route('images.show', ['image' => $image->id]);
+                $image->url = $publicUrl;
+                $image->src_url = $publicUrl;
                 $image->image_url = asset('storage/' . $image->image_path);
 
                 $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
@@ -710,21 +710,25 @@ class JasaController extends Controller
         // Tambah gambar baru (jika diupload)
         if ($request->hasFile('images')) {
             $files = $request->file('images');
-            if (!empty($files)) {
-                $currentMaxOrder = (int) $jasa->images()->max('display_order');
-                $order = $currentMaxOrder >= 0 ? $currentMaxOrder + 1 : 0;
+        } elseif ($request->hasFile('images[]')) {
+            $files = $request->file('images[]');
+        } else {
+            $files = [];
+        }
+        if (!empty($files)) {
+            $currentMaxOrder = (int) $jasa->images()->max('display_order');
+            $order = $currentMaxOrder >= 0 ? $currentMaxOrder + 1 : 0;
 
-                foreach ($files as $file) {
-                    $path = $file->store("jasa/{$jasa->id}", 'public');
+            foreach ($files as $file) {
+                $path = $file->store("jasa/{$jasa->id}", 'public');
 
-                    $jasa->images()->create([
-                        'image_path' => $path,
-                        'display_order' => $order,
-                        'is_cover' => false,
-                    ]);
+                $jasa->images()->create([
+                    'image_path' => $path,
+                    'display_order' => $order,
+                    'is_cover' => false,
+                ]);
 
-                    $order++;
-                }
+                $order++;
             }
         }
 
@@ -762,6 +766,17 @@ class JasaController extends Controller
 
         // Muat relasi dan tambahkan cover_img dengan API URL
         $jasa->load(['categories', 'images']);
+
+        // Transform images: add url, src_url, image_url for each image
+        $jasa->images->transform(function ($image) {
+            $publicUrl = route('images.show', ['image' => $image->id]);
+            $image->url = $publicUrl;
+            $image->src_url = $publicUrl;
+            $image->image_url = asset('storage/' . $image->image_path);
+            $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+            return $image;
+        });
+
         $this->attachCategoryAliases($jasa);
 
         $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
@@ -932,8 +947,15 @@ class JasaController extends Controller
 
         // Simpan file gambar (jika ada) ke storage/app/public/jasa/{jasa_id}
         // dan gunakan file pertama sebagai cover ke kolom legacy `image`
+        // FE mengirim sebagai images[] (array notation) karena Laravel validation rules: images.* => file|image|...
         if ($request->hasFile('images')) {
             $files = $request->file('images');
+        } elseif ($request->hasFile('images[]')) {
+            $files = $request->file('images[]');
+        } else {
+            $files = [];
+        }
+        if (!empty($files)) {
             if (!empty($files)) {
                 $now = now();
                 $imagesToInsert = [];

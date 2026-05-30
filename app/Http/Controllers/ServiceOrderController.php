@@ -78,7 +78,9 @@ class ServiceOrderController extends Controller
             'merchant_id' => $jasa->merchant_id,
             'jasa_id' => $jasa->id,
             'service_name' => $jasa->title,
-            'service_image' => $jasa->cover_img?->url ?? null,
+            'service_image' => $jasa->coverImage
+                ? asset('storage/' . $jasa->coverImage->image_path)
+                : ($jasa->image ? asset('storage/' . $jasa->image) : null),
             'merchant_name' => $jasa->merchant->name ?? 'UMKM',
             'total_price' => $totalPrice,
             'status' => ServiceOrder::STATUS_MENUNGGU_KONFIRMASI,
@@ -410,13 +412,13 @@ class ServiceOrderController extends Controller
      */
     public function submitReview(Request $request, int $id)
     {
+        // Validate only required fields first — media is handled separately by $request->file()
+        // is_anonymous sent as string '0'/'1' from FormData, not boolean
         $data = $request->validate([
             'rating' => 'required|integer|min:1|max:5',
-            'title' => 'nullable|string|min:5|max:80',
-            'comment' => 'nullable|string|min:10|max:500',
-            'is_anonymous' => 'nullable|boolean',
-            'media' => 'nullable|array|max:5',
-            'media.*' => 'file|mimes:jpg,jpeg,png,webp,mp4,mov,webm|max:51200',
+            'title' => 'nullable|string|max:80',
+            'comment' => 'nullable|string|max:500',
+            'is_anonymous' => 'nullable',
         ]);
 
         $order = ServiceOrder::with(['merchant'])->findOrFail($id);
@@ -446,6 +448,19 @@ class ServiceOrderController extends Controller
         try {
             DB::beginTransaction();
 
+            // Handle is_anonymous from FormData (string '0'/'1' or boolean)
+            $isAnonymous = false;
+            if (isset($data['is_anonymous'])) {
+                $val = $data['is_anonymous'];
+                if (is_bool($val)) {
+                    $isAnonymous = $val;
+                } elseif (is_string($val)) {
+                    $isAnonymous = in_array(strtolower($val), ['1', 'true', 'yes']);
+                } else {
+                    $isAnonymous = (bool) $val;
+                }
+            }
+
             // Create rating for the service (jasa) with order reference
             $ratingData = [
                 'user_id' => Auth::id(),
@@ -456,39 +471,64 @@ class ServiceOrderController extends Controller
                 'rating' => (int) $data['rating'],
                 'title' => $data['title'] ?? null,
                 'comment' => $data['comment'] ?? null,
-                'is_anonymous' => (bool) ($data['is_anonymous'] ?? false),
+                'is_anonymous' => $isAnonymous,
             ];
 
-            Log::info('[ServiceOrder submitReview] Creating rating with data:', $ratingData);
+            Log::info('[submitReview] Creating rating with data:', $ratingData);
 
             $review = Rating::create($ratingData);
 
-            Log::info('[ServiceOrder submitReview] Rating created:', ['id' => $review->id]);
+            Log::info('[submitReview] Rating created:', ['id' => $review->id]);
 
-            // Handle media uploads
-            $mediaFiles = $request->file('media') ?? [];
-            foreach ($mediaFiles as $index => $file) {
-                $extension = $file->getClientOriginalExtension();
-                $mimeType = $file->getMimeType();
-                $isImage = str_starts_with($mimeType, 'image/');
-                $type = $isImage ? 'images' : 'videos';
-                $baseName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-                $newFileName = $baseName . '_' . uniqid() . '.' . $extension;
-                $dateFolder = now()->format('Y/m/d');
-                $path = "service-reviews/{$type}/{$dateFolder}/{$newFileName}";
+            // Handle media uploads ONLY if files are present
+            if ($request->hasFile('media')) {
+                $mediaFiles = $request->file('media');
+                Log::info('[submitReview] Processing media files:', ['count' => count($mediaFiles)]);
 
-                Storage::disk('public')->put($path, file_get_contents($file));
+                // Ensure storage directory exists
+                $basePath = 'service-reviews';
+                if (!Storage::disk('public')->exists($basePath)) {
+                    Storage::disk('public')->makeDirectory($basePath);
+                }
 
-                ReviewMedia::create([
-                    'review_id' => $review->id,
-                    'file_path' => $path,
-                    'file_url' => Storage::url($path),
-                    'file_type' => $isImage ? 'image' : 'video',
-                    'mime_type' => $mimeType,
-                    'original_name' => $file->getClientOriginalName(),
-                    'file_size' => $file->getSize(),
-                    'display_order' => $index,
-                ]);
+                foreach ($mediaFiles as $index => $file) {
+                    try {
+                        $extension = $file->getClientOriginalExtension();
+                        $mimeType = $file->getMimeType();
+                        $isImage = str_starts_with($mimeType, 'image/');
+                        $type = $isImage ? 'images' : 'videos';
+                        $dateFolder = now()->format('Y/m/d');
+                        $newFileName = uniqid() . '_' . time() . '_' . $index . '.' . $extension;
+                        $path = "{$basePath}/{$type}/{$dateFolder}/{$newFileName}";
+
+                        // Use store() instead of file_get_contents for reliability
+                        $file->storeAs("{$basePath}/{$type}/{$dateFolder}", $newFileName, ['disk' => 'public']);
+
+                        ReviewMedia::create([
+                            'review_id' => $review->id,
+                            'file_path' => "{$type}/{$dateFolder}/{$newFileName}",
+                            'file_url' => Storage::url("{$type}/{$dateFolder}/{$newFileName}"),
+                            'file_type' => $isImage ? 'image' : 'video',
+                            'mime_type' => $mimeType,
+                            'original_name' => $file->getClientOriginalName(),
+                            'file_size' => $file->getSize(),
+                            'display_order' => $index,
+                        ]);
+
+                        Log::info('[submitReview] Media saved:', [
+                            'index' => $index,
+                            'path' => "{$type}/{$dateFolder}/{$newFileName}",
+                        ]);
+                    } catch (\Exception $mediaException) {
+                        Log::error('[submitReview] Media save failed:', [
+                            'index' => $index,
+                            'error' => $mediaException->getMessage(),
+                        ]);
+                        // Continue with other media files — don't fail the whole review for one media error
+                    }
+                }
+            } else {
+                Log::info('[submitReview] No media files uploaded');
             }
 
             // Mark order as reviewed
@@ -503,7 +543,7 @@ class ServiceOrderController extends Controller
             $review->load(['user', 'media']);
             $order->load(['review']);
 
-            Log::info('[ServiceOrder submitReview] Success:', ['review_id' => $review->id]);
+            Log::info('[submitReview] Success:', ['review_id' => $review->id]);
 
             return ApiResponse::success([
                 'review' => $review,
@@ -511,7 +551,7 @@ class ServiceOrderController extends Controller
             ], 'Review berhasil dikirim. Terima kasih atas ulasan Anda!');
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('[ServiceOrder submitReview] Error', [
+            Log::error('[submitReview] Error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);

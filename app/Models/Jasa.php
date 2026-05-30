@@ -14,12 +14,6 @@ class Jasa extends Model
 {
     use HasFactory;
 
-    /**
-     * Hide legacy 'image' field from JSON response.
-     * Frontend should use 'cover_img.src_url' instead (API URL).
-     */
-    protected $hidden = ['image'];
-
     protected $fillable = [
         'merchant_id',
         'title',
@@ -34,6 +28,7 @@ class Jasa extends Model
         'fixed_price',
         'base_price',
         'service_type',
+        'service_type_booking',
         'location_address',
         'service_area',
         'special_notes',
@@ -43,7 +38,38 @@ class Jasa extends Model
         'operating_times',
 
         // Flags
-        'is_active', // 🆕 tambahkan untuk kontrol aktif/tidak
+        'is_active', // kontrol aktif/tidak
+        'cara_pemesanan', // langsung_pesan | booking | memerlukan_konsultasi (UMKM Jasa only)
+    ];
+
+    protected $appends = ['image_url', 'cover_img'];
+
+    /**
+     * Accessor: $jasa->image_url
+     * Prioritas: polymorphic coverImage > legacy image field
+     */
+    public function getImageUrlAttribute(): ?string
+    {
+        // Try polymorphic cover image first
+        if ($this->coverImage) {
+            return asset('storage/' . $this->coverImage->image_path);
+        }
+
+        // Fall back to legacy image field
+        if ($this->image) {
+            return asset('storage/' . $this->image);
+        }
+
+        return null;
+    }
+
+    protected $casts = [
+        'operating_times' => 'array',
+        'operating_days' => 'array',
+        'payment_methods' => 'array',
+        'fixed_price' => 'integer',
+        'base_price' => 'integer',
+        'price' => 'integer',
     ];
 
     /**
@@ -53,6 +79,32 @@ class Jasa extends Model
     public function getMorphClass()
     {
         return 'jasa';
+    }
+
+    /**
+     * Virtual attribute returned as `cover_img` for frontend compatibility.
+     * Prioritizes polymorphic images, falls back to legacy image field.
+     */
+    public function getCoverImgAttribute()
+    {
+        // First try to get from polymorphic images relationship
+        $coverImage = $this->coverImage;
+        if ($coverImage) {
+            return (object) [
+                'url' => $coverImage->url,
+                'src_url' => $coverImage->src_url ?? $coverImage->url,
+            ];
+        }
+
+        // Fall back to legacy image field
+        if ($this->image) {
+            return (object) [
+                'url' => asset('storage/' . $this->image),
+                'src_url' => asset('storage/' . $this->image),
+            ];
+        }
+
+        return null;
     }
 
     /**
@@ -148,6 +200,6 @@ class Jasa extends Model
 
     public function ratingSummary(): MorphOne
     {
-        return $this->morphOne(RatingSummary::class, 'rateable');
+        return $this->morphOne(RatingSummary::class, 'summaryable');
     }
 }

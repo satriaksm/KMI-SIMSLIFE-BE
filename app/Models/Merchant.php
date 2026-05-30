@@ -282,4 +282,9 @@ class Merchant extends Model
     {
         return $this->hasMany(Rating::class);
     }
+
+    public function ratingSummary(): MorphOne
+    {
+        return $this->morphOne(RatingSummary::class, 'summaryable');
+    }
 }
