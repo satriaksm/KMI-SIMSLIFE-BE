@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\ApiResponse;
 use App\Models\Order;
 use App\Models\Jasa;
 use App\Models\Package;
 use App\Models\Promo;
 use App\Models\Merchant;
+use App\Models\ServiceOrder;
+use App\Services\JasaOrderBridgeService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class OrderController extends Controller
 {
@@ -21,7 +25,7 @@ class OrderController extends Controller
      */
     public function myOrders(Request $request)
     {
-        return Order::with(['jasa', 'package'])
+        return Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])
             ->where('user_id', $request->user()->id)
             ->latest()
             ->get();
@@ -33,7 +37,7 @@ class OrderController extends Controller
      */
     public function myOrderShow(Request $request, int $id)
     {
-        $order = Order::with(['jasa', 'package'])->find($id);
+        $order = Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
         if (!$order) {
             return response()->json(['message' => 'Order tidak ditemukan.'], 404);
         }
@@ -64,20 +68,53 @@ class OrderController extends Controller
             'status' => 'in:pending,proses,selesai,batal'
         ]);
 
-        $order = Order::with('jasa')->find($id);
-        if (!$order) {
-            return response()->json(['message' => 'Order tidak ditemukan.'], 404);
-        }
+        $serviceOrder = null;
+        $order = null;
 
-        if (!$order->jasa || (int) $order->jasa->merchant_id !== (int) $merchant->id) {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
+        DB::transaction(function () use (&$serviceOrder, &$order, $data, $request) {
+            $jasa = Jasa::with('merchant')->findOrFail($data['jasa_id']);
 
-        $order->update(['status' => $data['status']]);
+            $serviceOrder = ServiceOrder::create([
+                'customer_id' => $request->user()->id,
+                'merchant_id' => $jasa->merchant_id,
+                'jasa_id' => $jasa->id,
+                'service_name' => $jasa->title,
+                'service_type' => $jasa->service_type ?? $jasa->service_type_booking ?? null,
+                'service_image' => $jasa->cover_img?->url ?? ($jasa->image ? asset('storage/' . $jasa->image) : null),
+                'merchant_name' => $jasa->merchant?->name ?? 'UMKM',
+                'total_price' => $data['total'],
+                'status' => ServiceOrder::STATUS_MENUNGGU_KONFIRMASI,
+                'booking_date' => $data['tanggal'],
+                'booking_time' => $data['waktu'],
+                'booking_note' => null,
+                'customer_name' => $data['nama'],
+                'customer_phone' => $data['tel'],
+                'customer_address' => $data['alamat'],
+                'payment_method' => strtoupper($data['metode_pembayaran']),
+                'payment_status' => ServiceOrder::PAYMENT_UNPAID,
+            ]);
+
+            $order = app(JasaOrderBridgeService::class)->createLinkedOrder($serviceOrder, [
+                'nama' => $data['nama'],
+                'tel' => $data['tel'],
+                'alamat' => $data['alamat'],
+                'tanggal' => $data['tanggal'],
+                'waktu' => $data['waktu'],
+                'payment_method' => $data['metode_pembayaran'],
+                'metode_pembayaran' => $data['metode_pembayaran'],
+                'payment_status' => 'PENDING',
+                'promo_code' => $data['promo_code'] ?? null,
+                'status' => $data['status'] ?? 'pending',
+                'service_type' => $jasa->service_type ?? $jasa->service_type_booking ?? null,
+                'service_type_booking' => $jasa->cara_pemesanan ?? null,
+                'note' => $data['alamat'] ?? null,
+            ]);
+        });
 
         return response()->json([
-            'message' => 'Status order berhasil diperbarui.',
-            'data' => $order->fresh()->load(['jasa', 'package']),
+            'message' => 'Order berhasil dibuat.',
+            'data' => $order?->fresh()->load(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation']),
+            'service_order' => $serviceOrder?->fresh(['merchant', 'jasa']),
         ]);
     }
 
@@ -90,7 +127,7 @@ class OrderController extends Controller
      */
     public function adminIndex()
     {
-        return Order::with(['jasa', 'package'])->latest()->get();
+        return Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
     }
 
     /**
@@ -98,7 +135,7 @@ class OrderController extends Controller
      */
     public function adminShow(int $id)
     {
-        $order = Order::with(['jasa', 'package'])->find($id);
+        $order = Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
         if (!$order) {
             return response()->json(['message' => 'Order tidak ditemukan.'], 404);
         }
@@ -111,12 +148,12 @@ class OrderController extends Controller
 
     public function index()
     {
-        return Order::with(['jasa', 'package'])->latest()->get();
+        return Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
     }
 
     public function show($id)
     {
-        $order = Order::with(['jasa', 'package'])->findOrFail($id);
+        $order = Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->findOrFail($id);
         return response()->json($order);
     }
 

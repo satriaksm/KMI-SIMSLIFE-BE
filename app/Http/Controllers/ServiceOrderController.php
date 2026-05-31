@@ -9,6 +9,7 @@ use App\Models\Merchant;
 use App\Models\Rating;
 use App\Models\RatingSummary;
 use App\Models\ReviewMedia;
+use App\Services\JasaOrderBridgeService;
 use App\Helpers\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -78,6 +79,7 @@ class ServiceOrderController extends Controller
             'merchant_id' => $jasa->merchant_id,
             'jasa_id' => $jasa->id,
             'service_name' => $jasa->title,
+            'service_type' => $jasa->service_type ?? $jasa->service_type_booking ?? null,
             'service_image' => $jasa->coverImage
                 ? asset('storage/' . $jasa->coverImage->image_path)
                 : ($jasa->image ? asset('storage/' . $jasa->image) : null),
@@ -92,6 +94,22 @@ class ServiceOrderController extends Controller
             'customer_address' => $request->customer_address,
             'payment_method' => strtoupper($request->payment_method ?? 'COD'),
             'payment_status' => ServiceOrder::PAYMENT_UNPAID,
+        ]);
+
+        app(JasaOrderBridgeService::class)->createLinkedOrder($serviceOrder, [
+            'nama' => $request->customer_name,
+            'tel' => $request->customer_phone,
+            'alamat' => $request->customer_address,
+            'tanggal' => $request->booking_date,
+            'waktu' => $request->booking_time,
+            'note' => $request->booking_note,
+            'catatan' => $request->booking_note,
+            'payment_method' => strtoupper($request->payment_method ?? 'COD'),
+            'metode_pembayaran' => strtoupper($request->payment_method ?? 'COD'),
+            'payment_status' => 'PENDING',
+            'status' => 'pending',
+            'service_type_booking' => $jasa->cara_pemesanan ?? null,
+            'service_type' => $jasa->service_type ?? $jasa->service_type_booking ?? null,
         ]);
 
         $serviceOrder->load(['merchant', 'jasa']);

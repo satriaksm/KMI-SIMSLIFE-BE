@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Models\Rating;
 use App\Models\RatingSummary;
 use App\Helpers\ApiResponse;
+use App\Services\JasaOrderBridgeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -646,6 +647,22 @@ class ServiceConsultationController extends Controller
                 'payment_status' => ServiceOrder::PAYMENT_UNPAID,
             ]);
 
+            app(JasaOrderBridgeService::class)->createLinkedOrder($serviceOrder, [
+                'nama' => $consultation->customer?->name ?? 'Pelanggan',
+                'tel' => $consultation->customer?->phone ?? null,
+                'alamat' => $customerAddress,
+                'tanggal' => $consultation->proposed_date,
+                'waktu' => $consultation->proposed_time?->format('H:i'),
+                'note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
+                'catatan' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
+                'payment_method' => 'COD',
+                'metode_pembayaran' => 'COD',
+                'payment_status' => 'PENDING',
+                'status' => 'pending',
+                'service_type' => $serviceType,
+                'service_type_booking' => $jasa->cara_pemesanan ?? null,
+            ], $consultation);
+
             // Update consultation status to accepted
             $consultation->status = ServiceConsultation::STATUS_ACCEPTED;
             $consultation->service_order_id = $serviceOrder->id;
@@ -1045,6 +1062,22 @@ class ServiceConsultationController extends Controller
                 'payment_method' => strtoupper($data['payment_method'] ?? 'COD'),
                 'payment_status' => ServiceOrder::PAYMENT_UNPAID,
             ]);
+
+            app(JasaOrderBridgeService::class)->createLinkedOrder($serviceOrder, [
+                'nama' => $customerName,
+                'tel' => $customerPhone,
+                'alamat' => $customerAddress,
+                'tanggal' => !empty($data['booking_date']) ? $data['booking_date'] : ($consultation->proposed_date ?? null),
+                'waktu' => !empty($data['booking_time']) ? $data['booking_time'] : $consultation->proposed_time?->format('H:i'),
+                'note' => $data['booking_note'] ?? $consultation->proposed_notes ?? null,
+                'catatan' => $data['booking_note'] ?? $consultation->proposed_notes ?? null,
+                'payment_method' => strtoupper($data['payment_method'] ?? 'COD'),
+                'metode_pembayaran' => strtoupper($data['payment_method'] ?? 'COD'),
+                'payment_status' => 'PENDING',
+                'status' => 'pending',
+                'service_type' => $serviceType,
+                'service_type_booking' => $jasa->cara_pemesanan ?? null,
+            ], $consultation);
 
             // Link service_order to consultation
             $consultation->service_order_id = $serviceOrder->id;

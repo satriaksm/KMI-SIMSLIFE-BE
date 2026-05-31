@@ -106,6 +106,11 @@ class ServiceConsultation extends Model
         return $this->belongsTo(ServiceOrder::class, 'service_order_id');
     }
 
+    public function jasaOrderItems(): HasMany
+    {
+        return $this->hasMany(JasaOrderItem::class, 'service_consultation_id');
+    }
+
     public function media(): HasMany
     {
         return $this->hasMany(ServiceConsultationMedia::class, 'service_consultation_id');

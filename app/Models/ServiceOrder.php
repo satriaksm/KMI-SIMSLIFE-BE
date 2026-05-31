@@ -136,6 +136,11 @@ class ServiceOrder extends Model
         return $this->hasMany(ServiceCompletionEvidence::class, 'service_order_id');
     }
 
+    public function jasaOrderItems(): HasMany
+    {
+        return $this->hasMany(JasaOrderItem::class, 'service_order_id');
+    }
+
     // ============================================================
     // SCOPES
     // ============================================================
