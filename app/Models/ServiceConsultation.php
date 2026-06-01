@@ -24,6 +24,7 @@ class ServiceConsultation extends Model
         'merchant_response',
         'merchant_offered_price',
         'merchant_note',
+        'offer_status',
         'negotiated_price',
         'negotiation_notes',
         'agreed_deadline',
@@ -65,6 +66,8 @@ class ServiceConsultation extends Model
     public const STATUS_DITOLAK = 'ditolak';                        // Merchant cannot do it
     public const STATUS_ACCEPTED = 'accepted';                      // Customer accepted the offer
     public const STATUS_CLOSED = 'closed';                          // Consultation closed
+    public const STATUS_OFFER_ACCEPTED = 'offer_accepted';          // Customer accepted merchant offer (legacy)
+    public const STATUS_OFFER_REJECTED = 'penawaran_ditolak';      // Customer rejected merchant offer
 
     public const STATUSES = [
         self::STATUS_PENDING,
@@ -73,6 +76,8 @@ class ServiceConsultation extends Model
         self::STATUS_DITOLAK,
         self::STATUS_ACCEPTED,
         self::STATUS_CLOSED,
+        self::STATUS_OFFER_ACCEPTED,
+        self::STATUS_OFFER_REJECTED,
     ];
 
     // ============================================================
@@ -140,7 +145,13 @@ class ServiceConsultation extends Model
 
     public function scopeActive($query)
     {
-        return $query->whereNotIn('status', [self::STATUS_DITOLAK, self::STATUS_CLOSED, self::STATUS_ACCEPTED]);
+        return $query->whereNotIn('status', [
+            self::STATUS_DITOLAK,
+            self::STATUS_CLOSED,
+            self::STATUS_ACCEPTED,
+            self::STATUS_OFFER_ACCEPTED,
+            self::STATUS_OFFER_REJECTED,
+        ]);
     }
 
     public function scopeForCustomer($query, int $customerId)
@@ -166,6 +177,8 @@ class ServiceConsultation extends Model
             self::STATUS_DITOLAK => 'Tidak Dapat Dikerjakan',
             self::STATUS_ACCEPTED => 'Disepakati',
             self::STATUS_CLOSED => 'Ditutup',
+            self::STATUS_OFFER_ACCEPTED => 'Penawaran Disetujui',
+            self::STATUS_OFFER_REJECTED => 'Penawaran Ditolak',
             default => ucfirst(str_replace('_', ' ', $this->status)),
         };
     }
@@ -179,7 +192,7 @@ class ServiceConsultation extends Model
         return match ($this->status) {
             self::STATUS_PENDING => 'menunggu',
             self::STATUS_DAPAT_DIKERJAKAN, self::STATUS_PENYESUAIAN => 'negosiasi',
-            self::STATUS_ACCEPTED, self::STATUS_DITOLAK, self::STATUS_CLOSED => 'selesai',
+            self::STATUS_ACCEPTED, self::STATUS_DITOLAK, self::STATUS_CLOSED, self::STATUS_OFFER_ACCEPTED, self::STATUS_OFFER_REJECTED => 'selesai',
             default => 'menunggu',
         };
     }

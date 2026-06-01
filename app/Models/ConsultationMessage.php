@@ -16,6 +16,7 @@ class ConsultationMessage extends Model
         'sender_id',
         'sender_type',
         'message',
+        'message_type',
         'proposed_price',
     ];
 

@@ -1,0 +1,98 @@
+{
+  "info": {
+    "name": "Service Orders - Quick Postman Tests",
+    "description": "Collection for blackbox testing: consultations, customer respond, direct booking, ratings, and uploads. Adjust endpoints if needed.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create Consultation",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{bearerToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customer_id\": 1,\n  \"merchant_id\": 2,\n  \"jasa_id\": 19,\n  \"message\": \"Saya ingin konsultasi tentang jasa...\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/service-consultations", "host": ["{{baseUrl}}"], "path": ["api","service-consultations"] }
+      }
+    },
+    {
+      "name": "Customer Respond (accept/reject)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{bearerToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"action\": "reject",\n  \"note\": "Tidak cocok waktunya"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/service-consultations/{{consultationId}}/customer-respond", "host": ["{{baseUrl}}"], "path": ["api","service-consultations","{{consultationId}}","customer-respond"] }
+      }
+    },
+    {
+      "name": "Direct Book (Create Service Order)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{bearerToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customer_id\": 1,\n  \"merchant_id\": 2,\n  \"jasa_id\": 19,\n  \"service_name\": \"Jasa Tarot\",\n  \"total_price\": 50000,\n  \"payment_method\": \"COD\",\n  \"booking_date\": \"2026-06-02\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/service-orders", "host": ["{{baseUrl}}"], "path": ["api","service-orders"] }
+      }
+    },
+    {
+      "name": "Get Service Order",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Authorization", "value": "Bearer {{bearerToken}}" } ],
+        "url": { "raw": "{{baseUrl}}/api/service-orders/{{serviceOrderId}}", "host": ["{{baseUrl}}"], "path": ["api","service-orders","{{serviceOrderId}}"] }
+      }
+    },
+    {
+      "name": "Submit Rating",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{bearerToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service_order_id\": {{serviceOrderId}},\n  \"customer_id\": 1,\n  \"rating\": 5,\n  \"comment\": \"Pelayanan sangat memuaskan\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/ratings", "host": ["{{baseUrl}}"], "path": ["api","ratings"] }
+      }
+    },
+    {
+      "name": "Upload Completion Evidence (multipart)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Authorization", "value": "Bearer {{bearerToken}}" } ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": "" },
+            { "key": "note", "value": "Bukti penyelesaian", "type": "text" }
+          ]
+        },
+        "url": { "raw": "{{baseUrl}}/api/service-orders/{{serviceOrderId}}/completion-evidence", "host": ["{{baseUrl}}"], "path": ["api","service-orders","{{serviceOrderId}}","completion-evidence"] }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:8000" },
+    { "key": "bearerToken", "value": "" },
+    { "key": "consultationId", "value": "13" },
+    { "key": "serviceOrderId", "value": "1" }
+  ]
+}

@@ -41,7 +41,12 @@ class ServiceConsultationController extends Controller
         return match ($group) {
             'menunggu' => [ServiceConsultation::STATUS_PENDING],
             'negosiasi' => [ServiceConsultation::STATUS_DAPAT_DIKERJAKAN, ServiceConsultation::STATUS_PENYESUAIAN],
-            'selesai' => [ServiceConsultation::STATUS_ACCEPTED, ServiceConsultation::STATUS_DITOLAK, ServiceConsultation::STATUS_CLOSED],
+            'selesai' => [
+                ServiceConsultation::STATUS_ACCEPTED,
+                ServiceConsultation::STATUS_DITOLAK,
+                ServiceConsultation::STATUS_CLOSED,
+                ServiceConsultation::STATUS_OFFER_REJECTED,
+            ],
             default => [],
         };
     }
@@ -688,8 +693,8 @@ class ServiceConsultationController extends Controller
         ]);
 
         $data = $request->validate([
-            'response' => 'required|in:bisa_dikerjakan,perlu_penyesuaian,tidak_bisa_dikerjakan,accept,reject,counter',
-            'customer_note' => 'nullable|string|max:1000',
+            'response' => 'required|in:accept,reject',
+            'customer_note' => 'nullable|string|max:500',
         ]);
 
         $consultation = ServiceConsultation::with(['jasa', 'merchant'])->find($id);
@@ -708,32 +713,46 @@ class ServiceConsultationController extends Controller
             return ApiResponse::error('Tidak memiliki akses', 403);
         }
 
-        $response = $data['response'];
-        $customerNote = $data['customer_note'] ?? null;
+        $action = $data['response'];
+        $note = $data['customer_note'] ?? null;
 
-        if ($response === 'accept' || $response === 'bisa_dikerjakan') {
-            return $this->acceptOffer($request, $id);
-        } elseif ($response === 'reject' || $response === 'tidak_bisa_dikerjakan') {
-            $consultation->status = ServiceConsultation::STATUS_CLOSED;
-            $consultation->customer_accepted = false;
-            $consultation->save();
+        if ($action === 'reject') {
+            $consultation->update([
+                'status' => ServiceConsultation::STATUS_OFFER_REJECTED,
+            ]);
 
             ConsultationMessage::create([
                 'service_consultation_id' => $consultation->id,
                 'sender_id' => Auth::id(),
-                'sender_type' => 'customer',
-                'message' => $customerNote ? "Customer menolak penawaran. Alasan: {$customerNote}" : "Customer menolak penawaran",
+                'sender_type' => 'system',
+                'message' => $note
+                    ? "Customer menolak penawaran harga dari merchant. Alasan: {$note}"
+                    : "Customer menolak penawaran harga dari merchant.",
+                'message_type' => 'offer_rejected',
             ]);
 
             Log::info('[CustomerRespond] Offer rejected by customer', ['consultation_id' => $id]);
-            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Penawaran ditolak');
-        } else {
-            Log::info('[CustomerRespond] Counter response', [
-                'consultation_id' => $id,
-                'response' => $response,
-            ]);
-            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Tanggapan diterima');
+            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Penawaran berhasil ditolak.');
         }
+
+        if ($action === 'accept') {
+            $consultation->update([
+                'status' => ServiceConsultation::STATUS_OFFER_ACCEPTED,
+            ]);
+
+            ConsultationMessage::create([
+                'service_consultation_id' => $consultation->id,
+                'sender_id' => Auth::id(),
+                'sender_type' => 'system',
+                'message' => "Customer menerima penawaran harga dari merchant.",
+                'message_type' => 'offer_accepted',
+            ]);
+
+            Log::info('[CustomerRespond] Offer accepted by customer', ['consultation_id' => $id]);
+            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Penawaran berhasil diterima.');
+        }
+
+        return ApiResponse::error('Aksi tidak valid', 422);
     }
 
     public function acceptOffer(Request $request, int $id)
