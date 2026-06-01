@@ -9,7 +9,6 @@ use App\Models\Package;
 use App\Models\Promo;
 use App\Models\Merchant;
 use App\Models\ServiceOrder;
-use App\Services\JasaOrderBridgeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -94,26 +93,12 @@ class OrderController extends Controller
                 'payment_status' => ServiceOrder::PAYMENT_UNPAID,
             ]);
 
-            $order = app(JasaOrderBridgeService::class)->createLinkedOrder($serviceOrder, [
-                'nama' => $data['nama'],
-                'tel' => $data['tel'],
-                'alamat' => $data['alamat'],
-                'tanggal' => $data['tanggal'],
-                'waktu' => $data['waktu'],
-                'payment_method' => $data['metode_pembayaran'],
-                'metode_pembayaran' => $data['metode_pembayaran'],
-                'payment_status' => 'PENDING',
-                'promo_code' => $data['promo_code'] ?? null,
-                'status' => $data['status'] ?? 'pending',
-                'service_type' => $jasa->service_type ?? $jasa->service_type_booking ?? null,
-                'service_type_booking' => $jasa->cara_pemesanan ?? null,
-                'note' => $data['alamat'] ?? null,
-            ]);
+            $order = null;
         });
 
         return response()->json([
             'message' => 'Order berhasil dibuat.',
-            'data' => $order?->fresh()->load(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation']),
+            'data' => $serviceOrder?->fresh(['merchant', 'jasa']),
             'service_order' => $serviceOrder?->fresh(['merchant', 'jasa']),
         ]);
     }

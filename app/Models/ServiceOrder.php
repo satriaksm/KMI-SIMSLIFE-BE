@@ -29,6 +29,7 @@ class ServiceOrder extends Model
         'booking_date',
         'booking_time',
         'booking_note',
+        'mekanisme_pemesanan',
         'completion_note',
         'customer_name',
         'customer_phone',
@@ -125,7 +126,7 @@ class ServiceOrder extends Model
      */
     public function review(): HasOne
     {
-        return $this->hasOne(Rating::class, 'id', 'review_id');
+        return $this->hasOne(Rating::class, 'service_order_id');
     }
 
     /**

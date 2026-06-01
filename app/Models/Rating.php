@@ -146,12 +146,34 @@ class Rating extends Model
         return round(($this->rating / 5) * 100);
     }
 
+    /**
+     * Get reviewer display name.
+     * Returns 'Anonim' if the review is marked as anonymous.
+     * Returns user name or 'Pengguna' as fallback.
+     */
     public function getReviewerNameAttribute()
     {
         if ($this->is_anonymous) {
             return 'Anonim';
         }
         return $this->user?->name ?? 'Pengguna';
+    }
+
+    // ===== SERIALIZATION =====
+
+    /**
+     * Always include reviewer_name and is_anonymous in JSON responses.
+     * Also includes the user relation when loaded.
+     */
+    public function toArray(): array
+    {
+        $array = parent::toArray();
+
+        // Always include reviewer_name (uses accessor which handles is_anonymous)
+        $array['reviewer_name'] = $this->reviewer_name;
+        $array['is_anonymous'] = (bool) $this->is_anonymous;
+
+        return $array;
     }
 
     // ===== HELPER METHODS =====

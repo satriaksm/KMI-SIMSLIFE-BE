@@ -35,6 +35,7 @@ class JasaOrderBridgeService
             'total' => $serviceOrder->total_price,
             'total_price' => $serviceOrder->total_price,
             'status' => $attributes['status'] ?? 'pending',
+            'mekanisme_pemesanan' => $serviceOrder->mekanisme_pemesanan ?? $attributes['mekanisme_pemesanan'] ?? null,
         ]);
 
         JasaOrderItem::create([

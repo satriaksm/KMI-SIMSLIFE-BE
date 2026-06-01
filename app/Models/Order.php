@@ -35,6 +35,7 @@ class Order extends Model
         'payment_method',
         'payment_status',
         'order_type',
+        'mekanisme_pemesanan',
     ];
 
     public function jasa()

@@ -131,10 +131,14 @@ class RatingController extends Controller
             'rateable_type' => 'required|in:App\\Models\\Product,App\\Models\\Jasa',
             'merchant_id' => 'required|integer|exists:merchants,id',
             'rating' => 'required|integer|min:1|max:5',
+            // title is optional (nullable); comment is required; is_anonymous is optional
             'title' => 'nullable|string|max:255',
-            'comment' => 'nullable|string|max:2000',
+            'comment' => 'required|string|min:10|max:2000',
+            'is_anonymous' => 'nullable|boolean',
             'order_id' => 'nullable|integer',
-            'media' => 'nullable|array|max:5',
+            // media is nullable — can be single UploadedFile or array of files
+            // Normalize to array in controller logic (see below)
+            'media' => 'nullable',
             'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,avi,mov,mkv|max:10240',
         ]);
 
@@ -167,11 +171,36 @@ class RatingController extends Controller
         // Tambahkan user_id dan merchant_id
         $data['user_id'] = $user->id;
 
+        // Konversi is_anonymous dari string '1'/'0' ke boolean
+        if (isset($data['is_anonymous'])) {
+            $val = $data['is_anonymous'];
+            if (is_string($val)) {
+                $data['is_anonymous'] = in_array(strtolower($val), ['1', 'true', 'yes']);
+            } else {
+                $data['is_anonymous'] = (bool) $val;
+            }
+        }
+
         // Buat rating
         $rating = Rating::create($data);
 
         // Handle media uploads
-        $mediaFiles = $request->file('media') ?? [];
+        // Normalize to array: single UploadedFile → array, already array → use as-is
+        $rawMedia = $request->file('media');
+        $mediaFiles = [];
+        if ($rawMedia) {
+            if (is_array($rawMedia)) {
+                $mediaFiles = $rawMedia;
+            } elseif ($rawMedia instanceof \Illuminate\Http\UploadedFile) {
+                $mediaFiles = [$rawMedia];
+            }
+        }
+
+        Log::info('[RatingController::store] Processing media files:', [
+            'count' => count($mediaFiles),
+            'type' => gettype($rawMedia),
+        ]);
+
         foreach ($mediaFiles as $index => $file) {
             $path = $file->store('review-media', 'public');
             $fileUrl = asset('storage/' . $path);

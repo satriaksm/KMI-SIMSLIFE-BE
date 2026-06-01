@@ -9,7 +9,6 @@ use App\Models\Merchant;
 use App\Models\Rating;
 use App\Models\RatingSummary;
 use App\Models\ReviewMedia;
-use App\Services\JasaOrderBridgeService;
 use App\Helpers\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -44,6 +43,9 @@ class ServiceOrderController extends Controller
             'booking_date' => 'nullable|date',
             'booking_time' => 'nullable|date_format:H:i',
             'booking_note' => 'nullable|string|max:1000',
+            'mekanisme_pemesanan' => 'nullable|string|max:50',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
             'total_price' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|in:COD,MANUAL,cod,manual',
         ]);
@@ -89,28 +91,21 @@ class ServiceOrderController extends Controller
             'booking_date' => $request->booking_date,
             'booking_time' => $request->booking_time,
             'booking_note' => $request->booking_note,
+            'mekanisme_pemesanan' => $request->mekanisme_pemesanan ?? null,
             'customer_name' => $request->customer_name,
             'customer_phone' => $request->customer_phone,
             'customer_address' => $request->customer_address,
             'payment_method' => strtoupper($request->payment_method ?? 'COD'),
             'payment_status' => ServiceOrder::PAYMENT_UNPAID,
+            'customer_latitude' => $request->latitude,
+            'customer_longitude' => $request->longitude,
         ]);
 
-        app(JasaOrderBridgeService::class)->createLinkedOrder($serviceOrder, [
-            'nama' => $request->customer_name,
-            'tel' => $request->customer_phone,
-            'alamat' => $request->customer_address,
-            'tanggal' => $request->booking_date,
-            'waktu' => $request->booking_time,
-            'note' => $request->booking_note,
-            'catatan' => $request->booking_note,
-            'payment_method' => strtoupper($request->payment_method ?? 'COD'),
-            'metode_pembayaran' => strtoupper($request->payment_method ?? 'COD'),
-            'payment_status' => 'PENDING',
-            'status' => 'pending',
-            'service_type_booking' => $jasa->cara_pemesanan ?? null,
-            'service_type' => $jasa->service_type ?? $jasa->service_type_booking ?? null,
-        ]);
+        // NOTE: Untuk checkout layanan jasa, data utama disimpan HANYA di service_orders.
+        // Tidak dilakukan bridge ke tabel orders.
+        // History customer dan merchant mengambil data dari service_orders.
+        // Jika di masa depan perlu sync ke orders (misal laporan gabungan), maka
+        // JAWA only syncs fields yang ADA di tabel orders (tanpa mekanisme_pemesanan).
 
         $serviceOrder->load(['merchant', 'jasa']);
 
@@ -121,6 +116,42 @@ class ServiceOrderController extends Controller
         ]);
 
         return ApiResponse::success($serviceOrder, 'Pesanan berhasil dibuat. Menunggu konfirmasi dari merchant.', 201);
+    }
+
+    /**
+     * Get WhatsApp redirect URL for a service order
+     */
+    public function redirectWhatsapp(Request $request, int $id)
+    {
+        $customerId = Auth::id();
+        $order = ServiceOrder::where('id', $id)
+            ->where('customer_id', $customerId)
+            ->first();
+
+        if (!$order) {
+            return ApiResponse::error('Pesanan tidak ditemukan', 404);
+        }
+
+        $merchant = $order->merchant;
+        $phone = $merchant?->whatsapp ?? $merchant?->phone ?? null;
+
+        if (!$phone) {
+            return ApiResponse::error('Nomor WhatsApp merchant tidak tersedia', 400);
+        }
+
+        // Clean phone number
+        $phone = preg_replace('/[^0-9]/', '', $phone);
+        if (!str_starts_with($phone, '62')) {
+            $phone = '62' . ltrim($phone, '0');
+        }
+
+        $message = "Halo {$merchant->name}, saya telah mengajukan pesanan layanan #{$order->id}.\n";
+        $message .= "Mohon untuk dapat dikonfirmasi.\n\n";
+        $message .= "Terima kasih.";
+
+        $waUrl = "https://wa.me/{$phone}?text=" . urlencode($message);
+
+        return ApiResponse::success(['redirect_url' => $waUrl], 'success');
     }
 
     /**
@@ -432,11 +463,15 @@ class ServiceOrderController extends Controller
     {
         // Validate only required fields first — media is handled separately by $request->file()
         // is_anonymous sent as string '0'/'1' from FormData, not boolean
+        // title is optional (nullable); comment is required; rating is required
         $data = $request->validate([
             'rating' => 'required|integer|min:1|max:5',
             'title' => 'nullable|string|max:80',
-            'comment' => 'nullable|string|max:500',
+            'comment' => 'required|string|min:10|max:500',
             'is_anonymous' => 'nullable',
+            // media: nullable, single file or array; normalized in controller
+            'media' => 'nullable',
+            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,avi,mov,mkv|max:10240',
         ]);
 
         $order = ServiceOrder::with(['merchant'])->findOrFail($id);
@@ -499,9 +534,19 @@ class ServiceOrderController extends Controller
             Log::info('[submitReview] Rating created:', ['id' => $review->id]);
 
             // Handle media uploads ONLY if files are present
+            // Normalize to array: single file UploadedFile → array, multiple → as-is
             if ($request->hasFile('media')) {
                 $mediaFiles = $request->file('media');
-                Log::info('[submitReview] Processing media files:', ['count' => count($mediaFiles)]);
+
+                // Ensure array: single UploadedFile → [$file], already array → use as-is
+                if (!is_array($mediaFiles) && $mediaFiles instanceof \Illuminate\Http\UploadedFile) {
+                    $mediaFiles = [$mediaFiles];
+                }
+
+                Log::info('[submitReview] Processing media files:', [
+                    'count' => count($mediaFiles),
+                    'type' => gettype($mediaFiles),
+                ]);
 
                 // Ensure storage directory exists
                 $basePath = 'service-reviews';
@@ -517,15 +562,18 @@ class ServiceOrderController extends Controller
                         $type = $isImage ? 'images' : 'videos';
                         $dateFolder = now()->format('Y/m/d');
                         $newFileName = uniqid() . '_' . time() . '_' . $index . '.' . $extension;
-                        $path = "{$basePath}/{$type}/{$dateFolder}/{$newFileName}";
 
-                        // Use store() instead of file_get_contents for reliability
+                        // Use storeAs — returns the relative path under 'public' disk root
+                        // File lands at: storage/app/public/{basePath}/{type}/{dateFolder}/{newFileName}
+                        // storeAs returns the relative path: {basePath}/{type}/{dateFolder}/{newFileName}
                         $file->storeAs("{$basePath}/{$type}/{$dateFolder}", $newFileName, ['disk' => 'public']);
+
+                        $storedPath = "{$basePath}/{$type}/{$dateFolder}/{$newFileName}";
 
                         ReviewMedia::create([
                             'review_id' => $review->id,
-                            'file_path' => "{$type}/{$dateFolder}/{$newFileName}",
-                            'file_url' => Storage::url("{$type}/{$dateFolder}/{$newFileName}"),
+                            'file_path' => $storedPath,
+                            'file_url' => Storage::url($storedPath),
                             'file_type' => $isImage ? 'image' : 'video',
                             'mime_type' => $mimeType,
                             'original_name' => $file->getClientOriginalName(),
