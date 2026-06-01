@@ -11,32 +11,31 @@ class BankController extends Controller
     public function index()
     {
         try {
-            /** @var Response $response */
-            $response = Http::withBasicAuth(
-                config('services.xendit.secret_key'),
-                ''
-            )->get('https://api.xendit.co/available_disbursements_banks');
+            $banks = \Illuminate\Support\Facades\Cache::remember('xendit_banks', 86400, function () {
+                /** @var Response $response */
+                $response = Http::withBasicAuth(
+                    config('services.xendit.secret_key'),
+                    ''
+                )->get('https://api.xendit.co/available_disbursements_banks');
 
-            if ($response->failed()) {
-                return ApiResponse::error(
-                    'Gagal mengambil data bank',
-                    502,
-                    ['status_code' => $response->status()]
-                );
-            }
+                if ($response->failed()) {
+                    throw new \Exception('Gagal mengambil data bank: ' . $response->status());
+                }
 
-            $payload = $response->json();
-            if (!is_array($payload)) {
-                return ApiResponse::error('Format response bank tidak valid', 500);
-            }
+                $payload = $response->json();
+                if (!is_array($payload)) {
+                    throw new \Exception('Format response bank tidak valid');
+                }
 
-            $banks = collect($payload)->map(function (array $bank) {
-                return [
-                    'code' => (string) ($bank['code'] ?? ''),
-                    'name' => (string) ($bank['name'] ?? ''),
-                ];
-            })->filter(fn(array $bank) => $bank['code'] !== '' && $bank['name'] !== '')
-                ->values();
+                return collect($payload)->map(function (array $bank) {
+                    return [
+                        'code' => (string) ($bank['code'] ?? ''),
+                        'name' => (string) ($bank['name'] ?? ''),
+                    ];
+                })->filter(fn(array $bank) => $bank['code'] !== '' && $bank['name'] !== '')
+                  ->values()
+                  ->all();
+            });
 
             return ApiResponse::success($banks, 'Bank list berhasil diambil');
 

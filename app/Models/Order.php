@@ -24,11 +24,16 @@ class Order extends Model
 
         'status',
         'responsed_at',
+        'accepted_at',
+        'rejected_at',
         'paid_at',
         'delivered_at',
         'completed_at',
         'cancelled_at',
         'confirm_deadline',
+
+        'proof_image_path',
+        'failed_reason',
 
         'user_name_snapshot',
         'user_phone_snapshot',
@@ -43,6 +48,8 @@ class Order extends Model
 
     protected $casts = [
         'responsed_at' => 'datetime',
+        'accepted_at' => 'datetime',
+        'rejected_at' => 'datetime',
         'paid_at' => 'datetime',
         'delivered_at' => 'datetime',
         'completed_at' => 'datetime',
@@ -78,5 +85,15 @@ class Order extends Model
     public function payment()
     {
         return $this->hasOne(Payment::class);
+    }
+    
+    protected $appends = ['proof_image_url'];
+
+    public function getProofImageUrlAttribute()
+    {
+        if ($this->proof_image_path) {
+            return asset('storage/' . $this->proof_image_path);
+        }
+        return null;
     }
 }

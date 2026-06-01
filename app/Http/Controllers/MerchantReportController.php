@@ -27,6 +27,11 @@ class MerchantReportController extends Controller
 
         if ($request->filled('status') && $request->input('status') !== 'all') {
             $query->where('status', $request->input('status'));
+        } else {
+            $query->where(function ($qBuilder) {
+                $qBuilder->where('status', '!=', 'pending')
+                  ->orWhere('payment_method', 'COD');
+            });
         }
 
         return $query;
@@ -62,6 +67,12 @@ class MerchantReportController extends Controller
             'summary' => [
                 'total_transactions' => $totalTransactions,
                 'total_revenue' => $totalRevenue,
+            ],
+            'wallet' => [
+                'balance_available'    => (float) $merchant->balance_available,
+                'balance_pending'      => (float) $merchant->balance_pending,
+                'balance_held'         => (float) $merchant->balance_held,
+                'balance_withdrawable' => (float) $merchant->balance_withdrawable,
             ],
             'transactions' => collect($orders->items())->map(function ($order) {
                 return [
