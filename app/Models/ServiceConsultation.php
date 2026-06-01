@@ -116,6 +116,9 @@ class ServiceConsultation extends Model
         return $this->hasMany(JasaOrderItem::class, 'service_consultation_id');
     }
 
+    /**
+     * @deprecated Use messages()->media() instead (initial media is stored on the first ConsultationMessage)
+     */
     public function media(): HasMany
     {
         return $this->hasMany(ServiceConsultationMedia::class, 'service_consultation_id');

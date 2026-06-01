@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\ServiceConsultation;
-use App\Models\ServiceConsultationMedia;
 use App\Models\ServiceConsultationNote;
 use App\Models\ServiceOrder;
 use App\Models\ConsultationMessage;
@@ -107,16 +106,25 @@ class ServiceConsultationController extends Controller
                 'payment_status' => 'unpaid',
             ]);
 
-            // Handle media uploads
+            // Create the first message — captures the customer's initial request description
+            $firstMessage = ConsultationMessage::create([
+                'service_consultation_id' => $consultation->id,
+                'sender_id' => $customerId,
+                'sender_type' => 'customer',
+                'message' => $data['customer_description'],
+                'message_type' => 'initial',
+            ]);
+
+            // Store media uploads linked to the first message (not ServiceConsultationMedia anymore)
             $mediaFiles = $request->file('media') ?? [];
             foreach ($mediaFiles as $index => $file) {
                 $type = str_starts_with($file->getMimeType(), 'image/') ? 'images' : 'videos';
-                $path = ServiceConsultationMedia::generatePath($file->getClientOriginalName(), $type);
+                $path = ConsultationMessageMedia::generatePath($file->getClientOriginalName(), $type);
 
                 Storage::disk('public')->put($path, file_get_contents($file));
 
-                ServiceConsultationMedia::create([
-                    'service_consultation_id' => $consultation->id,
+                ConsultationMessageMedia::create([
+                    'consultation_message_id' => $firstMessage->id,
                     'file_name' => $file->getClientOriginalName(),
                     'file_path' => $path,
                     'file_url' => Storage::url($path),
@@ -129,7 +137,7 @@ class ServiceConsultationController extends Controller
 
             DB::commit();
 
-            $consultation->load(['media', 'jasa']);
+            $consultation->load(['messages.media', 'jasa']);
 
             return ApiResponse::success($consultation, 'Konsultasi berhasil diajukan. Menunggu tanggapan dari merchant.', 201);
         } catch (\Exception $e) {
@@ -152,7 +160,7 @@ class ServiceConsultationController extends Controller
         $query = ServiceConsultation::with([
                 'jasa:id,title,price,base_price,fixed_price,image',
                 'merchant:id,name,slug',
-                'media',
+                'messages.media',
                 'notes',
             ])
             ->forCustomer($customerId)
@@ -349,7 +357,7 @@ class ServiceConsultationController extends Controller
         $query = ServiceConsultation::with([
                 'jasa:id,title,price,base_price,fixed_price,image',
                 'customer:id,name,phone',
-                'media',
+                'messages.media',
                 'notes',
             ])
             ->forMerchant($merchant->id)
@@ -495,7 +503,7 @@ class ServiceConsultationController extends Controller
             'proposed_price' => $offeredPrice,
         ]);
 
-        return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Tanggapan berhasil dikirim');
+        return ApiResponse::success($consultation->fresh(['notes', 'messages.media']), 'Tanggapan berhasil dikirim');
     }
 
     /**
@@ -732,7 +740,7 @@ class ServiceConsultationController extends Controller
             ]);
 
             Log::info('[CustomerRespond] Offer rejected by customer', ['consultation_id' => $id]);
-            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Penawaran berhasil ditolak.');
+            return ApiResponse::success($consultation->fresh(['notes', 'messages.media']), 'Penawaran berhasil ditolak.');
         }
 
         if ($action === 'accept') {
@@ -749,7 +757,7 @@ class ServiceConsultationController extends Controller
             ]);
 
             Log::info('[CustomerRespond] Offer accepted by customer', ['consultation_id' => $id]);
-            return ApiResponse::success($consultation->fresh(['media', 'notes', 'messages']), 'Penawaran berhasil diterima.');
+            return ApiResponse::success($consultation->fresh(['notes', 'messages.media']), 'Penawaran berhasil diterima.');
         }
 
         return ApiResponse::error('Aksi tidak valid', 422);
