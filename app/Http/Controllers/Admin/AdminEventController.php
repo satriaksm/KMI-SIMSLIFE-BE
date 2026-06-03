@@ -424,7 +424,7 @@ class AdminEventController extends Controller
                 $validated['banner_img_path'] = $file->store('events/banners', 'public');
             }
         } else {
-            // ✅ Double check (should never happen with validation)
+            //  Double check 
             return response()->json([
                 'message' => 'Banner event wajib diupload',
                 'errors' => [

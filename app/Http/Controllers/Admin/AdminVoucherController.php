@@ -122,7 +122,7 @@ class AdminVoucherController extends Controller
                 'voucher_name.unique' => 'Nama voucher sudah digunakan. Gunakan nama yang berbeda.', // ✅ ADD error message
             ]);
 
-            // ✅ Generate unique voucher code dengan validasi
+            // Generate unique voucher code dengan validasi
             $attempts = 0;
             $maxAttempts = 10;
             
@@ -136,10 +136,10 @@ class AdminVoucherController extends Controller
                 }
             } while ($exists);
 
-            // ✅ Create voucher
+            // Create voucher
             $voucher = Voucher::create($data);
 
-            // ✅ Attach to merchants if event voucher
+            // Attach to merchants if event voucher
             if (!empty($data['event_id']) && !empty($data['merchant_ids'])) {
                 foreach ($data['merchant_ids'] as $merchantId) {
                     $voucher->merchantsVoucher()->attach($merchantId, [

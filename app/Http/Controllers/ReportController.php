@@ -109,7 +109,7 @@ class ReportController extends Controller
 
         $report->load(['reason:id,reason_title,reason_description', 'reviewer:id,name', 'reportable']);
 
-        // ✅ Notify all admins via email
+        // Notify all admins via email
         try {
             $admins = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))
                 ->orWhere('is_super_admin', true)
