@@ -12,6 +12,9 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\MerchantApprovalMail;
+use App\Mail\MerchantRejectionMail;
 
 class AdminMerchantController extends Controller
 {
@@ -286,17 +289,17 @@ class AdminMerchantController extends Controller
                 'vouchers',
                 'events',
             ])
-            ->withCount(['products', 'vouchers', 'events'])
-            ->findOrFail($id);
+                ->withCount(['products', 'vouchers', 'events'])
+                ->findOrFail($id);
 
             // ✅ FIX: Transform products to include complete data from variants
             $merchant->products->transform(function ($product) {
                 // Ambil data dari variants
                 $variants = $product->variants;
-                
+
                 // Untuk single variant, ambil data pertama
                 $firstVariant = $variants->first();
-                
+
                 return [
                     'id' => $product->id,
                     'name' => $product->name,
@@ -379,7 +382,8 @@ class AdminMerchantController extends Controller
             return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
         }
 
-        DB::transaction(function () use ($merchant) {
+        DB::beginTransaction();
+        try {
             // Ensure slug exists (safety check)
             if (empty($merchant->slug)) {
                 $merchant->slug = Merchant::generateUniqueSlug($merchant->name);
@@ -408,12 +412,26 @@ class AdminMerchantController extends Controller
                     ['created_at' => now(), 'updated_at' => now()]
                 );
             }
-        });
 
-        return response()->json([
-            'message' => 'Merchant disetujui dan slug telah digenerate.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
+            // Send Email Notification
+            if ($merchant->user && $merchant->user->email) {
+                Mail::to($merchant->user->email)->send(new MerchantApprovalMail($merchant));
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Merchant disetujui dan slug telah digenerate.',
+                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('[AdminMerchant] Failed to approve merchant: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => 'Gagal menyetujui merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     // Admin menolak pendaftaran -> status rejected
@@ -452,15 +470,32 @@ class AdminMerchantController extends Controller
             return response()->json(['message' => 'Merchant sudah ditolak.'], 422);
         }
 
-        $merchant->update([
-            'status' => 'rejected',
-            'response_at' => Carbon::now(),
-        ]);
+        DB::beginTransaction();
+        try {
+            $merchant->update([
+                'status' => 'rejected',
+                'response_at' => Carbon::now(),
+            ]);
 
-        return response()->json([
-            'message' => 'Merchant ditolak.',
-            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-        ]);
+            // Send Email Notification
+            if ($merchant->user && $merchant->user->email) {
+                Mail::to($merchant->user->email)->send(new MerchantRejectionMail($merchant));
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Merchant ditolak.',
+                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('[AdminMerchant] Failed to reject merchant: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => 'Gagal menolak merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
@@ -495,9 +530,9 @@ class AdminMerchantController extends Controller
 
         // Produk terorder per kategori 30 hari terakhir
         $productOrders = OrderItem::whereHas('order', function ($q) use ($id) {
-                $q->where('merchant_id', $id)
-                  ->where('created_at', '>=', now()->subDays(30));
-            })
+            $q->where('merchant_id', $id)
+                ->where('created_at', '>=', now()->subDays(30));
+        })
             ->with('product.categories')
             ->get()
             ->flatMap(function ($item) {
@@ -587,7 +622,7 @@ class AdminMerchantController extends Controller
             // Load logo as base64
             $logoPath = public_path('images/logo-sumilir.png');
             $logoBase64 = '';
-            
+
             if (file_exists($logoPath)) {
                 $logoData = file_get_contents($logoPath);
                 $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
@@ -637,7 +672,7 @@ class AdminMerchantController extends Controller
     {
         try {
             $admin = $request->user();
-            
+
             // ✅ FIX: Load merchant dengan relasi yang sama seperti show()
             $merchant = Merchant::with([
                 'user',
@@ -652,17 +687,17 @@ class AdminMerchantController extends Controller
                 'vouchers',
                 'events',
             ])
-            ->withCount(['products', 'vouchers', 'events'])
-            ->findOrFail($id);
+                ->withCount(['products', 'vouchers', 'events'])
+                ->findOrFail($id);
 
             // ✅ FIX: Transform products data (sama seperti di show())
             $merchant->products->transform(function ($product) {
                 // Ambil data dari variants
                 $variants = $product->variants;
-                
+
                 // Untuk single variant, ambil data pertama
                 $firstVariant = $variants->first();
-                
+
                 return [
                     'id' => $product->id,
                     'name' => $product->name,
@@ -716,7 +751,7 @@ class AdminMerchantController extends Controller
             // Load logo
             $logoPath = public_path('images/logo-sumilir.png');
             $logoBase64 = '';
-            
+
             if (file_exists($logoPath)) {
                 $logoData = file_get_contents($logoPath);
                 $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
