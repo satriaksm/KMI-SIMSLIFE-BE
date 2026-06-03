@@ -105,8 +105,12 @@ class UserController
             $newNik = isset($validatedData['nik']) ? trim($validatedData['nik']) : $user->nik;
             $user->nik = ($newNik === '' || $newNik === 'null' || $newNik === null) ? null : $newNik;
 
+            $oldEmail = $user->email;
             $user->email = $validatedData['email'] ?? $user->email;
-            // $user->full_address = $validatedData['full_address'] ?? $user->full_address;
+
+            if ($oldEmail !== $user->email) {
+                $user->email_verified_at = null;
+            }
 
             Log::info('Prepared user for save:', [
                 'id' => $user->id,
@@ -114,7 +118,13 @@ class UserController
                 'email' => $user->email
             ]);
 
-            $user->save();
+            DB::transaction(function () use ($user, $oldEmail) {
+                $user->save();
+
+                if ($oldEmail !== $user->email) {
+                    $user->sendEmailVerificationNotification();
+                }
+            });
 
             $freshUser = $user->fresh()->load([
                 'primaryAddress.province',

@@ -65,12 +65,7 @@ class SearchController extends Controller
 
         if (!empty($data['q'])) {
             $query->where(function ($q) use ($data) {
-                $q->where('products.name', 'like', "%{$data['q']}%")
-                    ->orWhereHas(
-                        'merchant',
-                        fn($m) =>
-                        $m->where('name', 'like', "%{$data['q']}%")
-                    );
+                $q->where('products.name', 'like', "%{$data['q']}%");
             });
         }
 
@@ -292,8 +287,7 @@ class SearchController extends Controller
             if (!empty($data['q'])) {
                 $q = $data['q'];
                 $jasaQuery->where(function ($sub) use ($q) {
-                    $sub->where('jasas.title', 'like', "%{$q}%")
-                        ->orWhereHas('merchant', fn($m) => $m->where('name', 'like', "%{$q}%"));
+                    $sub->where('jasas.title', 'like', "%{$q}%");
                 });
             }
 

@@ -166,6 +166,10 @@ Route::prefix('auth')->group(function () {
         ->middleware('throttle:5,1')
         ->name('reset-password');
 
+    Route::post('resend-verification', [EmailVerificationController::class, 'resendPublic'])
+        ->middleware('throttle:5,1')
+        ->name('verification.resend.public');
+
     // Email verification
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
         ->withoutMiddleware([
