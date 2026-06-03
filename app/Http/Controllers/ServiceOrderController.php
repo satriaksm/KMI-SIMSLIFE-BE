@@ -178,11 +178,24 @@ class ServiceOrderController extends Controller
 
         $orders = $query->paginate($perPage);
 
-        // Transform to array and ensure completion_evidences is at top level
+        // Transform to array and ensure completion_evidences and review.media are at top level
         $ordersArray = $orders->toArray();
         $transformedData = collect($orders->items())->map(function ($order) {
             $orderArray = $order->toArray();
-            // Copy completionEvidences to completion_evidences for frontend compatibility
+
+            // Transform review.media: ensure file_url is included (accessor may not run in toArray)
+            if (isset($order->review) && $order->review->media->count() > 0) {
+                $mediaItems = $order->review->media->map(function ($media) {
+                    $arr = $media->toArray();
+                    if (!isset($arr['file_url']) || $arr['file_url'] === '') {
+                        $arr['file_url'] = $media->file_url;
+                    }
+                    return $arr;
+                })->toArray();
+                $orderArray['review']['media'] = $mediaItems;
+            }
+
+            // Transform completionEvidences for frontend compatibility
             if (isset($order->completionEvidences) && $order->completionEvidences->count() > 0) {
                 $evidences = $order->completionEvidences->map(function ($evidence) {
                     $arr = $evidence->toArray();
@@ -293,7 +306,43 @@ class ServiceOrderController extends Controller
 
         $orders = $query->paginate($perPage);
 
-        return ApiResponse::success($orders, 'success');
+        // Transform orders to ensure review.media and completion_evidences are properly serialized
+        $ordersArray = $orders->toArray();
+        $transformedData = collect($orders->items())->map(function ($order) {
+            $orderArray = $order->toArray();
+
+            // Transform review.media: ensure file_url is included (accessor may not run in toArray)
+            if (isset($order->review) && $order->review->media->count() > 0) {
+                $mediaItems = $order->review->media->map(function ($media) {
+                    $arr = $media->toArray();
+                    if (!isset($arr['file_url']) || $arr['file_url'] === '') {
+                        $arr['file_url'] = $media->file_url;
+                    }
+                    return $arr;
+                })->toArray();
+                $orderArray['review']['media'] = $mediaItems;
+            }
+
+            // Transform completion_evidences for frontend compatibility
+            if (isset($order->completionEvidences) && $order->completionEvidences->count() > 0) {
+                $evidences = $order->completionEvidences->map(function ($evidence) {
+                    $arr = $evidence->toArray();
+                    if (!isset($arr['file_url']) || $arr['file_url'] === '') {
+                        $arr['file_url'] = $evidence->file_url;
+                    }
+                    return $arr;
+                })->toArray();
+                $orderArray['completion_evidences'] = $evidences;
+            } else {
+                $orderArray['completion_evidences'] = [];
+            }
+
+            return $orderArray;
+        })->toArray();
+
+        $ordersArray['data'] = $transformedData;
+
+        return ApiResponse::success($ordersArray, 'success');
     }
 
     /**
@@ -335,6 +384,12 @@ class ServiceOrderController extends Controller
             return ApiResponse::error('Merchant ini tidak memiliki layanan jasa', 400);
         }
 
+        // Normalize 'completed' → 'selesai' (frontend alias)
+        $requestedStatus = $request->input('status');
+        if ($requestedStatus === 'completed') {
+            $request->merge(['status' => ServiceOrder::STATUS_SELESAI]);
+        }
+
         $data = $request->validate([
             'status' => [
                 'required',
@@ -344,12 +399,13 @@ class ServiceOrderController extends Controller
                     ServiceOrder::STATUS_DITOLAK,
                     ServiceOrder::STATUS_DIKERJAKAN,
                     ServiceOrder::STATUS_MENUNGGU_SELESAI,
+                    ServiceOrder::STATUS_SELESAI,
                 ]),
             ],
             'rejection_reason' => 'required_if:status,ditolak|nullable|string|max:500',
             'completion_note' => 'nullable|string|max:1000',
-            'evidences' => 'required_if:status,menunggu_konfirmasi_selesai|nullable|array|min:1',
-            'evidences.*' => 'file|mimes:jpg,jpeg,png,webp,mp4,mov,webm|max:51200',
+            'evidences' => 'nullable|array|max:5',
+            'evidences.*' => 'file|max:51200|mimetypes:image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm',
         ]);
 
         $order = ServiceOrder::where('merchant_id', $merchant->id)
@@ -390,10 +446,10 @@ class ServiceOrderController extends Controller
 
             // Handle completion evidence upload (DIKERJAKAN → MENUNGGU_SELESAI)
             if ($newStatus === ServiceOrder::STATUS_MENUNGGU_SELESAI) {
-                $evidences = $request->file('evidences') ?? [];
+                $files = $request->file('evidences', []);
                 $uploadedCount = 0;
 
-                foreach ($evidences as $index => $file) {
+                foreach ($files as $index => $file) {
                     // Validate file
                     $error = ServiceCompletionEvidence::validateFile($file);
                     if ($error) {
@@ -423,10 +479,6 @@ class ServiceOrderController extends Controller
                     $uploadedCount++;
                 }
 
-                if ($uploadedCount === 0) {
-                    throw new \Exception('Minimal 1 bukti pengerjaan wajib diunggah');
-                }
-
                 // Update completion note
                 if (!empty($data['completion_note'])) {
                     $order->update(['completion_note' => $data['completion_note']]);
@@ -436,8 +488,45 @@ class ServiceOrderController extends Controller
                 $order->updateStatus($newStatus);
             }
 
+            // Handle direct completion with evidence (DIKERJAKAN → SELESAI)
+            if ($newStatus === ServiceOrder::STATUS_SELESAI) {
+                $files = $request->file('evidences', []);
+
+                foreach ($files as $index => $file) {
+                    $error = ServiceCompletionEvidence::validateFile($file);
+                    if ($error) {
+                        throw new \Exception("File {$file->getClientOriginalName()}: {$error}");
+                    }
+
+                    $type = ServiceCompletionEvidence::getFileType($file->getMimeType());
+                    $path = ServiceCompletionEvidence::generatePath(
+                        $file->getClientOriginalName(),
+                        $type === 'image' ? 'images' : 'videos'
+                    );
+
+                    Storage::disk('public')->put($path, file_get_contents($file));
+
+                    ServiceCompletionEvidence::create([
+                        'service_order_id' => $order->id,
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_path' => $path,
+                        'file_url' => Storage::url($path),
+                        'file_type' => $type,
+                        'mime_type' => $file->getMimeType(),
+                        'file_size' => $file->getSize(),
+                        'display_order' => $index,
+                    ]);
+                }
+
+                if (!empty($data['completion_note'])) {
+                    $order->update(['completion_note' => $data['completion_note']]);
+                }
+
+                $order->updateStatus($newStatus);
+            }
+
             // Handle regular status transitions
-            if (!in_array($newStatus, [ServiceOrder::STATUS_DITOLAK, ServiceOrder::STATUS_MENUNGGU_SELESAI])) {
+            if (!in_array($newStatus, [ServiceOrder::STATUS_DITOLAK, ServiceOrder::STATUS_MENUNGGU_SELESAI, ServiceOrder::STATUS_SELESAI])) {
                 $order->updateStatus($newStatus);
             }
 

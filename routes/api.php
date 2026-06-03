@@ -396,7 +396,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::prefix('service-orders')->name('service-orders.')->group(function () {
                 Route::get('/', [ServiceOrderController::class, 'getMerchantHistory'])->name('merchant-history');
                 Route::get('/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('show');
-                Route::patch('/{id}/status', [ServiceOrderController::class, 'updateStatus'])->name('update-status');
+                Route::match(['patch', 'post'], '/{id}/status', [ServiceOrderController::class, 'updateStatus'])->name('update-status');
             });
 
             // ===== SERVICE CONSULTATIONS (MERCHANT) =====

@@ -194,7 +194,7 @@ class ServiceOrder extends Model
         return match ($currentStatus) {
             self::STATUS_MENUNGGU_KONFIRMASI => [self::STATUS_DITERIMA, self::STATUS_DITOLAK],
             self::STATUS_DITERIMA => [self::STATUS_DIKERJAKAN],
-            self::STATUS_DIKERJAKAN => [self::STATUS_MENUNGGU_SELESAI],
+            self::STATUS_DIKERJAKAN => [self::STATUS_MENUNGGU_SELESAI, self::STATUS_SELESAI],
             self::STATUS_MENUNGGU_SELESAI => [self::STATUS_SELESAI],
             // Terminal states
             self::STATUS_SELESAI => [],
