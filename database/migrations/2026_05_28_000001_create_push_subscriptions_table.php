@@ -10,6 +10,7 @@ return new class extends Migration {
         Schema::create('push_subscriptions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->json('audiences')->nullable();
             $table->string('endpoint', 512)->unique();
             $table->string('p256dh', 255);
             $table->string('auth', 255);

@@ -200,7 +200,7 @@ class MerchantController extends Controller
                 'address.longitude' => ['nullable', 'numeric', 'between:-180,180'],
 
                 // Informasi pajak & bank (opsional saat pendaftaran)
-                'NPWP' => ['nullable', 'string', 'max:30'],
+                'NPWP' => ['nullable', 'string', 'max:30', 'unique:merchants,NPWP'],
                 'bank_code' => ['nullable', 'string', 'max:100'],
                 'bank_account_number' => ['nullable', 'string', 'max:50'],
                 'bank_account_name' => ['nullable', 'string', 'max:255'],
@@ -219,6 +219,7 @@ class MerchantController extends Controller
                 'address.district_id.exists' => 'Kecamatan tidak valid.',
                 'address.village_id.required' => 'Desa/Kelurahan wajib dipilih.',
                 'address.village_id.exists' => 'Desa/Kelurahan tidak valid.',
+                'NPWP.unique' => 'NPWP ini sudah terdaftar. Silakan gunakan NPWP lain.',
             ]
         );
 
@@ -368,7 +369,7 @@ class MerchantController extends Controller
             'operational_hours' => ['nullable', 'string'], // JSON string
 
             // Informasi pajak & bank
-            'NPWP' => ['nullable', 'string', 'max:30'],
+            'NPWP' => ['nullable', 'string', 'max:30', Rule::unique('merchants', 'NPWP')->ignore($merchant->id)],
             'bank_code' => ['nullable', 'string', 'max:100'],
             'bank_account_number' => ['nullable', 'string', 'max:50'],
             'bank_account_name' => ['nullable', 'string', 'max:255'],
@@ -377,6 +378,7 @@ class MerchantController extends Controller
             'logo.max' => 'Ukuran logo maksimal 5MB',
             'cover.mimes' => 'Cover harus berupa file gambar (jpg, jpeg, png, gif, webp)',
             'cover.max' => 'Ukuran cover maksimal 5MB',
+            'NPWP.unique' => 'NPWP ini sudah terdaftar. Silakan gunakan NPWP lain.',
         ]);
 
         DB::beginTransaction();

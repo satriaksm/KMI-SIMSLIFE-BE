@@ -17,7 +17,9 @@ return new class extends Migration {
 
             $table->enum('type', [
                 'credit', // masuk
-                'debit'   // keluar
+                'debit',  // keluar
+                'release',
+                'refund'
             ]);
 
             $table->decimal('amount', 15, 2);
