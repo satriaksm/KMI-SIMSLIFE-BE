@@ -55,6 +55,11 @@ class Jasa extends Model
         return 'jasa';
     }
 
+    public function merchant()
+    {
+        return $this->belongsTo(Merchant::class);
+    }
+
     /**
      * Boot method to auto-generate slug
      */
@@ -104,12 +109,8 @@ class Jasa extends Model
         return $slug;
     }
 
-    public function merchant(): BelongsTo
-    {
-        return $this->belongsTo(Merchant::class);
-    }
 
-    public function categories(): MorphToMany
+    public function categories()
     {
         return $this->morphToMany(
             Category::class,
@@ -120,7 +121,7 @@ class Jasa extends Model
         )->withTimestamps();
     }
 
-    public function packages(): HasMany
+    public function packages()
     {
         return $this->hasMany(Package::class);
     }

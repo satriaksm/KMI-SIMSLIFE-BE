@@ -1,0 +1,608 @@
+// ============================================================
+// KMI-SIMSLIFE Database Schema (DBML)
+// Generated from Laravel migrations
+// ============================================================
+
+Project KMI_SIMSLIFE {
+  database_type: 'MySQL'
+  Note: 'KMI SIMSLIFE - Backend Database Schema'
+}
+
+// ============================================================
+// AUTH & USER MANAGEMENT
+// ============================================================
+
+Table users {
+  id bigint [pk, increment]
+  name varchar(255) [not null]
+  email varchar(255) [not null, unique]
+  phone varchar(255) [null]
+  profile_picture_path varchar(255) [null]
+  nik varchar(255) [unique, null]
+  status enum('active','declining','watchlist','suspended','inactive') [not null, default: 'active']
+  email_verified_at timestamp [null]
+  password varchar(255) [not null]
+  remember_token varchar(100) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    status [name: 'users_status_index']
+  }
+}
+
+Table password_reset_tokens {
+  email varchar(255) [pk]
+  token varchar(255) [not null]
+  created_at timestamp [null]
+}
+
+Table sessions {
+  id varchar(255) [pk]
+  user_id bigint [null]
+  ip_address varchar(45) [null]
+  user_agent text [null]
+  payload longtext [not null]
+  last_activity int [not null]
+
+  indexes {
+    user_id [name: 'sessions_user_id_index']
+    last_activity [name: 'sessions_last_activity_index']
+  }
+}
+
+// ============================================================
+// REGIONAL / WILAYAH
+// ============================================================
+
+Table provinces {
+  id bigint [pk, increment]
+  name varchar(255) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table cities {
+  id bigint [pk, increment]
+  province_id bigint [not null]
+  name varchar(255) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table districts {
+  id bigint [pk, increment]
+  city_id bigint [not null]
+  name varchar(255) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table villages {
+  id bigint [pk, increment]
+  district_id bigint [not null]
+  name varchar(255) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+// ============================================================
+// ADDRESSES (Polymorphic)
+// ============================================================
+
+Table addresses {
+  id bigint [pk, increment]
+  addressable_type varchar(255) [not null]
+  addressable_id bigint [not null]
+  province_id bigint [not null]
+  city_id bigint [not null]
+  district_id bigint [not null]
+  village_id bigint [not null]
+  latitude decimal(10,7) [null]
+  longitude decimal(10,7) [null]
+  detail text [null]
+  label varchar(50) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    (addressable_type, addressable_id) [name: 'addresses_addressable_type_addressable_id_index']
+    (province_id, city_id, district_id, village_id) [name: 'addresses_region_index']
+  }
+}
+
+// ============================================================
+// SEGMENTATIONS & PAGUYUBANS
+// ============================================================
+
+Table segmentations {
+  id bigint [pk, increment]
+  name varchar(255) [not null]
+  image_path varchar(255) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table paguyubans {
+  id bigint [pk, increment]
+  name varchar(255) [not null]
+  description varchar(255) [null]
+  image_path varchar(255) [null]
+  contact_info varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  Note: 'Referenced by merchants table'
+}
+
+// ============================================================
+// MERCHANTS
+// ============================================================
+
+Table merchants {
+  id bigint [pk, increment]
+  user_id bigint [not null]
+  paguyuban_id bigint [null]
+  segmentation_id bigint [not null]
+  name varchar(255) [not null]
+  slug varchar(255) [not null, unique]
+  description text [null]
+  logo_path varchar(255) [null]
+  cover_path varchar(255) [null]
+  phone varchar(255) [null]
+  operational_hours json [null]
+  status enum('pending','approved','rejected') [not null, default: 'pending']
+  rejection_reason text [null]
+  reviewed_by bigint [null]
+  response_at timestamp [null]
+  NPWP varchar(255) [null]
+  bank_name varchar(255) [null]
+  bank_account_number varchar(255) [null]
+  bank_account_name varchar(255) [null]
+  midtrans_sub_account_id varchar(255) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    slug [name: 'merchants_slug_index']
+  }
+}
+
+// ============================================================
+// CATEGORIES & CATEGORIZABLES (Polymorphic Many-to-Many)
+// ============================================================
+
+Table categories {
+  id bigint [pk, increment]
+  parent_id bigint [null]
+  name varchar(255) [not null]
+  slug varchar(255) [not null, unique]
+  image_path varchar(255) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    parent_id [name: 'categories_parent_id_index']
+  }
+}
+
+Table categorizables {
+  id bigint [pk, increment]
+  category_id bigint [not null]
+  categorizable_type varchar(255) [not null]
+  categorizable_id bigint [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    (categorizable_type, categorizable_id) [name: 'categorizables_categorizable_type_categorizable_id_index']
+    (categorizable_id, categorizable_type, category_id) [unique, name: 'categorizables_unique']
+    (categorizable_type, categorizable_id, category_id) [name: 'categorizables_morph_idx']
+  }
+}
+
+// ============================================================
+// IMAGES (Polymorphic)
+// ============================================================
+
+Table images {
+  id bigint [pk, increment]
+  imageable_type varchar(255) [not null]
+  imageable_id bigint [not null]
+  image_path varchar(255) [not null]
+  display_order smallint [not null, default: 0]
+  is_cover boolean [not null, default: false]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    (imageable_type, imageable_id) [name: 'images_imageable_type_imageable_id_index']
+    (imageable_type, imageable_id, is_cover) [name: 'images_cover_idx']
+    (imageable_type, imageable_id, display_order) [name: 'images_order_idx']
+  }
+}
+
+// ============================================================
+// PRODUCTS & VARIANTS
+// ============================================================
+
+Table products {
+  id bigint [pk, increment]
+  merchant_id bigint [not null]
+  name varchar(255) [not null]
+  slug varchar(255) [not null, unique]
+  description text [null]
+  min_purchase int [not null, default: 1]
+  status enum('draft','published','archived') [not null, default: 'draft']
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_variants {
+  id bigint [pk, increment]
+  product_id bigint [not null]
+  stock int [not null, default: 0]
+  sku varchar(255) [unique, null]
+  price decimal(12,2) [not null, default: 0]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    product_id [name: 'product_variants_product_id_index']
+  }
+}
+
+Table product_options {
+  id bigint [pk, increment]
+  product_id bigint [not null]
+  option_name varchar(255) [not null]
+  uses_image boolean [not null, default: false]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    (product_id, option_name) [unique, name: 'product_options_product_id_option_name_unique']
+  }
+}
+
+Table product_option_values {
+  id bigint [pk, increment]
+  product_option_id bigint [not null]
+  option_value varchar(255) [not null]
+  image_path varchar(255) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    (product_option_id, option_value) [unique, name: 'product_option_values_product_option_id_option_value_unique']
+  }
+}
+
+Table product_variant_option_values {
+  id bigint [pk, increment]
+  product_variant_id bigint [not null]
+  product_option_value_id bigint [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    product_variant_id [name: 'pvov_variant_idx']
+    product_option_value_id [name: 'pvov_value_idx']
+    (product_variant_id, product_option_value_id) [unique, name: 'pvov_unique']
+  }
+}
+
+// ============================================================
+// ADDONS
+// ============================================================
+
+Table addons {
+  id bigint [pk, increment]
+  merchant_id bigint [not null]
+  addon_name varchar(100) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    merchant_id [name: 'addons_merchant_idx']
+  }
+}
+
+Table addon_groups {
+  id bigint [pk, increment]
+  product_id bigint [not null]
+  addon_group_name varchar(100) [not null]
+  selection_type enum('single','multiple') [not null, default: 'single']
+  min_selection tinyint [not null, default: 0]
+  max_selection tinyint [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    product_id [name: 'addon_groups_product_idx']
+  }
+}
+
+Table addon_group_options {
+  id bigint [pk, increment]
+  addon_group_id bigint [not null]
+  addon_id bigint [not null]
+  addon_price decimal(10,2) [not null, default: 0]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    addon_group_id [name: 'addon_group_options_group_idx']
+    (addon_group_id, addon_id) [unique, name: 'addon_group_option_unique']
+  }
+}
+
+// ============================================================
+// EVENTS
+// ============================================================
+
+Table events {
+  id bigint [pk, increment]
+  event_name varchar(255) [not null, unique]
+  event_description text [null]
+  event_start_date date [not null]
+  event_end_date date [not null]
+  banner_img_path varchar(255) [not null]
+  status enum('draft','published','archived') [not null, default: 'draft']
+  created_by bigint [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    status [name: 'events_status_index']
+    (event_start_date, event_end_date) [name: 'events_date_range_index']
+  }
+
+  Note: 'Referenced by vouchers table'
+}
+
+// ============================================================
+// VOUCHERS & VOUCHER USAGES
+// ============================================================
+
+Table vouchers {
+  id bigint [pk, increment]
+  merchant_id bigint [null]
+  event_id bigint [null]
+  voucher_name varchar(100) [not null, unique]
+  voucher_code varchar(100) [not null, unique]
+  voucher_status enum('active','inactive') [not null, default: 'active']
+  voucher_type enum('percent','fixed') [not null, default: 'percent']
+  voucher_description text [null]
+  voucher_start_date date [not null]
+  voucher_end_date date [not null]
+  value decimal(15,2) [not null]
+  max_discount_amount decimal(15,2) [null]
+  min_purchase_amount decimal(15,2) [not null, default: 0]
+  usage_limit_per_user smallint [not null, default: 1]
+  usage_limit smallint [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    voucher_status [name: 'vouchers_voucher_status_index']
+    voucher_code [name: 'vouchers_voucher_code_index']
+    voucher_name [name: 'vouchers_voucher_name_index']
+  }
+}
+
+Table voucher_usages {
+  id bigint [pk, increment]
+  user_id bigint [not null]
+  voucher_id bigint [not null]
+  order_id bigint [null]
+  discount_amount decimal(15,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    (user_id, voucher_id) [name: 'voucher_usages_user_id_voucher_id_index']
+  }
+}
+
+// ============================================================
+// ORDERS & ORDER ITEMS
+// ============================================================
+
+Table orders {
+  id bigint [pk, increment]
+  address_id bigint [null]
+  user_id bigint [null]
+  merchant_id bigint [null]
+  voucher_id bigint [null]
+  order_code varchar(255) [not null]
+  subtotal decimal(12,2) [not null, default: 0]
+  discount_total decimal(12,2) [not null, default: 0]
+  gross_amount decimal(12,2) [not null, default: 0]
+  delivery_fee_snapshot decimal(12,2) [not null, default: 0]
+  status enum('pending','responsed','paid','delivered','completed','cancelled') [not null, default: 'pending']
+  responsed_at timestamp [null]
+  paid_at timestamp [null]
+  delivered_at timestamp [null]
+  completed_at timestamp [null]
+  cancelled_at timestamp [null]
+  user_name_snapshot varchar(255) [not null]
+  user_phone_snapshot varchar(255) [not null]
+  address_detail_snapshot text [not null]
+  province_name_snapshot varchar(255) [not null]
+  city_name_snapshot varchar(255) [not null]
+  district_name_snapshot varchar(255) [not null]
+  village_name_snapshot varchar(255) [not null]
+  latitude_snapshot decimal(10,7) [null]
+  longitude_snapshot decimal(10,7) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_order_items {
+  id bigint [pk, increment]
+  order_id bigint [null]
+  product_id bigint [null]
+  product_variant_id bigint [null]
+  product_name_snapshot varchar(255) [not null]
+  product_variant_snapshot varchar(255) [null]
+  sku_snapshot text [null]
+  image_snapshot_path text [not null]
+  quantity int [not null, default: 1]
+  unit_price_snapshot decimal(12,2) [not null]
+  subtotal_snapshot decimal(12,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_order_item_addons {
+  id bigint [pk, increment]
+  product_order_item_id bigint [null]
+  addon_id bigint [null]
+  addon_name_snapshot varchar(255) [not null]
+  addon_price_snapshot decimal(12,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+// ============================================================
+// CARTS
+// ============================================================
+
+Table carts {
+  id bigint [pk, increment]
+  user_id bigint [not null]
+  merchant_id bigint [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table cart_items {
+  id bigint [pk, increment]
+  cart_id bigint [not null]
+  itemable_type varchar(255) [not null]
+  itemable_id bigint [not null]
+  product_variant_id bigint [null, note: 'Snapshot pointer, bukan FK']
+  itemable_name_snapshot varchar(255) [not null]
+  product_variant_name_snapshot varchar(255) [null]
+  image_snapshot_path varchar(255) [null]
+  price_snapshot int [not null]
+  quantity int [not null, default: 1]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    (itemable_type, itemable_id) [name: 'cart_items_itemable_type_itemable_id_index']
+    product_variant_id [name: 'cart_items_product_variant_id_index']
+  }
+}
+
+Table cart_item_addons {
+  id bigint [pk, increment]
+  cart_item_id bigint [not null]
+  addon_group_id bigint [not null, note: 'Snapshot pointer, bukan FK']
+  addon_id bigint [not null, note: 'Snapshot pointer, bukan FK']
+  addon_name_snapshot varchar(255) [null]
+  addon_price_snapshot int [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+
+  indexes {
+    addon_group_id [name: 'cart_item_addons_addon_group_id_index']
+    addon_id [name: 'cart_item_addons_addon_id_index']
+  }
+}
+
+// ============================================================
+// RELATIONSHIPS
+// ============================================================
+
+// -- Sessions
+Ref: sessions.user_id > users.id
+
+// -- Regional Hierarchy
+Ref: cities.province_id > provinces.id [delete: cascade]
+Ref: districts.city_id > cities.id [delete: cascade]
+Ref: villages.district_id > districts.id [delete: cascade]
+
+// -- Addresses → Regional
+Ref: addresses.province_id > provinces.id [update: cascade, delete: restrict]
+Ref: addresses.city_id > cities.id [update: cascade, delete: restrict]
+Ref: addresses.district_id > districts.id [update: cascade, delete: restrict]
+Ref: addresses.village_id > villages.id [update: cascade, delete: restrict]
+
+// -- Merchants
+Ref: merchants.user_id > users.id [update: cascade, delete: restrict]
+Ref: merchants.paguyuban_id > paguyubans.id [update: cascade, delete: restrict]
+Ref: merchants.segmentation_id > segmentations.id [update: cascade, delete: restrict]
+Ref: merchants.reviewed_by > users.id [delete: set null]
+
+// -- Categories (self-referencing)
+Ref: categories.parent_id > categories.id [update: cascade, delete: set null]
+
+// -- Categorizables (polymorphic pivot)
+Ref: categorizables.category_id > categories.id [update: cascade, delete: cascade]
+
+// -- Products
+Ref: products.merchant_id > merchants.id [update: cascade, delete: restrict]
+
+// -- Product Variants
+Ref: product_variants.product_id > products.id [update: cascade, delete: cascade]
+
+// -- Product Options
+Ref: product_options.product_id > products.id [update: cascade, delete: cascade]
+
+// -- Product Option Values
+Ref: product_option_values.product_option_id > product_options.id [update: cascade, delete: cascade]
+
+// -- Product Variant ↔ Option Values (pivot)
+Ref: product_variant_option_values.product_variant_id > product_variants.id [update: cascade, delete: cascade]
+Ref: product_variant_option_values.product_option_value_id > product_option_values.id [update: cascade, delete: cascade]
+
+// -- Addons
+Ref: addons.merchant_id > merchants.id [update: cascade, delete: cascade]
+
+// -- Addon Groups
+Ref: addon_groups.product_id > products.id [update: cascade, delete: cascade]
+
+// -- Addon Group Options (pivot)
+Ref: addon_group_options.addon_group_id > addon_groups.id [update: cascade, delete: cascade]
+Ref: addon_group_options.addon_id > addons.id [update: cascade, delete: cascade]
+
+// -- Events
+Ref: events.created_by > users.id [delete: cascade]
+
+// -- Vouchers
+Ref: vouchers.merchant_id > merchants.id [delete: cascade]
+Ref: vouchers.event_id > events.id [delete: cascade]
+
+// -- Voucher Usages
+Ref: voucher_usages.user_id > users.id [delete: cascade]
+Ref: voucher_usages.voucher_id > vouchers.id [delete: cascade]
+Ref: voucher_usages.order_id > orders.id [delete: set null]
+
+// -- Orders
+Ref: orders.address_id > addresses.id [delete: set null]
+Ref: orders.user_id > users.id [delete: set null]
+Ref: orders.merchant_id > merchants.id [delete: set null]
+Ref: orders.voucher_id > vouchers.id [delete: set null]
+
+// -- Product Order Items
+Ref: product_order_items.order_id > orders.id [delete: set null]
+Ref: product_order_items.product_id > products.id [delete: set null]
+Ref: product_order_items.product_variant_id > product_variants.id [delete: set null]
+
+// -- Product Order Item Addons
+Ref: product_order_item_addons.product_order_item_id > product_order_items.id [delete: set null]
+Ref: product_order_item_addons.addon_id > addons.id [delete: set null]
+
+// -- Carts
+Ref: carts.user_id > users.id [delete: cascade]
+Ref: carts.merchant_id > merchants.id [delete: cascade]
+
+// -- Cart Items (FK hanya ke carts; itemable & product_variant_id = snapshot pointer)
+Ref: cart_items.cart_id > carts.id [delete: cascade]
+
+// -- Cart Item Addons (FK hanya ke cart_items; addon_group_id & addon_id = snapshot pointer)
+Ref: cart_item_addons.cart_item_id > cart_items.id [delete: cascade]

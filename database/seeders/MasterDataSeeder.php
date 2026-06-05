@@ -16,6 +16,8 @@ class MasterDataSeeder extends Seeder
         DB::disableQueryLog();
 
         DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+        // truncate any tables that reference wilayah tables to avoid FK constraint issues
+        DB::table('addresses')->truncate();
         DB::table('villages')->truncate();
         DB::table('districts')->truncate();
         DB::table('cities')->truncate();

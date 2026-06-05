@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Province extends Model
 {
+    use HasFactory;
     protected $table = 'provinces';
     protected $fillable = ['name'];
     public $timestamps = false; // ✅ Tambahkan ini jika tabel tidak punya created_at/updated_at

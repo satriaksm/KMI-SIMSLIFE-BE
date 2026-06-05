@@ -11,6 +11,7 @@ use App\Models\Merchant;
 use App\Models\PostComment;
 use App\Models\User;
 use App\Models\Voucher;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -71,7 +72,12 @@ class HardDeleteService
         $user->addresses()->delete();
 
         // 4) Finally delete the user
-        $user->delete();
+        $this->hardDeleteModel($user);
+
+        Log::info('User deleted?', [
+            'id' => $user->id,
+            'exists' => User::find($user->id),
+        ]);
     }
 
     public function deleteMerchant(Merchant $merchant): void
@@ -228,5 +234,17 @@ class HardDeleteService
         } catch (\Throwable $e) {
             // ignore
         }
+    }
+
+    private function hardDeleteModel(Model $model): void
+    {
+        $key = $model->getKey();
+        if ($key === null) {
+            return;
+        }
+
+        // Use a direct DELETE query to avoid mutating the in-memory model state.
+        // This prevents any later code from accidentally calling save() and re-inserting the row.
+        $model->newQueryWithoutScopes()->whereKey($key)->delete();
     }
 }

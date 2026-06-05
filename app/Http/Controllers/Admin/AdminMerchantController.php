@@ -7,6 +7,8 @@ use Carbon\Carbon;
 use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Notifications\MerchantApplicationStatusNotification;
+use App\Services\WebPushService;
 use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
@@ -62,9 +64,6 @@ class AdminMerchantController extends Controller
      *     "last_page": 4
      *   }
      * }
-     */
-    /**
-     * ADMIN: List all merchants with filters
      */
     public function index(Request $request)
     {
@@ -246,9 +245,6 @@ class AdminMerchantController extends Controller
     }
 
     /**
-     * ADMIN: Get single merchant detail
-     */
-    /**
      * Get Merchant Detail (Admin)
      *
      * Get detail of a merchant by ID, including user, segmentation, addresses, products, vouchers, and events.
@@ -367,7 +363,7 @@ class AdminMerchantController extends Controller
      *   "message": "Merchant sudah disetujui."
      * }
      */
-    public function approve(Request $request, Merchant $merchant)
+    public function approve(Request $request, Merchant $merchant, WebPushService $webPushService)
     {
         // Validasi role admin - Using hasRole helper for safety
         $admin = $request->user();
@@ -413,9 +409,17 @@ class AdminMerchantController extends Controller
                 );
             }
 
-            // Send Email Notification
-            if ($merchant->user && $merchant->user->email) {
-                Mail::to($merchant->user->email)->send(new MerchantApprovalMail($merchant));
+            if ($merchant->user) {
+                $merchant->user->notify(new MerchantApplicationStatusNotification(
+                    $merchant->fresh(),
+                    'approved'
+                ));
+
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'approved'
+                );
             }
 
             DB::commit();
@@ -455,7 +459,7 @@ class AdminMerchantController extends Controller
      *   "message": "Merchant sudah ditolak."
      * }
      */
-    public function reject(Request $request, Merchant $merchant)
+    public function reject(Request $request, Merchant $merchant, WebPushService $webPushService)
     {
         $admin = $request->user();
         // Using hasRole helper for safety
@@ -477,9 +481,17 @@ class AdminMerchantController extends Controller
                 'response_at' => Carbon::now(),
             ]);
 
-            // Send Email Notification
-            if ($merchant->user && $merchant->user->email) {
-                Mail::to($merchant->user->email)->send(new MerchantRejectionMail($merchant));
+            if ($merchant->user) {
+                $merchant->user->notify(new MerchantApplicationStatusNotification(
+                    $merchant->fresh(),
+                    'rejected'
+                ));
+
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'rejected'
+                );
             }
 
             DB::commit();

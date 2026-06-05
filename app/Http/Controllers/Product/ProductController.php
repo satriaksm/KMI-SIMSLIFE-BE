@@ -602,7 +602,10 @@ class ProductController extends Controller
             'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
         ]);
 
-        if (count($data['images'] ?? []) > 6) {
+        $images = $data['images'] ?? [];
+        $coverIndex = $data['cover_image_index'] ?? 0;
+
+        if (count($images) > 6) {
             return response()->json([
                 'message' => 'Maksimal upload 6 foto produk.',
             ], 422);
@@ -796,7 +799,7 @@ class ProductController extends Controller
 
 
             // 3. UPLOAD PRODUCT IMAGES
-            $this->storeProductImages($product, $data['images'], $data['cover_image_index']);
+            $this->storeProductImages($product, $images, is_int($coverIndex) ? $coverIndex : 0);
 
             // 4. CREATE VARIANTS OR DIRECT PRICING
             if ($useVariants) {
@@ -840,13 +843,21 @@ class ProductController extends Controller
     /**
      * HELPER: Upload product images
      */
-    private function storeProductImages(Product $product, array $images, int $coverIndex): void
+    private function storeProductImages(Product $product, array $images, int $coverIndex = 0): void
     {
+        if (empty($images)) {
+            return;
+        }
+
         $imagesToInsert = [];
         $now = now();
 
         // Sort by order
         usort($images, fn($a, $b) => $a['order'] <=> $b['order']);
+
+        if ($coverIndex < 0 || $coverIndex >= count($images)) {
+            $coverIndex = 0;
+        }
 
         foreach ($images as $index => $imageData) {
             $file = $imageData['file'];
@@ -863,7 +874,78 @@ class ProductController extends Controller
             ];
         }
 
-        DB::table('images')->insert($imagesToInsert);
+        if (!empty($imagesToInsert)) {
+            DB::table('images')->insert($imagesToInsert);
+        }
+    }
+
+    /**
+     * ============================================================
+     * ADMIN ENDPOINTS (Auth Required - Admin)
+     * ============================================================
+     */
+    public function adminIndex(Request $request)
+    {
+        $data = $request->validate([
+            'q' => ['nullable', 'string', 'max:255'],
+            'status' => ['nullable', 'in:draft,published,archived'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $query = Product::query()->select([
+            'id',
+            'merchant_id',
+            'name',
+            'slug',
+            'status',
+            'min_purchase',
+            'created_at',
+        ])->with([
+                    'merchant:id,name,slug',
+                ]);
+
+        if (!empty($data['q'])) {
+            $query->where('name', 'like', '%' . $data['q'] . '%');
+        }
+
+        if (!empty($data['status'])) {
+            $query->where('status', $data['status']);
+        }
+
+        $perPage = $data['per_page'] ?? 10;
+        $result = $query->orderByDesc('created_at')->paginate($perPage);
+
+        return ApiResponse::success(
+            $result->items(),
+            'success',
+            200,
+            [
+                'current_page' => $result->currentPage(),
+                'last_page' => $result->lastPage(),
+                'per_page' => $result->perPage(),
+                'total' => $result->total(),
+            ]
+        );
+    }
+
+    public function adminDestroy(int $id)
+    {
+        $product = Product::query()->with(['images', 'addonGroups.options', 'merchant'])->findOrFail($id);
+
+        $merchantId = (int) ($product->merchant_id ?? 0);
+
+        // Collect addon ids used by this product before deleting (FK cascades will remove group/options)
+        $addonIds = $this->getAddonIdsForProduct($product);
+
+        $this->cleanupProductFiles($product);
+
+        $product->delete();
+
+        if ($merchantId > 0) {
+            $this->cleanupOrphanAddons($addonIds, $merchantId);
+        }
+
+        return ApiResponse::success(null, 'Produk dihapus.', 200);
     }
 
     /**
@@ -1886,7 +1968,7 @@ class ProductController extends Controller
             Image::where('imageable_type', 'product')
                 ->where('imageable_id', $product->id)
                 ->whereNotIn('id', $keepIds)
-                ->each(function ($img) {
+                ->each(function (Image $img) {
                     $this->deleteImageFileIfExists($img->image_path);
                     $img->delete();
                 });
@@ -1894,7 +1976,7 @@ class ProductController extends Controller
             // Semua gambar lama dihapus jika user upload baru tanpa existing_images
             Image::where('imageable_type', 'product')
                 ->where('imageable_id', $product->id)
-                ->each(function ($img) {
+                ->each(function (Image $img) {
                     $this->deleteImageFileIfExists($img->image_path);
                     $img->delete();
                 });
@@ -2115,6 +2197,7 @@ class ProductController extends Controller
         $merchantId = $merchant->id;
 
         // Get products that belong to this merchant
+        /** @var \Illuminate\Database\Eloquent\Collection<int, \App\Models\Product> $products */
         $products = Product::where('merchant_id', $merchantId)
             ->whereIn('slug', $slugs)
             ->get();
@@ -2126,6 +2209,7 @@ class ProductController extends Controller
         DB::beginTransaction();
         try {
             foreach ($products as $product) {
+                /** @var \App\Models\Product $product */
                 // Product-level permission (policy) without throwing mid-loop
                 $ability = Gate::forUser($user)->inspect('manage', $product);
                 if ($ability->denied()) {
@@ -2187,6 +2271,7 @@ class ProductController extends Controller
         $merchantId = $merchant->id;
 
         // Get products that belong to this merchant
+        /** @var \Illuminate\Database\Eloquent\Collection<int, \App\Models\Product> $products */
         $products = Product::where('merchant_id', $merchantId)
             ->whereIn('slug', $slugs)
             ->get();
@@ -2198,6 +2283,7 @@ class ProductController extends Controller
         DB::beginTransaction();
         try {
             foreach ($products as $product) {
+                /** @var \App\Models\Product $product */
                 // Product-level permission (policy) without throwing mid-loop
                 $ability = Gate::forUser($user)->inspect('manage', $product);
                 if ($ability->denied()) {
@@ -2469,6 +2555,7 @@ class ProductController extends Controller
             ->get();
 
         foreach ($images as $image) {
+            /** @var \App\Models\Image $image */
             $this->deleteImageFileIfExists($image->image_path);
             $image->delete();
         }

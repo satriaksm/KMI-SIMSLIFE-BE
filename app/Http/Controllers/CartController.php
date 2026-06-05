@@ -688,9 +688,9 @@ class CartController extends Controller
             );
         }
 
-        $count = Cart::where('user_id', $userId)
-            ->withSum('items as total_quantity', 'quantity')
-            ->value('total_quantity');
+        $count = CartItem::query()
+            ->whereHas('cart', fn($q) => $q->where('user_id', $userId))
+            ->sum('quantity');
 
         return ApiResponse::success(
             ['count' => (int) ($count ?? 0)],

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use Carbon\Carbon;
-use App\Models\Address;
 use App\Models\Merchant;
 use Illuminate\Support\Arr;
 use App\Helpers\ApiResponse;
@@ -151,6 +150,11 @@ class MerchantController extends Controller
             'response_at',
             'created_at',
             'updated_at',
+            // Informasi sensitif – tidak boleh tampil di publik
+            'NPWP',
+            'bank_code',
+            'bank_account_number',
+            'bank_account_name',
         ]);
 
         return ApiResponse::success($data, 'success');
@@ -192,8 +196,14 @@ class MerchantController extends Controller
                 'address.district_id' => ['required', 'integer', Rule::exists('districts', 'id')],
                 'address.village_id' => ['required', 'integer', Rule::exists('villages', 'id')],
                 'address.detail' => ['nullable', 'string', 'max:500'],
-                'address.latitude' => ['required', 'numeric', 'between:-90,90'],
-                'address.longitude' => ['required', 'numeric', 'between:-180,180'],
+                'address.latitude' => ['nullable', 'numeric', 'between:-90,90'],
+                'address.longitude' => ['nullable', 'numeric', 'between:-180,180'],
+
+                // Informasi pajak & bank (opsional saat pendaftaran)
+                'NPWP' => ['nullable', 'string', 'max:30', 'unique:merchants,NPWP'],
+                'bank_code' => ['nullable', 'string', 'max:100'],
+                'bank_account_number' => ['nullable', 'string', 'max:50'],
+                'bank_account_name' => ['nullable', 'string', 'max:255'],
             ],
             [
                 'name.required' => 'Nama usaha wajib diisi.',
@@ -209,10 +219,7 @@ class MerchantController extends Controller
                 'address.district_id.exists' => 'Kecamatan tidak valid.',
                 'address.village_id.required' => 'Desa/Kelurahan wajib dipilih.',
                 'address.village_id.exists' => 'Desa/Kelurahan tidak valid.',
-                'address.latitude.required' => 'Titik lokasi (latitude) wajib diisi.',
-                'address.latitude.between' => 'Latitude tidak valid.',
-                'address.longitude.required' => 'Titik lokasi (longitude) wajib diisi.',
-                'address.longitude.between' => 'Longitude tidak valid.',
+                'NPWP.unique' => 'NPWP ini sudah terdaftar. Silakan gunakan NPWP lain.',
             ]
         );
 
@@ -246,6 +253,11 @@ class MerchantController extends Controller
                 'phone' => $validated['phone'],
                 'logo_path' => null,
                 'operational_hours' => $operationalHours,
+
+                'NPWP' => $validated['NPWP'] ?? null,
+                'bank_code' => $validated['bank_code'] ?? null,
+                'bank_account_number' => $validated['bank_account_number'] ?? null,
+                'bank_account_name' => $validated['bank_account_name'] ?? null,
             ]);
 
             $addr = $validated['address'];
@@ -355,11 +367,18 @@ class MerchantController extends Controller
 
             // operational hours
             'operational_hours' => ['nullable', 'string'], // JSON string
+
+            // Informasi pajak & bank
+            'NPWP' => ['nullable', 'string', 'max:30', Rule::unique('merchants', 'NPWP')->ignore($merchant->id)],
+            'bank_code' => ['nullable', 'string', 'max:100'],
+            'bank_account_number' => ['nullable', 'string', 'max:50'],
+            'bank_account_name' => ['nullable', 'string', 'max:255'],
         ], [
             'logo.mimes' => 'Logo harus berupa file gambar (jpg, jpeg, png, gif, webp)',
             'logo.max' => 'Ukuran logo maksimal 5MB',
             'cover.mimes' => 'Cover harus berupa file gambar (jpg, jpeg, png, gif, webp)',
             'cover.max' => 'Ukuran cover maksimal 5MB',
+            'NPWP.unique' => 'NPWP ini sudah terdaftar. Silakan gunakan NPWP lain.',
         ]);
 
         DB::beginTransaction();
@@ -372,6 +391,11 @@ class MerchantController extends Controller
                 'name' => $validated['name'],
                 'phone' => $validated['phone'] ?? null,
                 'description' => $validated['description'] ?? null,
+
+                'NPWP' => ($validated['NPWP'] ?? '') !== '' ? $validated['NPWP'] : null,
+                'bank_code' => ($validated['bank_code'] ?? '') !== '' ? $validated['bank_code'] : null,
+                'bank_account_number' => ($validated['bank_account_number'] ?? '') !== '' ? $validated['bank_account_number'] : null,
+                'bank_account_name' => ($validated['bank_account_name'] ?? '') !== '' ? $validated['bank_account_name'] : null,
             ]);
 
             /** ===============================
@@ -385,38 +409,49 @@ class MerchantController extends Controller
             }
 
             $addressPayload = [];
-            if (array_key_exists('province_id', $validated)) {
+            if (!is_null($validated['province_id'] ?? null)) {
                 $addressPayload['province_id'] = $validated['province_id'];
             }
-            if (array_key_exists('city_id', $validated)) {
+            if (!is_null($validated['city_id'] ?? null)) {
                 $addressPayload['city_id'] = $validated['city_id'];
             }
-            if (array_key_exists('district_id', $validated)) {
+            if (!is_null($validated['district_id'] ?? null)) {
                 $addressPayload['district_id'] = $validated['district_id'];
             }
-            if (array_key_exists('village_id', $validated)) {
+            if (!is_null($validated['village_id'] ?? null)) {
                 $addressPayload['village_id'] = $validated['village_id'];
             }
-            if (array_key_exists('address_detail', $validated)) {
+            if (array_key_exists('address_detail', $validated) && !is_null($validated['address_detail'])) {
                 $addressPayload['detail'] = $validated['address_detail'];
             }
-            if (array_key_exists('latitude', $validated)) {
+            if (!is_null($validated['latitude'] ?? null)) {
                 $addressPayload['latitude'] = $validated['latitude'];
             }
-            if (array_key_exists('longitude', $validated)) {
+            if (!is_null($validated['longitude'] ?? null)) {
                 $addressPayload['longitude'] = $validated['longitude'];
             }
 
             if (!$address) {
-                $merchant->addresses()->create(array_merge([
-                    'label' => 'utama',
-                ], $addressPayload));
-            } else {
-                // Ensure it becomes primary going forward
-                if (empty($address->label)) {
-                    $addressPayload['label'] = 'utama';
+                // Only create a new address row if we have the required location IDs.
+                $hasRequiredIds =
+                    array_key_exists('province_id', $addressPayload)
+                    && array_key_exists('city_id', $addressPayload)
+                    && array_key_exists('district_id', $addressPayload)
+                    && array_key_exists('village_id', $addressPayload);
+
+                if ($hasRequiredIds) {
+                    $merchant->addresses()->create(array_merge([
+                        'label' => 'utama',
+                    ], $addressPayload));
                 }
-                $address->update($addressPayload);
+            } else {
+                if (!empty($addressPayload)) {
+                    // Ensure it becomes primary going forward
+                    if (empty($address->label)) {
+                        $addressPayload['label'] = 'utama';
+                    }
+                    $address->update($addressPayload);
+                }
             }
 
             /** ===============================

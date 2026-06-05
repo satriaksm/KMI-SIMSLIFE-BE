@@ -58,4 +58,3 @@ class MerchantRejectionMail extends Mailable
         return [];
     }
 }
-

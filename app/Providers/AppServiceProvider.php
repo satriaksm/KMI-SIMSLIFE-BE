@@ -41,9 +41,9 @@ class AppServiceProvider extends ServiceProvider
                 ->line('Jika Anda tidak merasa membuat akun, abaikan email ini.')
                 ->salutation('Salam hangat, Tim SUMILIR')
                 ->markdown('emails.auth.verify-email', [
-                        'actionUrl' => $url,
-                        'userName' => $notifiable->name ?? 'Pengguna',
-                    ]);
+                    'actionUrl' => $url,
+                    'userName' => $notifiable->name ?? 'Pengguna',
+                ]);
         });
 
         // Reset Password (arah ke FE)
@@ -60,9 +60,9 @@ class AppServiceProvider extends ServiceProvider
                 ->line('Abaikan email ini jika Anda tidak meminta reset kata sandi.')
                 ->salutation('Salam, Tim SUMILIR')
                 ->markdown('emails.auth.reset-password', [
-                        'actionUrl' => $resetUrl,
-                        'userName' => $notifiable->name ?? 'Pengguna',
-                    ]);
+                    'actionUrl' => $resetUrl,
+                    'userName' => $notifiable->name ?? 'Pengguna',
+                ]);
         });
 
         Relation::enforceMorphMap([
