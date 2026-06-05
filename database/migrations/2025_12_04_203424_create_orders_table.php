@@ -16,11 +16,14 @@ return new class extends Migration {
             $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('merchant_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('voucher_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('order_type')->nullable();
             $table->string('order_code');
+            $table->decimal('total_price', 12, 2)->nullable();
             $table->decimal('subtotal', 12, 2)->default(0);
             $table->decimal('discount_total', 12, 2)->default(0);
             $table->enum('delivery_type', ['pickup', 'delivery'])->default('pickup');
             $table->string('payment_method')->nullable();
+            $table->string('payment_status')->nullable();
             $table->decimal('delivery_fee_snapshot', 12, 2)->default(0);
             $table->decimal('platform_fee', 12, 2)->default(0);
             $table->decimal('gross_amount', 12, 2)->default(0);

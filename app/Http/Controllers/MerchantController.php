@@ -78,6 +78,11 @@ class MerchantController extends Controller
         $data = $merchants->map(function (Merchant $merchant) {
             $addr = $merchant->primaryAddress ?: $merchant->addresses->first();
 
+            // Safe rating calculation
+            $ratings = \App\Models\Rating::where('merchant_id', $merchant->id)->get();
+            $totalReviews = $ratings->count();
+            $averageRating = $totalReviews > 0 ? round($ratings->avg('rating'), 1) : 0;
+
             return [
                 'id' => $merchant->id,
                 'name' => $merchant->name,
@@ -88,6 +93,10 @@ class MerchantController extends Controller
                 'segmentation' => $merchant->segmentation
                     ? ['id' => $merchant->segmentation->id, 'name' => $merchant->segmentation->name]
                     : null,
+                'rating_summary' => [
+                    'average_rating' => $averageRating,
+                    'total_reviews' => $totalReviews,
+                ],
             ];
         });
 
@@ -97,67 +106,99 @@ class MerchantController extends Controller
 
     public function publicShow(Request $request, $merchantSlug)
     {
-        // Cari berdasarkan slug atau id
-        $merchant = Merchant::with([
-            'segmentation:id,name',
-            'primaryAddress',
-            'primaryAddress.province:id,name',
-            'primaryAddress.city:id,name',
-            'primaryAddress.district:id,name',
-            'primaryAddress.village:id,name',
-        ])
-            ->where('status', 'approved')
-            ->where(function ($q) use ($merchantSlug) {
-                $q->where('id', $merchantSlug)
-                    ->orWhere('slug', $merchantSlug);
-            })
-            ->withCount('products')
-            ->firstOrFail();
+        try {
+            // Cari berdasarkan slug atau id
+            $merchant = Merchant::with([
+                'segmentation:id,name',
+                'primaryAddress',
+                'primaryAddress.province:id,name',
+                'primaryAddress.city:id,name',
+                'primaryAddress.district:id,name',
+                'primaryAddress.village:id,name',
+            ])
+                ->where('status', 'approved')
+                ->where(function ($q) use ($merchantSlug) {
+                    $q->where('id', $merchantSlug)
+                        ->orWhere('slug', $merchantSlug);
+                })
+                ->withCount('products')
+                ->first();
 
-        // Pastikan latitude dan longitude selalu ada di response (ambil dari primaryAddress jika ada)
-        $lat = null;
-        $lng = null;
-        if ($merchant->primaryAddress) {
-            $lat = $merchant->primaryAddress->latitude;
-            $lng = $merchant->primaryAddress->longitude;
-        }
-        // Fallback jika merchant punya field langsung (opsional)
-        if (!$lat && isset($merchant->latitude)) {
-            $lat = $merchant->latitude;
-        }
-        if (!$lng && isset($merchant->longitude)) {
-            $lng = $merchant->longitude;
-        }
+            if (!$merchant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Merchant tidak ditemukan',
+                ], 404);
+            }
 
-        $data = $merchant->toArray();
+            // Safe rating calculation - calculate directly from ratings table
+            $averageRating = 0;
+            $totalReviews = 0;
+            $rating5 = 0;
+            $rating4 = 0;
+            $rating3 = 0;
+            $rating2 = 0;
+            $rating1 = 0;
 
-        if (isset($data['primary_address'])) {
-            $data['primary_address'] = Arr::except($data['primary_address'], [
-                'label',
-                'created_at',
-                'updated_at',
+            try {
+                $ratings = \App\Models\Rating::where('merchant_id', $merchant->id)->get();
+                $totalReviews = $ratings->count();
+                if ($totalReviews > 0) {
+                    $averageRating = round($ratings->avg('rating'), 1);
+                    $rating5 = $ratings->where('rating', 5)->count();
+                    $rating4 = $ratings->where('rating', 4)->count();
+                    $rating3 = $ratings->where('rating', 3)->count();
+                    $rating2 = $ratings->where('rating', 2)->count();
+                    $rating1 = $ratings->where('rating', 1)->count();
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning('Rating calc failed: ' . $e->getMessage());
+            }
+
+            // Ensure latitude and longitude always exist in response
+            $lat = null;
+            $lng = null;
+            if ($merchant->primaryAddress) {
+                $lat = $merchant->primaryAddress->latitude;
+                $lng = $merchant->primaryAddress->longitude;
+            }
+
+            $data = $merchant->toArray();
+
+            if (isset($data['primary_address'])) {
+                $data['primary_address'] = Arr::except($data['primary_address'], [
+                    'label', 'created_at', 'updated_at',
+                ]);
+            }
+
+            $data['latitude'] = $lat;
+            $data['longitude'] = $lng;
+            $data['rating_summary'] = [
+                'average_rating' => $averageRating,
+                'total_reviews' => $totalReviews,
+                'rating_5_count' => $rating5,
+                'rating_4_count' => $rating4,
+                'rating_3_count' => $rating3,
+                'rating_2_count' => $rating2,
+                'rating_1_count' => $rating1,
+            ];
+
+            $data = Arr::except($data, [
+                'status', 'rejection_reason', 'reviewed_by',
+                'response_at', 'created_at', 'updated_at',
+                // Informasi sensitif – tidak boleh tampil di publik
+                'NPWP', 'bank_code', 'bank_account_number', 'bank_account_name',
             ]);
+
+            return ApiResponse::success($data, 'success');
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Merchant publicShow error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memuat data merchant',
+            ], 500);
         }
-
-        $data['latitude'] = $lat;
-        $data['longitude'] = $lng;
-
-        // Hapus field yang tidak ingin ditampilkan
-        $data = Arr::except($data, [
-            'status',
-            'rejection_reason',
-            'reviewed_by',
-            'response_at',
-            'created_at',
-            'updated_at',
-            // Informasi sensitif – tidak boleh tampil di publik
-            'NPWP',
-            'bank_code',
-            'bank_account_number',
-            'bank_account_name',
-        ]);
-
-        return ApiResponse::success($data, 'success');
     }
 
     // Customer mendaftar UMKM -> status pending

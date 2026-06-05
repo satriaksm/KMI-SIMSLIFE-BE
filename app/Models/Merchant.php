@@ -313,4 +313,9 @@ class Merchant extends Model
     {
         return max(0, $this->balance_available - $this->balance_held);
     }
+
+    public function ratingSummary(): MorphOne
+    {
+        return $this->morphOne(RatingSummary::class, 'summaryable');
+    }
 }

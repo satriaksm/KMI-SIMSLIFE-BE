@@ -15,9 +15,14 @@ return new class extends Migration
             // Polymorphic untuk Product atau Jasa
             $table->morphs('rateable');
             
+            // Polymorphic summaryable
+            $table->unsignedBigInteger('summaryable_id')->nullable();
+            $table->string('summaryable_type')->nullable();
+            
             // Statistik rating
             $table->decimal('average_rating', 3, 2)->default(0);
             $table->integer('total_ratings')->default(0);
+            $table->integer('total_reviews')->default(0);
             
             // Breakdown rating (berapa banyak rating per star)
             $table->integer('rating_5')->default(0);
@@ -25,6 +30,11 @@ return new class extends Migration
             $table->integer('rating_3')->default(0);
             $table->integer('rating_2')->default(0);
             $table->integer('rating_1')->default(0);
+            $table->integer('rating_5_count')->default(0);
+            $table->integer('rating_4_count')->default(0);
+            $table->integer('rating_3_count')->default(0);
+            $table->integer('rating_2_count')->default(0);
+            $table->integer('rating_1_count')->default(0);
             
             $table->timestamps();
             

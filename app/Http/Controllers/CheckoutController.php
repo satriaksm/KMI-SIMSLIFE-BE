@@ -6,6 +6,7 @@ use App\Helpers\ApiResponse;
 use App\Models\CartItem;
 use App\Models\Merchant;
 use App\Models\Order;
+use App\Models\ProductOrderItem;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ProductVariant;
@@ -268,6 +269,7 @@ class CheckoutController extends Controller
                 $order = Order::create([
                     'user_id' => $user->id,
                     'merchant_id' => $merchant->id,
+                    'order_type' => 'product',
                     'jasa_id' => null,
                     'package_id' => null,
                     'nama' => $data['customer_name'],
@@ -278,12 +280,25 @@ class CheckoutController extends Controller
                     'tanggal' => $now->toDateString(),
                     'waktu' => $now->format('H:i'),
                     'metode_pembayaran' => $paymentMethod,
+                    'payment_method' => $paymentMethod,
+                    'payment_status' => 'PENDING',
                     'promo_code' => $voucher?->voucher_code,
                     'total' => $finalTotal,
+                    'total_price' => $finalTotal,
                     'status' => 'pending',
                 ]);
 
                 foreach ($orderItems as $item) {
+                    ProductOrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $item['product_id'],
+                        'product_variant_id' => $item['product_variant_id'],
+                        'quantity' => $item['quantity'],
+                        'price' => $item['price'],
+                        'subtotal' => $item['subtotal'],
+                        'note' => $data['product_note'] ?? null,
+                    ]);
+
                     OrderItem::create([
                         'order_id' => $order->id,
                         'product_id' => $item['product_id'],

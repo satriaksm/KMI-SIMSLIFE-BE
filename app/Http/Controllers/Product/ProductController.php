@@ -12,6 +12,8 @@ use App\Models\ProductVariant;
 use App\Models\ProductOption;
 use App\Models\ProductOptionValue;
 use App\Models\Merchant;
+use App\Models\Rating;
+use App\Models\RatingSummary;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use App\Exports\ProductsExport;
@@ -135,6 +137,13 @@ class ProductController extends Controller
                             }
                         ]);
                 },
+
+                // Rating summary
+                'ratingSummary',
+
+                // Ratings with user and media
+                'ratings.user',
+                'ratings.media',
             ])
             ->findOrFail($product->id);
 
@@ -319,9 +328,49 @@ class ProductController extends Controller
         $merchantPrimaryAddress = $product->merchant?->primaryAddress;
         $merchantAddress = $merchantPrimaryAddress?->full_address;
 
+        // Calculate rating summary for product
+        $ratingSummary = $product->ratingSummary;
+        $ratings = $product->ratings ?? collect();
+        $productRatingSummary = [
+            'average_rating' => $ratingSummary?->average_rating
+                ?? ($ratings->isNotEmpty() ? round($ratings->avg('rating'), 1) : 0),
+            'total_reviews' => $ratingSummary?->total_reviews ?? $ratings->count(),
+            'rating_5_count' => $ratingSummary?->rating_5_count ?? $ratings->where('rating', 5)->count(),
+            'rating_4_count' => $ratingSummary?->rating_4_count ?? $ratings->where('rating', 4)->count(),
+            'rating_3_count' => $ratingSummary?->rating_3_count ?? $ratings->where('rating', 3)->count(),
+            'rating_2_count' => $ratingSummary?->rating_2_count ?? $ratings->where('rating', 2)->count(),
+            'rating_1_count' => $ratingSummary?->rating_1_count ?? $ratings->where('rating', 1)->count(),
+        ];
+
+        // Normalize ratings list
+        $productRatings = $ratings->map(function ($r) {
+            return [
+                'id' => $r->id,
+                'rating' => $r->rating,
+                'title' => $r->title,
+                'comment' => $r->comment,
+                'created_at' => $r->created_at,
+                'user' => $r->user ? [
+                    'id' => $r->user->id,
+                    'name' => $r->user->name,
+                ] : null,
+                'media' => $r->media->map(function ($m) {
+                    return [
+                        'id' => $m->id,
+                        'file_type' => $m->file_type,
+                        'file_path' => $m->file_path,
+                        'file_url' => $m->file_url,
+                        'media_url' => $m->media_url,
+                    ];
+                }),
+            ];
+        })->values();
+
         return ApiResponse::success(
             [
                 'product' => $product,
+                'rating_summary' => $productRatingSummary,
+                'ratings' => $productRatings,
                 'merchant' => [
                     'id' => $product->merchant->id,
                     'name' => $product->merchant->name,
@@ -420,6 +469,10 @@ class ProductController extends Controller
                 }
 
                 unset($product->coverImage);
+
+                // Add rating_summary for each product
+                $product->rating_summary = RatingSummary::getProductRatingSummary($product->id);
+
                 return $product;
             })
             ->values();
