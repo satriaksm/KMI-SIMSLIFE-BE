@@ -104,6 +104,7 @@ class CommunityPost extends Model
                     $query->with('user:id,name,profile_picture_path')
                           ->oldest('created_at');
                 }
+                
             ])
             ->oldest('created_at');
     }
@@ -163,5 +164,13 @@ class CommunityPost extends Model
     public function scopeRecent($query)
     {
         return $query->latest('created_at');
+    }
+
+    /**
+     * ✅ NEW: Reports about this post
+     */
+    public function reports()
+    {
+        return $this->morphMany(ContentReport::class, 'reportable');
     }
 }

@@ -287,7 +287,10 @@ class AdminMerchantController extends Controller
             ])
                 ->withCount(['products', 'vouchers', 'events'])
                 ->findOrFail($id);
+<<<<<<< HEAD
 
+=======
+>>>>>>> staging-ta
 
             // ✅ FIX: Transform products to include complete data from variants
             $merchant->products->transform(function ($product) {
@@ -410,6 +413,7 @@ class AdminMerchantController extends Controller
                 );
             }
 
+<<<<<<< HEAD
             if ($merchant->user) {
                 $merchant->user->notify(new MerchantApplicationStatusNotification(
                     $merchant->fresh(),
@@ -421,6 +425,11 @@ class AdminMerchantController extends Controller
                     $merchant->fresh(),
                     'approved'
                 );
+=======
+            // Send Email Notification
+            if ($merchant->user && $merchant->user->email) {
+                Mail::to($merchant->user->email)->send(new MerchantApprovalMail($merchant));
+>>>>>>> staging-ta
             }
 
             DB::commit();
@@ -482,6 +491,7 @@ class AdminMerchantController extends Controller
                 'response_at' => Carbon::now(),
             ]);
 
+<<<<<<< HEAD
             if ($merchant->user) {
                 $merchant->user->notify(new MerchantApplicationStatusNotification(
                     $merchant->fresh(),
@@ -493,6 +503,11 @@ class AdminMerchantController extends Controller
                     $merchant->fresh(),
                     'rejected'
                 );
+=======
+            // Send Email Notification
+            if ($merchant->user && $merchant->user->email) {
+                Mail::to($merchant->user->email)->send(new MerchantRejectionMail($merchant));
+>>>>>>> staging-ta
             }
 
             DB::commit();
@@ -849,4 +864,40 @@ class AdminMerchantController extends Controller
             'Cache-Control' => 'public, max-age=31536000',
         ]);
     }
+
+    /**
+     * Change merchant status (Admin)
+     */
+    public function changeStatus(Request $request, $id)
+    {
+        $merchant = \App\Models\Merchant::findOrFail($id);
+
+        $validated = $request->validate([
+            'status' => 'required|in:pending,approved,rejected,suspended,archived',
+        ]);
+
+        $oldStatus = $merchant->status;
+        $newStatus = $validated['status'];
+
+        $merchant->update(['status' => $newStatus]);
+
+        // (Tokens deletion removed as it throws 500 without Sanctum DB)
+
+        \App\Models\AdminAction::create([
+            'admin_id'      => \Auth::id(),
+            'action_type'   => 'status_change',
+            'target_type'   => \App\Models\Merchant::class,
+            'target_id'     => $merchant->id,
+            'reason'        => $request->reason ?? 'Perubahan status manual oleh admin',
+            'status_before' => $oldStatus,
+            'status_after'  => $newStatus,
+        ]);
+
+        return response()->json([
+            'message' => 'Status merchant berhasil diubah',
+            'data'    => $merchant->fresh(),
+        ]);
+    }
+
 }
+

@@ -93,10 +93,22 @@ class DashboardController extends Controller
          * =========================
          * CHART KATEGORI (TOP 3 + LAINNYA)
          * =========================
+         * - Untuk merchant produk: pakai relasi products
+         * - Untuk merchant jasa: pakai relasi jasas
          */
         if ($isJasaMerchant) {
-            $labels = [];
-            $data = [];
+            $categoryStats = Category::whereHas('jasas', function ($q) use ($merchantId) {
+                $q->where('merchant_id', $merchantId)
+                    ->where('is_active', true);
+            })
+                ->withCount([
+                    'jasas as total' => function ($q) use ($merchantId) {
+                        $q->where('merchant_id', $merchantId)
+                            ->where('is_active', true);
+                    }
+                ])
+                ->orderByDesc('total')
+                ->get();
         } else {
             $categoryStats = Category::whereHas('products', function ($q) use ($merchantId) {
                 $q->where('merchant_id', $merchantId)
@@ -110,17 +122,17 @@ class DashboardController extends Controller
                 ])
                 ->orderByDesc('total')
                 ->get();
+        }
 
-            $topCategories = $categoryStats->take(3);
-            $otherTotal = $categoryStats->slice(3)->sum('total');
+        $topCategories = $categoryStats->take(3);
+        $otherTotal = $categoryStats->slice(3)->sum('total');
 
-            $labels = $topCategories->pluck('name')->toArray();
-            $data = $topCategories->pluck('total')->toArray();
+        $labels = $topCategories->pluck('name')->toArray();
+        $data = $topCategories->pluck('total')->toArray();
 
-            if ($otherTotal > 0) {
-                $labels[] = 'Lainnya';
-                $data[] = $otherTotal;
-            }
+        if ($otherTotal > 0) {
+            $labels[] = 'Lainnya';
+            $data[] = $otherTotal;
         }
 
         /**

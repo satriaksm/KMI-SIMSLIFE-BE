@@ -14,6 +14,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Trust all proxies — required for Hostinger shared hosting which terminates SSL
+        // at the proxy level. Without this, $request->isSecure() = false even for HTTPS
+        // requests, causing URL::hasValidSignature() to fail (scheme mismatch).
+        $middleware->trustProxies(at: '*');
+
         // Middleware aliases
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
@@ -23,6 +28,13 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
         $middleware->prepend([
             HandleCors::class,
+        ]);
+        $middleware->api(prepend: [
+            EnsureFrontendRequestsAreStateful::class,
+        ]);
+        $middleware->statefulApi();
+        // 🆕 ADDED from feat/rating-system: Global middleware untuk OPTIONS request
+        $middleware->append([
             AllowOptions::class,
         ]);
         $middleware->validateCsrfTokens(except: [

@@ -10,7 +10,8 @@ return new class extends Migration
         Schema::create('report_reasons', function (Blueprint $table) {
             $table->tinyIncrements('id');
             $table->string('reason_title', 255);
-            $table->enum('applies_to', ['product', 'service', 'merchant', 'post', 'post_comment']);
+            $table->text('reason_description')->nullable();
+            $table->enum('applies_to', ['product', 'service', 'merchant', 'post', 'post_comment', 'user']);
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });

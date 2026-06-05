@@ -12,14 +12,16 @@ class EmailVerificationController extends Controller
 {
     public function verify(Request $request, $id, $hash)
     {
-        $frontend = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+        $frontend = rtrim(config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173')), '/');
 
         $redirect = function (string $url) {
             // Jangan pakai helper redirect() di route API karena bisa butuh session middleware.
             return response('', 302)->header('Location', $url);
         };
 
-        // Validasi signature dari email
+        // Validasi signature dari email.
+        // TrustProxies (*) is configured in bootstrap/app.php so $request->url() returns
+        // the correct HTTPS scheme even on Hostinger's SSL-terminated shared hosting.
         if (!URL::hasValidSignature($request)) {
             return $redirect($frontend . '/verify-email?status=invalid');
         }

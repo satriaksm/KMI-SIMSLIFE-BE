@@ -2,15 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\CommunityPost;
 use App\Models\PostComment;
+use App\Models\CommunityPost;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
-class PostCommentController
+class PostCommentController extends Controller
 {
     /**
      * Get comments for a specific post 
@@ -185,49 +184,70 @@ class PostCommentController
         }
     }
 
-    /**
-     * Delete a specific comment
-     */
-    public function destroy($postId, $commentId)
-    {
-        $post = CommunityPost::find($postId);
-        if (!$post) {
-            return response()->json([
-                'message' => 'Post not found',
-            ], 404);
-        }
 
-        $comment = PostComment::where('id', $commentId)
-            ->where('post_id', $postId)
-            ->first();
+    /**
+     * Delete Comment (User - Own Comment Only)
+     * DELETE /api/comments/{id}
+     */
+    public function destroy($id)
+    {
+        $comment = PostComment::findOrFail($id);
 
         if (!$comment) {
-            return response()->json([
-                'message' => 'Comment not found or does not belong to this post',
-            ], 404);
+            return response()->json(['message' => 'Comment not found'], 404);
         }
 
-        $user = Auth::user();
-        if ($comment->user_id !== $user->id) {
+        // Check authorization
+        if ($comment->user_id !== Auth::id()) {
             return response()->json([
-                'message' => 'Unauthorized. You can only delete your own comments.',
+                'message' => 'Unauthorized',
             ], 403);
         }
 
-        try {
-            $comment->delete();
+        $comment->delete(); // soft delete
 
-            return response()->json([
-                'success' => 'Comment deleted successfully'
-            ], 200);
-        } catch (\Exception $e) {
-            Log::error('Failed to delete comment: ' . $e->getMessage());
+        return response()->json([
+            'message' => 'Comment deleted successfully'
+        ], 200);
+    }
 
-            return response()->json([
-                'message' => 'Failed to delete comment',
-                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
-            ], 500);
+    /**
+     * Delete Comment (Admin - Any Comment)
+     * DELETE /admin/comments/{id}
+     */
+    public function adminDestroy(Request $request, $id)
+    {
+        // Verify admin role
+        $admin = $request->user();
+        if (!$admin || !$admin->hasRole('admin')) {
+            return response()->json(['message' => 'Forbidden'], 403);
         }
+
+        $comment = PostComment::findOrFail($id);
+
+        if (!$comment) {
+            return response()->json(['message' => 'Comment not found'], 404);
+        }
+
+        // Log admin action
+        \App\Models\AdminAction::create([
+            'admin_id' => $admin->id,
+            'action_type' => 'delete_content',
+            'target_type' => PostComment::class,
+            'target_id' => $comment->id,
+            'reason' => $request->input('reason', 'Deleted by admin'),
+            'metadata' => [
+                'comment_excerpt' => substr($comment->comment, 0, 100),
+                'comment_author_id' => $comment->user_id,
+                'post_id' => $comment->post_id,
+            ],
+        ]);
+
+        $comment->delete(); // soft delete
+
+        return response()->json([
+            'message' => 'Comment deleted successfully by admin'
+        ], 200);
     }
 
     /**

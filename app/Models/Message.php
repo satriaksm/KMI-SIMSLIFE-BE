@@ -2,8 +2,9 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class Message extends Model
 {
@@ -18,25 +19,49 @@ class Message extends Model
         'jasa_id',
         'offer_price',
         'offer_status',
-        'read_at',
     ];
 
     protected $casts = [
-        'read_at' => 'datetime',
     ];
 
-    public function conversation()
+    /**
+     * Get the conversation this message belongs to
+     */
+    public function conversation(): BelongsTo
     {
-        return $this->belongsTo(Conversation::class);
+        return $this->belongsTo(Conversation::class, 'conversation_id');
     }
 
-    public function sender()
+    /**
+     * Get the sender user
+     */
+    public function sender(): BelongsTo
     {
         return $this->belongsTo(User::class, 'sender_id');
     }
 
-    public function jasa()
+    /**
+     * Scope: Get unread messages
+     */
+    public function scopeUnread($query)
     {
-        return $this->belongsTo(Jasa::class);
+        return $query->whereRaw('1 = 0');
+    }
+
+    /**
+     * Scope: Get messages from a specific sender role
+     */
+    public function scopeFromRole($query, $role)
+    {
+        return $query->where('sender_role', $role);
+    }
+
+    /**
+     * Scope: Get only message type (not system messages)
+     */
+    public function scopeMessages($query)
+    {
+        return $query->where('type', 'message');
     }
 }
+
