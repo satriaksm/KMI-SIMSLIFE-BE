@@ -38,7 +38,6 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportAppealController;
 use App\Http\Controllers\RatingController;
-use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\Public\PublicProfileController;
 use App\Models\Conversation;
 
