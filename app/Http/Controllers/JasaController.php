@@ -13,6 +13,17 @@ use Illuminate\Support\Facades\Log;
 
 class JasaController extends Controller
 {
+    /**
+     * Normalize price value: convert null/empty to 0, ensure integer
+     */
+    protected function normalizePrice(mixed $value): int
+    {
+        if ($value === null || $value === '' || (is_string($value) && trim($value) === '')) {
+            return 0;
+        }
+        return (int) $value;
+    }
+
     protected function attachCoverImg(Jasa $jasa, bool $isPublic): void
     {
         if (!$jasa->relationLoaded('images')) {
@@ -24,19 +35,24 @@ class JasaController extends Controller
 
         if (!$cover) {
             $jasa->setAttribute('cover_img', null);
+            // image_url handled by getImageUrlAttribute() accessor
             return;
         }
 
-        $srcUrl = $isPublic
-            ? route('images.show', ['image' => $cover->id])
-            : URL::signedRoute('images.show', ['image' => $cover->id], now()->addMinutes(60));
+        // Always use public URL via asset() + /storage/ — no signed URL complexity
+        // asset() respects APP_URL in production
+        $imageUrl = asset('storage/' . $cover->image_path);
 
-        // Field legacy `image` juga gunakan API URL agar tidak 403 di production
-        $jasa->setAttribute('image', $srcUrl);
+        // Also add the Image model ID so FE can call /api/images/{id}
+        $srcUrl = route('images.show', ['image' => $cover->id]);
 
+        $jasa->setAttribute('image', $imageUrl);
         $jasa->setAttribute('cover_img', [
             'id' => $cover->id,
+            'path' => $cover->image_path,
+            'url' => $imageUrl,
             'src_url' => $srcUrl,
+            'image_url' => $imageUrl,
         ]);
     }
 
@@ -107,18 +123,19 @@ class JasaController extends Controller
 
         $jasas->each(function ($jasa) {
             $this->attachCategoryAliases($jasa);
-            
-            // Normalize images for frontend
+
+            // Normalize images for frontend — always use public URLs
             if ($jasa->images && $jasa->images->count() > 0) {
                 $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
                     || ($jasa->status === null && (bool) $jasa->is_active);
 
                 $jasa->images->transform(function ($image) use ($isPublic) {
                     $image->path = $image->image_path;
-                    $image->url = $isPublic
-                        ? route('images.show', ['image' => $image->id])
-                        : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
-                    $image->src_url = $image->url;
+                    // Always use public URL (ImageController handles access control)
+                    $publicUrl = route('images.show', ['image' => $image->id]);
+                    $image->url = $publicUrl;
+                    $image->src_url = $publicUrl;
+                    $image->image_url = asset('storage/' . $image->image_path);
 
                     $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                     return $image;
@@ -144,17 +161,18 @@ class JasaController extends Controller
         // FE menggunakan jasa_category_id & jasa_subcategory_id
         $this->attachCategoryAliases($jasa);
 
-        // Normalisasi struktur images untuk FE (path, is_cover, display_order)
+        // Normalisasi struktur images untuk FE (path, is_cover, display_order) — always public URLs
         if ($jasa->images) {
             $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
                 || ($jasa->status === null && (bool) $jasa->is_active);
 
             $jasa->images->transform(function ($image) use ($isPublic) {
                 $image->path = $image->image_path;
-                $image->url = $isPublic
-                    ? route('images.show', ['image' => $image->id])
-                    : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
-                $image->src_url = $image->url;
+                // Always use public URL (ImageController handles access control)
+                $publicUrl = route('images.show', ['image' => $image->id]);
+                $image->url = $publicUrl;
+                $image->src_url = $publicUrl;
+                $image->image_url = asset('storage/' . $image->image_path);
 
                 $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                 return $image;
@@ -276,6 +294,7 @@ class JasaController extends Controller
                     $image->path = $image->image_path;
                     $image->url = route('images.show', ['image' => $image->id]);
                     $image->src_url = $image->url;
+                    $image->image_url = asset('storage/' . $image->image_path);
 
                     $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                     return $image;
@@ -327,6 +346,7 @@ class JasaController extends Controller
                     $image->path = $image->image_path;
                     $image->url = route('images.show', ['image' => $image->id]);
                     $image->src_url = $image->url;
+                    $image->image_url = asset('storage/' . $image->image_path);
 
                     $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                     return $image;
@@ -335,6 +355,9 @@ class JasaController extends Controller
                 // public endpoint => always public URL
                 $this->attachCoverImg($jasa, true);
             }
+
+            // Add rating_summary for each jasa
+            $jasa->rating_summary = \App\Models\RatingSummary::getJasaRatingSummary($jasa->id);
         });
 
         return response()->json($jasas);
@@ -352,6 +375,9 @@ class JasaController extends Controller
             'merchant.segmentation',
             'merchant.primaryAddress',
             'images',
+            'ratingSummary',
+            'ratings.user',
+            'ratings.media',
         ])
             ->where(function ($q) {
                 $q->whereIn('status', ['published', 'active'])
@@ -374,12 +400,42 @@ class JasaController extends Controller
                 $image->path = $image->image_path;
                 $image->url = route('images.show', ['image' => $image->id]);
                 $image->src_url = $image->url;
+                $image->image_url = asset('storage/' . $image->image_path);
                 $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                 return $image;
             });
 
             $this->attachCoverImg($jasa, true);
         }
+
+        // Map cara_pemesanan to service_type_booking for FE compatibility
+        // - langsung_pesan → keranjang (keranjang tanpa jadwal)
+        // - booking → booking (pilih jadwal)
+        // - memerlukan_konsultasi → konsultasi
+        $jasa->service_type_booking = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
+            'langsung_pesan' => 'keranjang',
+            'booking' => 'booking',
+            'memerlukan_konsultasi' => 'konsultasi',
+            default => 'keranjang',
+        };
+
+        // Calculate rating summary if not found via relationship
+        $ratingSummary = $jasa->ratingSummary;
+        $ratings = $jasa->ratings ?? collect();
+
+        $jasa->rating_summary = [
+            'average_rating' => $ratingSummary?->average_rating
+                ?? ($ratings->isNotEmpty() ? round($ratings->avg('rating'), 1) : 0),
+            'total_reviews' => $ratingSummary?->total_reviews ?? $ratings->count(),
+            'rating_5_count' => $ratingSummary?->rating_5_count ?? $ratings->where('rating', 5)->count(),
+            'rating_4_count' => $ratingSummary?->rating_4_count ?? $ratings->where('rating', 4)->count(),
+            'rating_3_count' => $ratingSummary?->rating_3_count ?? $ratings->where('rating', 3)->count(),
+            'rating_2_count' => $ratingSummary?->rating_2_count ?? $ratings->where('rating', 2)->count(),
+            'rating_1_count' => $ratingSummary?->rating_1_count ?? $ratings->where('rating', 1)->count(),
+        ];
+
+        // Remove raw relationships from response, keep summary only
+        $jasa->makeHidden(['ratingSummary', 'ratings']);
 
         return response()->json($jasa);
     }
@@ -396,6 +452,7 @@ class JasaController extends Controller
             'merchant.segmentation',
             'merchant.primaryAddress',
             'images',
+            'ratingSummary',
         ])
             ->where(function ($q) {
                 $q->whereIn('status', ['published', 'active'])
@@ -424,6 +481,33 @@ class JasaController extends Controller
 
             $this->attachCoverImg($jasa, true);
         }
+
+        // Map cara_pemesanan to service_type_booking for FE
+        // Standard values: keranjang, booking, konsultasi
+        $jasa->service_type_booking = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
+            'langsung_pesan' => 'keranjang',
+            'booking' => 'booking',
+            'memerlukan_konsultasi' => 'konsultasi',
+            default => 'keranjang',
+        };
+
+        // Calculate rating summary if not found via relationship
+        $ratingSummary = $jasa->ratingSummary;
+        $ratings = $jasa->ratings ?? collect();
+
+        $jasa->rating_summary = [
+            'average_rating' => $ratingSummary?->average_rating
+                ?? ($ratings->isNotEmpty() ? round($ratings->avg('rating'), 1) : 0),
+            'total_reviews' => $ratingSummary?->total_reviews ?? $ratings->count(),
+            'rating_5_count' => $ratingSummary?->rating_5_count ?? $ratings->where('rating', 5)->count(),
+            'rating_4_count' => $ratingSummary?->rating_4_count ?? $ratings->where('rating', 4)->count(),
+            'rating_3_count' => $ratingSummary?->rating_3_count ?? $ratings->where('rating', 3)->count(),
+            'rating_2_count' => $ratingSummary?->rating_2_count ?? $ratings->where('rating', 2)->count(),
+            'rating_1_count' => $ratingSummary?->rating_1_count ?? $ratings->where('rating', 1)->count(),
+        ];
+
+        // Remove raw relationships from response, keep summary only
+        $jasa->makeHidden(['ratingSummary', 'ratings']);
 
         return response()->json($jasa);
     }
@@ -474,6 +558,23 @@ class JasaController extends Controller
             return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
         }
 
+        // Normalize service_type_booking BEFORE validation (convert old values to new standard)
+        $stb = $request->input('service_type_booking');
+        if ($stb === 'cart' || $stb === 'langsung_pesan') {
+            $request->merge(['service_type_booking' => 'keranjang']);
+        } elseif ($stb === 'consultation' || $stb === 'memerlukan_konsultasi') {
+            $request->merge(['service_type_booking' => 'konsultasi']);
+        }
+
+        // Also normalize service_type if sent (convert old values to new standard)
+        $st = $request->input('service_type');
+        if ($st === 'at_location' || $st === 'ditempat_saya') {
+            $request->merge(['service_type' => 'di_tempat_umkm']);
+        } elseif ($st === 'on_site' || $st === 'kerumah_pelanggan') {
+            $request->merge(['service_type' => 'ke_rumah_pelanggan']);
+        }
+        // 'online' stays as 'online'
+
         // Validasi field lama + field baru yang dipakai di MerchantJasa (kategori, status, jadwal, dll)
         // Status mendukung skema lama (active/inactive) dan baru (published/archived)
         $validated = $request->validate([
@@ -490,8 +591,14 @@ class JasaController extends Controller
             // Field baru jasa merchant
             'fixed_price' => 'nullable|integer|min:0',
             'base_price' => 'nullable|integer|min:0',
-            'service_type' => 'nullable|string|in:at_location,on_site,online',
-            'location_address' => 'nullable|string|max:255',
+
+            // Cara pemesanan (FE/DB standard: keranjang/booking/konsultasi)
+            'cara_pemesanan' => 'nullable|string|in:keranjang,booking,konsultasi,langsung_pesan,booking,memerlukan_konsultasi',
+            'service_type_booking' => 'nullable|string|in:keranjang,booking,konsultasi',
+
+            // Tipe layanan - normalize to new standard format
+            'service_type' => 'nullable|string|in:online,di_tempat_umkm,ke_rumah_pelanggan,at_location,on_site,ditempat_saya,kerumah_pelanggan',
+            'location_address' => 'nullable|string|max:500',
             'service_area' => 'nullable|string|max:255',
             'special_notes' => 'nullable|string',
             'payment_methods' => 'nullable|string|max:255',
@@ -508,9 +615,33 @@ class JasaController extends Controller
 
         $data = $validated;
 
+        // MAP CARA PEMESANAN: service_type_booking holds the new standard values
+        // Standard values: keranjang, booking, konsultasi
+        // Map to DB field cara_pemesanan
+        if (isset($data['service_type_booking'])) {
+            $bookingType = $data['service_type_booking'];
+            if ($bookingType === 'keranjang') {
+                $data['cara_pemesanan'] = 'langsung_pesan';
+            } elseif ($bookingType === 'booking') {
+                $data['cara_pemesanan'] = 'booking';
+            } elseif ($bookingType === 'konsultasi') {
+                $data['cara_pemesanan'] = 'memerlukan_konsultasi';
+            }
+        }
+        // If only cara_pemesanan sent, map it to service_type_booking for FE compatibility
+        elseif (isset($data['cara_pemesanan'])) {
+            $data['service_type_booking'] = match ($data['cara_pemesanan']) {
+                'langsung_pesan' => 'keranjang',
+                'booking' => 'booking',
+                'memerlukan_konsultasi' => 'konsultasi',
+                default => $data['cara_pemesanan'],
+            };
+        }
+
         // Sinkronkan alamat layanan sesuai tipe layanan
+        // service_type sudah dinormalisasi ke format baru di atas
         if (array_key_exists('service_type', $data)) {
-            if ($data['service_type'] === 'at_location') {
+            if ($data['service_type'] === 'di_tempat_umkm' || $data['service_type'] === 'at_location') {
                 $merchant = $jasa->merchant;
                 $primary = $merchant?->primary_address;
 
@@ -529,7 +660,12 @@ class JasaController extends Controller
                 $data['location_address'] = $location;
             }
 
-            if ($data['service_type'] === 'online' || $data['service_type'] === 'on_site') {
+            if ($data['service_type'] === 'online') {
+                $data['location_address'] = '';
+            }
+
+            // ke_rumah_pelanggan: location_address tetap nullable, customer isi saat booking
+            if ($data['service_type'] === 'ke_rumah_pelanggan' || $data['service_type'] === 'on_site') {
                 $data['location_address'] = '';
             }
         }
@@ -591,21 +727,25 @@ class JasaController extends Controller
         // Tambah gambar baru (jika diupload)
         if ($request->hasFile('images')) {
             $files = $request->file('images');
-            if (!empty($files)) {
-                $currentMaxOrder = (int) $jasa->images()->max('display_order');
-                $order = $currentMaxOrder >= 0 ? $currentMaxOrder + 1 : 0;
+        } elseif ($request->hasFile('images[]')) {
+            $files = $request->file('images[]');
+        } else {
+            $files = [];
+        }
+        if (!empty($files)) {
+            $currentMaxOrder = (int) $jasa->images()->max('display_order');
+            $order = $currentMaxOrder >= 0 ? $currentMaxOrder + 1 : 0;
 
-                foreach ($files as $file) {
-                    $path = $file->store("jasa/{$jasa->id}", 'public');
+            foreach ($files as $file) {
+                $path = $file->store("jasa/{$jasa->id}", 'public');
 
-                    $jasa->images()->create([
-                        'image_path' => $path,
-                        'display_order' => $order,
-                        'is_cover' => false,
-                    ]);
+                $jasa->images()->create([
+                    'image_path' => $path,
+                    'display_order' => $order,
+                    'is_cover' => false,
+                ]);
 
-                    $order++;
-                }
+                $order++;
             }
         }
 
@@ -643,11 +783,32 @@ class JasaController extends Controller
 
         // Muat relasi dan tambahkan cover_img dengan API URL
         $jasa->load(['categories', 'images']);
+
+        // Transform images: add url, src_url, image_url for each image
+        $jasa->images->transform(function ($image) {
+            $publicUrl = route('images.show', ['image' => $image->id]);
+            $image->url = $publicUrl;
+            $image->src_url = $publicUrl;
+            $image->image_url = asset('storage/' . $image->image_path);
+            $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
+            return $image;
+        });
+
         $this->attachCategoryAliases($jasa);
-        
+
         $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
             || ($jasa->status === null && (bool) $jasa->is_active);
         $this->attachCoverImg($jasa, $isPublic);
+
+        // Map cara_pemesanan to service_type_booking for FE compatibility
+        // DB values: keranjang, booking, konsultasi
+        // FE values: keranjang, booking, konsultasi (same for simplicity)
+        $jasa->service_type_booking = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
+            'langsung_pesan' => 'keranjang',
+            'booking' => 'booking',
+            'memerlukan_konsultasi' => 'konsultasi',
+            default => 'keranjang',
+        };
 
         return response()->json([
             'message' => 'Data jasa berhasil diperbarui',
@@ -668,6 +829,23 @@ class JasaController extends Controller
             ->where('user_id', $user->id)
             ->firstOrFail();
 
+        // Normalize service_type_booking BEFORE validation (convert old values to new standard)
+        $stb = $request->input('service_type_booking');
+        if ($stb === 'cart' || $stb === 'langsung_pesan') {
+            $request->merge(['service_type_booking' => 'keranjang']);
+        } elseif ($stb === 'consultation' || $stb === 'memerlukan_konsultasi') {
+            $request->merge(['service_type_booking' => 'konsultasi']);
+        }
+
+        // Normalize service_type (convert old values to new standard)
+        $st = $request->input('service_type');
+        if ($st === 'at_location' || $st === 'ditempat_saya') {
+            $request->merge(['service_type' => 'di_tempat_umkm']);
+        } elseif ($st === 'on_site' || $st === 'kerumah_pelanggan') {
+            $request->merge(['service_type' => 'ke_rumah_pelanggan']);
+        }
+        // 'online' stays as 'online'
+
         // Validasi field sesuai form Createjasa.vue
         $validated = $request->validate([
             'title' => 'required|string|max:255',
@@ -677,9 +855,14 @@ class JasaController extends Controller
             'fixed_price' => 'nullable|integer|min:0',
             'base_price' => 'nullable|integer|min:0',
 
+            // Cara pemesanan (FE/DB standard: keranjang/booking/konsultasi)
+            'service_type_booking' => 'required|string|in:keranjang,booking,konsultasi',
+            'cara_pemesanan' => 'nullable|string|in:keranjang,booking,konsultasi',
+            'booking_type' => 'nullable|string|in:keranjang,booking,konsultasi',
+
             // Tipe & lokasi layanan
-            'service_type' => 'required|string|in:at_location,on_site,online',
-            'location_address' => 'nullable|string|max:255',
+            'service_type' => 'required|string|in:online,di_tempat_umkm,ke_rumah_pelanggan,at_location,on_site,ditempat_saya,kerumah_pelanggan',
+            'location_address' => 'nullable|string|max:500',
             'service_area' => 'nullable|string|max:255',
             'special_notes' => 'nullable|string',
 
@@ -700,8 +883,25 @@ class JasaController extends Controller
 
         $data = $validated;
 
+        // VALIDASI KHUSUS: Jika booking, operating_times wajib ada
+        // Map FE standard values (keranjang/booking/konsultasi) to DBcara_pemesanan
+        $serviceTypeBooking = $data['service_type_booking'] ?? null;
+        $data['cara_pemesanan'] = match ($serviceTypeBooking) {
+            'keranjang' => 'langsung_pesan',
+            'booking' => 'booking',
+            'konsultasi' => 'memerlukan_konsultasi',
+            default => 'langsung_pesan',
+        };
+        $isBooking = $serviceTypeBooking === 'booking';
+        if ($isBooking && empty($data['operating_times'])) {
+            return response()->json([
+                'message' => 'Jam layanan wajib diisi untuk metode Booking',
+                'errors' => ['operating_times' => ['Jam layanan wajib diisi agar customer bisa memilih jadwal']]
+            ], 422);
+        }
+
         // Sinkronkan alamat layanan sesuai tipe layanan
-        if (($data['service_type'] ?? null) === 'at_location') {
+        if (($data['service_type'] ?? null) === 'di_tempat_umkm' || ($data['service_type'] ?? null) === 'at_location') {
             $primary = $merchant->primary_address;
             $location = trim(implode(', ', array_filter([
                 data_get($primary, 'detail'),
@@ -718,7 +918,7 @@ class JasaController extends Controller
             $data['location_address'] = $location;
         }
 
-        if (($data['service_type'] ?? null) === 'online' || ($data['service_type'] ?? null) === 'on_site') {
+        if (($data['service_type'] ?? null) === 'online' || ($data['service_type'] ?? null) === 'ke_rumah_pelanggan' || ($data['service_type'] ?? null) === 'on_site') {
             $data['location_address'] = '';
         }
 
@@ -727,14 +927,28 @@ class JasaController extends Controller
         if (empty($data['operating_days'])) {
             $data['operating_days'] = '1,2,3,4,5,6,7';
         }
-        if (!array_key_exists('operating_times', $data) || $data['operating_times'] === null) {
+
+        // Parse operating_times if it's a JSON string (sent from FE as JSON)
+        $operatingTimes = $data['operating_times'] ?? '';
+        if (is_string($operatingTimes) && !empty($operatingTimes)) {
+            $decoded = json_decode($operatingTimes, true);
+            // Only assign if it's a valid array
+            if (is_array($decoded) && !empty($decoded)) {
+                $data['operating_times'] = $decoded;
+            } else {
+                $data['operating_times'] = '';
+            }
+        } elseif (empty($operatingTimes)) {
             $data['operating_times'] = '';
         }
 
+        // NORMALIZE PRICE FIELDS - Ensure fixed_price and base_price are never null
+        // Convert empty strings to 0, handle nullable validation
+        $data['fixed_price'] = $this->normalizePrice($data['fixed_price'] ?? null);
+        $data['base_price'] = $this->normalizePrice($data['base_price'] ?? null);
+
         // Sinkronkan legacy price untuk kompatibilitas listing lama
-        $fixed = $data['fixed_price'] ?? null;
-        $base = $data['base_price'] ?? null;
-        $data['price'] = $fixed ?? $base ?? 0;
+        $data['price'] = $data['fixed_price'] > 0 ? $data['fixed_price'] : ($data['base_price'] > 0 ? $data['base_price'] : 0);
 
         // Set merchant_id dari path parameter
         $data['merchant_id'] = $merchant->id;
@@ -750,8 +964,15 @@ class JasaController extends Controller
 
         // Simpan file gambar (jika ada) ke storage/app/public/jasa/{jasa_id}
         // dan gunakan file pertama sebagai cover ke kolom legacy `image`
+        // FE mengirim sebagai images[] (array notation) karena Laravel validation rules: images.* => file|image|...
         if ($request->hasFile('images')) {
             $files = $request->file('images');
+        } elseif ($request->hasFile('images[]')) {
+            $files = $request->file('images[]');
+        } else {
+            $files = [];
+        }
+        if (!empty($files)) {
             if (!empty($files)) {
                 $now = now();
                 $imagesToInsert = [];

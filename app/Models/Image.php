@@ -31,4 +31,9 @@ class Image extends Model
     {
         return route('images.show', ['image' => $this->id]);
     }
+
+    public function getSrcUrlAttribute(): ?string
+    {
+        return route('images.show', ['image' => $this->id]);
+    }
 }

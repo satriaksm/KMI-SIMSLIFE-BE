@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Jasa;
 use App\Models\Product;
 use App\Models\Merchant;
+use App\Models\RatingSummary;
 use Illuminate\Http\Request;
 use App\Models\ProductVariant;
 use Illuminate\Support\Facades\DB;
@@ -231,6 +232,10 @@ class SearchController extends Controller
                 }
 
                 unset($product->coverImage);
+
+                // Add rating_summary for each product
+                $product->rating_summary = \App\Models\RatingSummary::getProductRatingSummary($product->id);
+
                 return $product;
             })
             ->values();
@@ -461,6 +466,10 @@ class SearchController extends Controller
                             'src_url' => route('images.show', ['image' => $cover->id]),
                         ]
                         : null;
+
+                    // Add rating_summary for each jasa
+                    $payload['rating_summary'] = \App\Models\RatingSummary::getJasaRatingSummary($jasa->id);
+
                     return $payload;
                 })
                 ->values();
