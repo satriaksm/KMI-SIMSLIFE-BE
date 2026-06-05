@@ -7,12 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Order extends Model
 {
     protected $fillable = [
-<<<<<<< HEAD
         'address_id',
-=======
-        'merchant_id',
-        'jasa_id',
->>>>>>> staging-ta
         'user_id',
         'merchant_id',
         'voucher_id',
@@ -51,7 +46,6 @@ class Order extends Model
         'longitude_snapshot',
     ];
 
-<<<<<<< HEAD
     protected $casts = [
         'responsed_at' => 'datetime',
         'accepted_at' => 'datetime',
@@ -62,20 +56,10 @@ class Order extends Model
         'cancelled_at' => 'datetime',
         'confirm_deadline' => 'datetime',
     ];
-=======
-    public function jasa()
-    {
-        return $this->belongsTo(Jasa::class);
-    }
->>>>>>> staging-ta
 
     public function address()
     {
-<<<<<<< HEAD
         return $this->belongsTo(Address::class);
-=======
-        return $this->belongsTo(Package::class);
->>>>>>> staging-ta
     }
 
     public function user()
@@ -88,7 +72,6 @@ class Order extends Model
         return $this->belongsTo(Merchant::class);
     }
 
-<<<<<<< HEAD
     public function voucher()
     {
         return $this->belongsTo(Voucher::class);
@@ -109,13 +92,8 @@ class Order extends Model
     public function getProofImageUrlAttribute()
     {
         if ($this->proof_image_path) {
-            return asset('storage/' . $this->proof_image_path);
+            return url('api/order-proofs/' . $this->id);
         }
         return null;
-=======
-    public function items()
-    {
-        return $this->hasMany(OrderItem::class);
->>>>>>> staging-ta
     }
 }

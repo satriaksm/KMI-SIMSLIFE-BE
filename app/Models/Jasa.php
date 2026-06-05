@@ -55,14 +55,11 @@ class Jasa extends Model
         return 'jasa';
     }
 
-<<<<<<< HEAD
-    public function getMorphClass()
+    public function merchant()
     {
-        return 'jasa';
+        return $this->belongsTo(Merchant::class);
     }
 
-    public function merchant()
-=======
     /**
      * Boot method to auto-generate slug
      */
@@ -112,17 +109,8 @@ class Jasa extends Model
         return $slug;
     }
 
-    public function merchant(): BelongsTo
->>>>>>> staging-ta
-    {
-        return $this->belongsTo(Merchant::class);
-    }
 
-<<<<<<< HEAD
     public function categories()
-=======
-    public function categories(): MorphToMany
->>>>>>> staging-ta
     {
         return $this->morphToMany(
             Category::class,
@@ -133,11 +121,7 @@ class Jasa extends Model
         )->withTimestamps();
     }
 
-<<<<<<< HEAD
     public function packages()
-=======
-    public function packages(): HasMany
->>>>>>> staging-ta
     {
         return $this->hasMany(Package::class);
     }
@@ -149,9 +133,6 @@ class Jasa extends Model
 
     public function images(): MorphMany
     {
-<<<<<<< HEAD
-        return $this->morphMany(Image::class, 'imageable');
-=======
         return $this->morphMany(Image::class, 'imageable')->orderBy('display_order');
     }
 
@@ -169,6 +150,5 @@ class Jasa extends Model
     public function ratingSummary(): MorphOne
     {
         return $this->morphOne(RatingSummary::class, 'rateable');
->>>>>>> staging-ta
     }
 }

@@ -53,11 +53,7 @@ class Merchant extends Model
         'last_payout_at' => 'datetime',
     ];
 
-<<<<<<< HEAD
     protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'balance_held', 'balance_withdrawable'];
-=======
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'address', 'alamat'];
->>>>>>> staging-ta
 
     protected static function boot()
     {
@@ -151,7 +147,6 @@ class Merchant extends Model
         return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
-<<<<<<< HEAD
     public function orders()
     {
         return $this->hasMany(Order::class, 'merchant_id');
@@ -166,8 +161,6 @@ class Merchant extends Model
     {
         return $this->hasMany(MerchantWalletHistory::class, 'merchant_id');
     }
-=======
->>>>>>> staging-ta
 
     // Relasi ke paguyuban
     public function paguyuban(): BelongsTo
@@ -302,7 +295,6 @@ class Merchant extends Model
     }
 
     /**
-<<<<<<< HEAD
      * Get balance that is currently held (completed within the last 24 hours)
      */
     public function getBalanceHeldAttribute()
@@ -320,18 +312,5 @@ class Merchant extends Model
     public function getBalanceWithdrawableAttribute()
     {
         return max(0, $this->balance_available - $this->balance_held);
-=======
-     * ✅ NEW: Reports about this merchant
-     */
-    public function reports()
-    {
-        return $this->morphMany(ContentReport::class, 'reportable');
-    }
-
-    // 🆕 Rating System
-    public function ratings(): HasMany
-    {
-        return $this->hasMany(Rating::class);
->>>>>>> staging-ta
     }
 }

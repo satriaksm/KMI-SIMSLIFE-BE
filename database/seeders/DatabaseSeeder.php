@@ -12,7 +12,7 @@ class DatabaseSeeder extends Seeder
                 // MasterDataSeeder::class,
             CategorySeeder::class,
             RoleSeeder::class,
-                // UserSeeder::class,
+                UserSeeder::class,
             SegmentationSeeder::class,
                 // MerchantSeeder::class,
                 // JasaSeeder::class,

@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Merchant;
 use App\Models\Product;
 use App\Models\Category;
+use App\Models\Jasa;
+use App\Models\PaymentFee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -120,9 +122,12 @@ class HomeController extends Controller
     public function statistics()
     {
         try {
+            $totalProducts = Product::where('status', 'published')->count();
+            $totalJasas = Jasa::where('is_active', true)->count();
+
             $stats = [
                 'total_merchants' => Merchant::where('status', 'approved')->count(),
-                'total_products' => Product::where('status', 'published')->count(),
+                'total_products' => $totalProducts + $totalJasas,
                 'total_categories' => Category::whereNull('parent_id')->count(),
             ];
 
@@ -137,6 +142,37 @@ class HomeController extends Controller
             return response()->json([
                 'message' => 'Failed to load statistics',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get public payment fees for checkout display
+     */
+    public function paymentFees()
+    {
+        try {
+            $fees = PaymentFee::where('is_active', true)
+                ->where('method_code', '!=', 'PAYOUT')
+                ->get()
+                ->map(function ($fee) {
+                    return [
+                        'method_code' => $fee->method_code,
+                        'method_name' => $fee->method_name,
+                        'type' => $fee->type,
+                        'value' => (float) $fee->value,
+                        'description' => $fee->description,
+                    ];
+                });
+
+            return response()->json(['data' => $fees]);
+        } catch (\Exception $e) {
+            Log::error('[HomeController] Failed to get payment fees', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to load payment fees',
             ], 500);
         }
     }

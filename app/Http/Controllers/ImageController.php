@@ -104,6 +104,25 @@ class ImageController extends Controller
         return $this->streamSnapshot($orderItem);
     }
 
+    public function orderProof(Request $request, \App\Models\Order $order)
+    {
+        if ($request->hasValidSignature()) {
+            return $this->streamOrderProof($order);
+        }
+
+        $userId = $request->user()?->id ?? Auth::id();
+        abort_if(!$userId, 401, 'Unauthenticated');
+
+        $order->loadMissing(['merchant']);
+        
+        $isCustomer = (int) $order->user_id === (int) $userId;
+        $isMerchant = $order->merchant && (int) $order->merchant->user_id === (int) $userId;
+
+        abort_if(!$isCustomer && !$isMerchant, 403, 'Forbidden');
+
+        return $this->streamOrderProof($order);
+    }
+
     private function resolveDiskForImage(Image $image): string
     {
         $type = (string) ($image->imageable_type ?? '');
@@ -138,6 +157,26 @@ class ImageController extends Controller
     private function streamSnapshot($item)
     {
         $path = $item->image_snapshot_path;
+        abort_if(empty($path), 404);
+
+        /** @var FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+        abort_if(!$disk->exists($path), 404);
+
+        $stream = $disk->readStream($path);
+        $mime = $disk->mimeType($path) ?: 'image/jpeg';
+
+        return response()->stream(function () use ($stream) {
+            fpassthru($stream);
+        }, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'private, max-age=31536000',
+        ]);
+    }
+
+    private function streamOrderProof($order)
+    {
+        $path = $order->proof_image_path;
         abort_if(empty($path), 404);
 
         /** @var FilesystemAdapter $disk */

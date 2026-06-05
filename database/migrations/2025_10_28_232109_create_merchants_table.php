@@ -61,7 +61,6 @@ return new class extends Migration {
                 ->nullOnDelete();
 
             $table->timestamp('response_at')->nullable();
-<<<<<<< HEAD
             $table->string('NPWP')->unique()->nullable();
             $table->string('bank_code')->nullable(); // BCA, BRI (WAJIB untuk Xendit)
             $table->string('bank_account_number')->nullable();
@@ -72,10 +71,6 @@ return new class extends Migration {
 
             $table->timestamps();
 
-=======
-
-            $table->timestamps();
->>>>>>> staging-ta
         });
     }
 

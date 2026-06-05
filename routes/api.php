@@ -2,25 +2,28 @@
 
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
+use App\Http\Controllers\Admin\AdminManagementController;
 use App\Http\Controllers\Admin\AdminMerchantController;
+use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Admin\ContentReportController;
-use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\BankController;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\CommunityPostController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EventController;
+use App\Http\Controllers\HomeController;
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\JasaController;
 use App\Http\Controllers\LocationController;
-use App\Http\Controllers\PushSubscriptionController;
 use App\Http\Controllers\MerchantController;
+use App\Http\Controllers\MerchantReportController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PaguyubanController;
 use App\Http\Controllers\PaymentController;
@@ -28,18 +31,31 @@ use App\Http\Controllers\PayoutController;
 use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\Product\ProductController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
+use App\Http\Controllers\Public\PublicProfileController;
+use App\Http\Controllers\PushSubscriptionController;
+use App\Http\Controllers\RatingController;
+use App\Http\Controllers\ReportAppealController;
+use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\SegmentationController;
 use App\Http\Controllers\ShippingController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VoucherController;
 use App\Http\Controllers\WebhookController;
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\ReportController;
-use App\Http\Controllers\ReportAppealController;
-use App\Http\Controllers\RatingController;
-use App\Http\Controllers\Public\PublicProfileController;
 use App\Models\Conversation;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Route;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
+
+
+
+
+
+
+
+
 
 // ============================================================
 // HEALTH CHECK
@@ -119,7 +135,6 @@ Route::prefix('public')->name('public.')->group(function () {
     });
 
     //  events endpoint (published only, for homepage banner)
-    //  events endpoint (published only, for homepage banner)
     Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
     Route::get('events/{id}', [EventController::class, 'publicShow'])->name('events.show');
 
@@ -131,6 +146,8 @@ Route::prefix('public')->name('public.')->group(function () {
             ->name('map-carousel-merchants');
         Route::get('statistics', [HomeController::class, 'statistics'])
             ->name('statistics');
+        Route::get('payment-fees', [HomeController::class, 'paymentFees'])
+            ->name('payment-fees');
     });
 
     // Public Profiles
@@ -173,6 +190,8 @@ Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot']
     ->name('cart-snapshots.show');
 Route::get('order-snapshots/{orderItem}', [ImageController::class, 'orderSnapshot'])
     ->name('order-snapshots.show');
+Route::get('order-proofs/{order}', [ImageController::class, 'orderProof'])
+    ->name('order-proofs.show');
 Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
     ->name('images.product-option-value.show');
 

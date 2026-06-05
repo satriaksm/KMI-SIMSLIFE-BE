@@ -287,10 +287,6 @@ class AdminMerchantController extends Controller
             ])
                 ->withCount(['products', 'vouchers', 'events'])
                 ->findOrFail($id);
-<<<<<<< HEAD
-
-=======
->>>>>>> staging-ta
 
             // ✅ FIX: Transform products to include complete data from variants
             $merchant->products->transform(function ($product) {
@@ -413,7 +409,6 @@ class AdminMerchantController extends Controller
                 );
             }
 
-<<<<<<< HEAD
             if ($merchant->user) {
                 $merchant->user->notify(new MerchantApplicationStatusNotification(
                     $merchant->fresh(),
@@ -425,11 +420,6 @@ class AdminMerchantController extends Controller
                     $merchant->fresh(),
                     'approved'
                 );
-=======
-            // Send Email Notification
-            if ($merchant->user && $merchant->user->email) {
-                Mail::to($merchant->user->email)->send(new MerchantApprovalMail($merchant));
->>>>>>> staging-ta
             }
 
             DB::commit();
@@ -491,7 +481,6 @@ class AdminMerchantController extends Controller
                 'response_at' => Carbon::now(),
             ]);
 
-<<<<<<< HEAD
             if ($merchant->user) {
                 $merchant->user->notify(new MerchantApplicationStatusNotification(
                     $merchant->fresh(),
@@ -503,11 +492,6 @@ class AdminMerchantController extends Controller
                     $merchant->fresh(),
                     'rejected'
                 );
-=======
-            // Send Email Notification
-            if ($merchant->user && $merchant->user->email) {
-                Mail::to($merchant->user->email)->send(new MerchantRejectionMail($merchant));
->>>>>>> staging-ta
             }
 
             DB::commit();
