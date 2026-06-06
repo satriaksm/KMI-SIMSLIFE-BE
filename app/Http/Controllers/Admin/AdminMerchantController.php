@@ -106,8 +106,13 @@ class AdminMerchantController extends Controller
             $sortOrder = 'desc';
         }
 
-        $merchants = $query->orderBy($sortBy, $sortOrder)
-            ->paginate($request->input('per_page', 15));
+        if ($sortBy === 'products_count') {
+            $merchants = $query->orderByRaw("products_count $sortOrder")
+                ->paginate($request->input('per_page', 15));
+        } else {
+            $merchants = $query->orderBy($sortBy, $sortOrder)
+                ->paginate($request->input('per_page', 15));
+        }
 
         // Transform for UI (like AdminUserController)
         $merchants->getCollection()->transform(function ($merchant) {

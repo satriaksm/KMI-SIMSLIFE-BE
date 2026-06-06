@@ -413,7 +413,7 @@ class AdminUserController extends Controller
         $sortBy = $request->input('sort_by') ?: 'created_at';
         $sortOrder = $request->input('sort_order') ?: 'desc';
 
-        if (!in_array($sortBy, ['id', 'name', 'email', 'status', 'created_at'])) {
+        if (!in_array($sortBy, ['id', 'name', 'email', 'phone', 'nik', 'status', 'created_at'])) {
             $sortBy = 'created_at';
         }
         if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
