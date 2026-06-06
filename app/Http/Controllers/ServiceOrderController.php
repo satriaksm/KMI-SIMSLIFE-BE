@@ -47,7 +47,8 @@ class ServiceOrderController extends Controller
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'total_price' => 'nullable|numeric|min:0',
-            'payment_method' => 'nullable|in:COD,MANUAL,cod,manual',
+            // Accept all payment methods: COD and all Xendit channels
+            'payment_method' => 'nullable|string|max:50',
         ]);
 
         $jasa = Jasa::with(['merchant', 'images'])->findOrFail($request->jasa_id);
@@ -109,13 +110,61 @@ class ServiceOrderController extends Controller
 
         $serviceOrder->load(['merchant', 'jasa']);
 
+        // ===== Handle non-COD payment (all Xendit channels) =====
+        // COD = cash on delivery, no invoice needed
+        // All other methods (QRIS, VA, E-Wallet, Retail, ONLINE_XENDIT, etc.) = create Xendit invoice
+        $isCodPayment = strtolower($serviceOrder->payment_method ?? '') === 'cod';
+
+        $invoiceData = null;
+        if (!$isCodPayment) {
+            $externalId = 'service_order_' . $serviceOrder->id;
+            $invoiceData = XenditWebhookController::createInvoice(
+                externalId: $externalId,
+                amount: (int) $serviceOrder->total_price,
+                description: 'Pembayaran Layanan: ' . $serviceOrder->service_name,
+                customer: [
+                    'email' => Auth::user()?->email,
+                    'name' => $serviceOrder->customer_name,
+                ]
+            );
+
+            if ($invoiceData) {
+                $serviceOrder->update([
+                    'xendit_invoice_id' => $invoiceData['id'] ?? null,
+                    'payment_reference' => $invoiceData['id'] ?? null,
+                    'payment_status' => 'WAITING_CONFIRMATION',
+                ]);
+
+                Log::info('[ServiceOrder] Xendit invoice created', [
+                    'order_id' => $serviceOrder->id,
+                    'payment_method' => $serviceOrder->payment_method,
+                    'invoice_id' => $invoiceData['id'] ?? null,
+                    'invoice_url' => $invoiceData['invoice_url'] ?? null,
+                ]);
+            } else {
+                Log::error('[ServiceOrder] Failed to create Xendit invoice', [
+                    'order_id' => $serviceOrder->id,
+                    'payment_method' => $serviceOrder->payment_method,
+                ]);
+            }
+        }
+
         Log::info('[ServiceOrder Create] Order created', [
             'order_id' => $serviceOrder->id,
             'jasa_id' => $jasa->id,
             'merchant_id' => $jasa->merchant_id,
+            'payment_method' => $serviceOrder->payment_method,
+            'payment_status' => $serviceOrder->payment_status,
+            'is_cod' => $isCodPayment,
         ]);
 
-        return ApiResponse::success($serviceOrder, 'Pesanan berhasil dibuat. Menunggu konfirmasi dari merchant.', 201);
+        $responseData = $serviceOrder->toArray();
+        // Include invoice_url if non-COD payment (Xendit invoice created)
+        if ($invoiceData && !empty($invoiceData['invoice_url'])) {
+            $responseData['invoice_url'] = $invoiceData['invoice_url'];
+        }
+
+        return ApiResponse::success($responseData, 'Pesanan berhasil dibuat. Menunggu konfirmasi dari merchant.', 201);
     }
 
     /**
@@ -226,7 +275,7 @@ class ServiceOrderController extends Controller
 
         $order = ServiceOrder::with([
             'jasa',
-            'merchant:id,name,slug,logo_path,segmentation_id,phone,whatsapp',
+            'merchant:id,name,slug,logo_path,segmentation_id,phone',
             'review.media',
             'completionEvidences',
             'jasa.ratingSummary',
@@ -238,7 +287,106 @@ class ServiceOrderController extends Controller
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
-        return ApiResponse::success($order, 'success');
+        // Transform order data for frontend consumption
+        $transformedOrder = $this->transformServiceOrderForCustomer($order);
+
+        return ApiResponse::success($transformedOrder, 'success');
+    }
+
+    /**
+     * Transform service order for customer-facing responses
+     */
+    private function transformServiceOrderForCustomer(ServiceOrder $order): array
+    {
+        $orderArray = $order->toArray();
+
+        // Get merchant address
+        $merchantAddress = $orderArray['merchant']['address'] ?? $orderArray['merchant']['alamat'] ?? null;
+
+        // Determine display address based on service type
+        $displayAddress = match ($order->service_type) {
+            'online' => 'Online',
+            'di_tempat_umkm', 'at_location' => $merchantAddress ?? 'Lokasi UMKM',
+            default => $order->customer_address ?? $merchantAddress ?? '-',
+        };
+
+        // Payment method display mapping
+        $paymentMethodLabels = [
+            'cod' => 'Bayar di Tempat (COD)',
+            'COD' => 'Bayar di Tempat (COD)',
+            'ONLINE_XENDIT' => 'Online (Xendit)',
+            'QRIS' => 'QRIS',
+            'BCA_VA' => 'BCA Virtual Account',
+            'BNI_VA' => 'BNI Virtual Account',
+            'BRI_VA' => 'BRI Virtual Account',
+            'MANDIRI_VA' => 'Mandiri Virtual Account',
+            'OVO' => 'OVO',
+            'DANA' => 'DANA',
+            'SHOPEEPAY' => 'ShopeePay',
+            'ALFAMART' => 'Alfamart / Alfamidi',
+        ];
+        $paymentMethodDisplay = $paymentMethodLabels[strtoupper($order->payment_method ?? '')]
+            ?? $paymentMethodLabels[strtolower($order->payment_method ?? '')]
+            ?? $order->payment_method
+            ?? '-';
+
+        // Payment status display mapping
+        $paymentStatusLabels = [
+            'UNPAID' => 'Belum Bayar',
+            'PAID' => 'Lunas / Sudah Dibayar',
+            'WAITING_CONFIRMATION' => 'Menunggu Konfirmasi',
+            'PENDING' => 'Menunggu Pembayaran',
+        ];
+        $paymentStatusDisplay = $paymentStatusLabels[strtoupper($order->payment_status ?? '')] ?? $order->payment_status ?? '-';
+
+        // Is payment completed
+        $isPaymentCompleted = strtoupper($order->payment_method ?? '') === 'COD'
+            || strtoupper($order->payment_status ?? '') === 'PAID';
+
+        return [
+            'id' => $order->id,
+            'order_number' => $order->formatted_order_number,
+            'customer_name' => $order->customer_name,
+            'customer_phone' => $order->customer_phone,
+            'customer_address' => $order->customer_address,
+            'booking_date' => $order->booking_date,
+            'booking_time' => $order->booking_time,
+            'payment_method' => $order->payment_method,
+            'payment_method_display' => $paymentMethodDisplay,
+            'payment_status' => $order->payment_status,
+            'payment_status_display' => $paymentStatusDisplay,
+            'is_payment_completed' => $isPaymentCompleted,
+            'total_price' => (float) $order->total_price,
+            'service_type' => $order->service_type,
+            'service_name' => $order->service_name,
+            'service_image' => $order->service_image,
+            'mekanisme_pemesanan' => $order->mekanisme_pemesanan,
+            'status' => $order->status,
+            'status_label' => $order->status_label,
+            'booking_note' => $order->booking_note,
+            'created_at' => $order->created_at?->toIso8601String(),
+            'updated_at' => $order->updated_at?->toIso8601String(),
+            // Merchant info
+            'merchant' => [
+                'id' => $orderArray['merchant']['id'] ?? null,
+                'name' => $orderArray['merchant']['name'] ?? null,
+                'slug' => $orderArray['merchant']['slug'] ?? null,
+                'address' => $merchantAddress,
+            ],
+            // Jasa info
+            'jasa' => [
+                'id' => $orderArray['jasa']['id'] ?? null,
+                'title' => $orderArray['jasa']['title'] ?? null,
+                'image' => $orderArray['jasa']['cover_image'] ?? $orderArray['jasa']['image'] ?? null,
+            ],
+            // Display helpers
+            'display_address' => $displayAddress,
+            'address_label' => match ($order->service_type) {
+                'online' => 'Lokasi',
+                'di_tempat_umkm', 'at_location' => 'Lokasi UMKM',
+                default => 'Alamat',
+            },
+        ];
     }
 
     /**

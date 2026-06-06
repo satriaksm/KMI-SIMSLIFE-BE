@@ -28,6 +28,7 @@ use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\XenditWebhookController;
 use App\Http\Controllers\Admin\AdminManagementController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
@@ -39,6 +40,7 @@ use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\Public\PublicProfileController;
 use App\Http\Controllers\ServiceOrderController;
 use App\Http\Controllers\ServiceConsultationController;
+use App\Http\Controllers\MerchantReportController;
 use App\Models\Conversation;
 
 // ============================================================
@@ -387,6 +389,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 [DashboardController::class, 'merchantDashboard']
             );
 
+            // ===== MERCHANT REPORTS =====
+            Route::prefix('reports')->name('merchant.reports.')->group(function () {
+                Route::get('/transactions', [MerchantReportController::class, 'transactions'])->name('transactions');
+            });
+
             Route::get('profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
             Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
             Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
@@ -614,3 +621,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         });
     });
 });
+
+// ============================================================
+// XENDIT PAYMENT WEBHOOK
+// ============================================================
+// Public route - NO auth middleware, Xendit calls this without Bearer token
+// Xendit authenticates using callback token in header 'x-callback-token'
+Route::post('/payment/xendit/webhook', [XenditWebhookController::class, 'handleCallback'])
+    ->name('xendit.webhook');

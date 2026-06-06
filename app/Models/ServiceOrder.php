@@ -41,6 +41,7 @@ class ServiceOrder extends Model
         'payment_method',
         'payment_status',
         'payment_reference',
+        'xendit_invoice_id',
         'paid_at',
         'is_reviewed',
         'review_id',
