@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('notification_deliveries', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('notification_id')->constrained('notifications')->onDelete('cascade');
+            $table->foreignUuid('notification_id')->constrained('notifications')->onDelete('cascade');
             $table->string('channel'); // mail, sms, push
             $table->enum('status', ['pending', 'sent', 'failed', 'bounced'])->default('pending');
             $table->text('provider_message')->nullable();
