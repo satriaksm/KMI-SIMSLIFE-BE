@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use Carbon\Carbon;
 use App\Models\Merchant;
 use App\Models\Order;
-use App\Models\OrderItem;
+use App\Models\ProductOrderItem;
 use App\Notifications\MerchantApplicationStatusNotification;
 use App\Services\WebPushService;
 use Illuminate\Http\Request;
@@ -96,7 +96,17 @@ class AdminMerchantController extends Controller
             });
         }
 
-        $merchants = $query->latest()
+        $sortBy = $request->input('sort_by') ?: 'created_at';
+        $sortOrder = $request->input('sort_order') ?: 'desc';
+
+        if (!in_array($sortBy, ['id', 'name', 'status', 'products_count', 'created_at'])) {
+            $sortBy = 'created_at';
+        }
+        if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
+            $sortOrder = 'desc';
+        }
+
+        $merchants = $query->orderBy($sortBy, $sortOrder)
             ->paginate($request->input('per_page', 15));
 
         // Transform for UI (like AdminUserController)
@@ -541,7 +551,7 @@ class AdminMerchantController extends Controller
             ->get();
 
         // Produk terorder per kategori 30 hari terakhir
-        $productOrders = OrderItem::whereHas('order', function ($q) use ($id) {
+        $productOrders = ProductOrderItem::whereHas('order', function ($q) use ($id) {
             $q->where('merchant_id', $id)
                 ->where('created_at', '>=', now()->subDays(30));
         })
@@ -731,13 +741,13 @@ class AdminMerchantController extends Controller
             // Get statistics
             try {
                 $stats = DB::table('orders')
-                    ->join('order_items', 'orders.id', '=', 'order_items.order_id')
-                    ->join('products', 'order_items.product_id', '=', 'products.id')
+                    ->join('product_order_items', 'orders.id', '=', 'product_order_items.order_id')
+                    ->join('products', 'product_order_items.product_id', '=', 'products.id')
                     ->where('products.merchant_id', $merchant->id)
                     ->where('orders.created_at', '>=', now()->subDays(30))
                     ->selectRaw('
                         COUNT(DISTINCT orders.id) as total_orders,
-                        SUM(order_items.quantity * order_items.price) as total_revenue
+                        SUM(product_order_items.subtotal_snapshot) as total_revenue
                     ')
                     ->first();
 
