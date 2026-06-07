@@ -68,42 +68,53 @@ class XenditWebhookController extends Controller
      */
     private function handlePaymentSuccess(string $externalId, string $status, ?string $invoiceId, array $payload)
     {
+        // Extract payment channel from Xendit payload
+        $paymentChannel = $payload['payment_channel'] ?? $payload['payment_method'] ?? null;
+
         Log::info('Xendit Payment Success', [
             'invoice_id' => $invoiceId,
             'external_id' => $externalId,
             'status' => $status,
+            'payment_channel' => $paymentChannel,
         ]);
 
         // Cek format external_id:
-        // "service_order_{id}" → ServiceOrder (Jasa)
+        // "jasa_{id}" → Order (Jasa primary) - NEW FORMAT
+        // "service_order_{id}" → ServiceOrder (Jasa legacy)
         // "order_{id}" → Order (Toko/Kuliner)
-        // "invoice_{id}" → cari via xendit_invoice_id
 
-        // 1. Coba cari sebagai ServiceOrder
+        // 1. Coba cari sebagai jasa order (orders.id)
+        if (str_starts_with($externalId, 'jasa_')) {
+            $orderId = (int) str_replace('jasa_', '', $externalId);
+            $this->updateJasaOrderPaid($orderId, $invoiceId, $paymentChannel);
+            return;
+        }
+
+        // 2. Coba cari sebagai ServiceOrder (legacy)
         if (str_starts_with($externalId, 'service_order_')) {
             $orderId = (int) str_replace('service_order_', '', $externalId);
-            $this->updateServiceOrderPaid($orderId, $invoiceId);
+            $this->updateServiceOrderPaid($orderId, $invoiceId, $paymentChannel);
             return;
         }
 
-        // 2. Coba cari sebagai Order (Toko/Kuliner)
+        // 3. Coba cari sebagai Order (Toko/Kuliner)
         if (str_starts_with($externalId, 'order_')) {
             $orderId = (int) str_replace('order_', '', $externalId);
-            $this->updateOrderPaid($orderId, $invoiceId);
+            $this->updateOrderPaid($orderId, $invoiceId, $paymentChannel);
             return;
         }
 
-        // 3. Jika external_id adalah invoice ID langsung, cari di ServiceOrder
+        // 4. Jika external_id adalah invoice ID langsung, cari di ServiceOrder
         if ($invoiceId) {
             $serviceOrder = \App\Models\ServiceOrder::where('xendit_invoice_id', $invoiceId)->first();
             if ($serviceOrder) {
-                $this->updateServiceOrderPaid($serviceOrder->id, $invoiceId);
+                $this->updateServiceOrderPaid($serviceOrder->id, $invoiceId, $paymentChannel);
                 return;
             }
 
             $order = \App\Models\Order::where('payment_reference', $invoiceId)->first();
             if ($order) {
-                $this->updateOrderPaid($order->id, $invoiceId);
+                $this->updateOrderPaid($order->id, $invoiceId, $paymentChannel);
                 return;
             }
         }
@@ -124,6 +135,19 @@ class XenditWebhookController extends Controller
             'invoice_id' => $invoiceId,
         ]);
 
+        // jasa_{id} → Order (Jasa)
+        if (str_starts_with($externalId, 'jasa_')) {
+            $orderId = (int) str_replace('jasa_', '', $externalId);
+            $order = \App\Models\Order::find($orderId);
+            if ($order) {
+                $order->payment_status = 'UNPAID';
+                $order->save();
+                Log::info('Xendit: Jasa order expired', ['order_id' => $orderId]);
+            }
+            return;
+        }
+
+        // service_order_{id} → ServiceOrder (legacy)
         if (str_starts_with($externalId, 'service_order_')) {
             $orderId = (int) str_replace('service_order_', '', $externalId);
             $order = \App\Models\ServiceOrder::find($orderId);
@@ -132,39 +156,84 @@ class XenditWebhookController extends Controller
                 $order->save();
                 Log::info('Xendit: Service order expired', ['order_id' => $orderId]);
             }
+            return;
+        }
+
+        // order_{id} → Order (Toko/Kuliner)
+        if (str_starts_with($externalId, 'order_')) {
+            $orderId = (int) str_replace('order_', '', $externalId);
+            $order = \App\Models\Order::find($orderId);
+            if ($order) {
+                $order->payment_status = 'UNPAID';
+                $order->save();
+                Log::info('Xendit: Order expired', ['order_id' => $orderId]);
+            }
         }
     }
 
     /**
      * Update ServiceOrder menjadi PAID.
+     * Also updates the related orders table entry.
      */
-    private function updateServiceOrderPaid(int $orderId, ?string $invoiceId)
+    private function updateServiceOrderPaid(int $orderId, ?string $invoiceId, ?string $paymentChannel = null)
     {
         try {
-            $order = \App\Models\ServiceOrder::find($orderId);
-            if (!$order) {
+            $serviceOrder = \App\Models\ServiceOrder::find($orderId);
+            if (!$serviceOrder) {
                 Log::warning('Xendit: ServiceOrder not found', ['order_id' => $orderId]);
                 return;
             }
 
             // Cegah double update
-            if ($order->payment_status === 'PAID') {
+            if ($serviceOrder->payment_status === 'PAID') {
                 Log::info('Xendit: ServiceOrder already paid', ['order_id' => $orderId]);
                 return;
             }
 
-            $order->payment_status = 'PAID';
-            $order->paid_at = now();
+            // Update service_orders table
+            $serviceOrder->payment_status = 'PAID';
+            $serviceOrder->paid_at = now();
             if ($invoiceId) {
-                $order->xendit_invoice_id = $invoiceId;
-                $order->payment_reference = $invoiceId;
+                $serviceOrder->xendit_invoice_id = $invoiceId;
+                $serviceOrder->payment_reference = $invoiceId;
             }
-            $order->save();
+            // Simpan payment channel aktual dari Xendit
+            if ($paymentChannel) {
+                $serviceOrder->payment_channel = $paymentChannel;
+                $serviceOrder->paid_channel = $paymentChannel;
+            }
+            $serviceOrder->save();
+
+            // Also update the related orders table
+            $jasaOrderItem = $serviceOrder->jasaOrderItems()->first();
+            if ($jasaOrderItem && $jasaOrderItem->order_id) {
+                $order = \App\Models\Order::find($jasaOrderItem->order_id);
+                if ($order) {
+                    $order->payment_status = 'PAID';
+                    $order->paid_at = now();
+                    if ($invoiceId) {
+                        $order->payment_reference = $invoiceId;
+                    }
+                    if ($paymentChannel) {
+                        $order->payment_channel = $paymentChannel;
+                        $order->paid_channel = $paymentChannel;
+                    }
+                    $order->save();
+
+                    Log::info('Xendit: Order (jasa) updated to PAID', [
+                        'order_id' => $order->id,
+                        'service_order_id' => $orderId,
+                        'invoice_id' => $invoiceId,
+                        'payment_channel' => $paymentChannel,
+                    ]);
+                }
+            }
 
             Log::info('Xendit: ServiceOrder updated to PAID', [
                 'order_id' => $orderId,
                 'invoice_id' => $invoiceId,
-                'payment_status' => $order->payment_status,
+                'payment_channel' => $paymentChannel,
+                'payment_status' => $serviceOrder->payment_status,
             ]);
         } catch (\Exception $e) {
             Log::error('Xendit: Failed to update ServiceOrder', [
@@ -175,9 +244,80 @@ class XenditWebhookController extends Controller
     }
 
     /**
+     * Update Order (Jasa) menjadi PAID via webhook.
+     * Also syncs to related service_orders for backward compatibility.
+     */
+    private function updateJasaOrderPaid(int $orderId, ?string $invoiceId, ?string $paymentChannel = null)
+    {
+        try {
+            $order = \App\Models\Order::find($orderId);
+            if (!$order) {
+                Log::warning('Xendit: Jasa Order not found', ['order_id' => $orderId]);
+                return;
+            }
+
+            // Cegah double update
+            if ($order->payment_status === 'PAID') {
+                Log::info('Xendit: Jasa Order already paid', ['order_id' => $orderId]);
+                return;
+            }
+
+            // Update orders table (primary)
+            $order->payment_status = 'PAID';
+            $order->paid_at = now();
+            if ($invoiceId) {
+                $order->payment_reference = $invoiceId;
+            }
+            if ($paymentChannel) {
+                $order->payment_channel = $paymentChannel;
+                $order->paid_channel = $paymentChannel;
+            }
+            $order->save();
+
+            // Also update related service_orders for backward compatibility
+            $jasaOrderItems = $order->jasaOrderItems;
+            foreach ($jasaOrderItems as $jasaOrderItem) {
+                if ($jasaOrderItem->service_order_id) {
+                    $serviceOrder = \App\Models\ServiceOrder::find($jasaOrderItem->service_order_id);
+                    if ($serviceOrder && $serviceOrder->payment_status !== 'PAID') {
+                        $serviceOrder->payment_status = 'PAID';
+                        $serviceOrder->paid_at = now();
+                        if ($invoiceId) {
+                            $serviceOrder->xendit_invoice_id = $invoiceId;
+                            $serviceOrder->payment_reference = $invoiceId;
+                        }
+                        if ($paymentChannel) {
+                            $serviceOrder->payment_channel = $paymentChannel;
+                            $serviceOrder->paid_channel = $paymentChannel;
+                        }
+                        $serviceOrder->save();
+
+                        Log::info('Xendit: ServiceOrder synced to PAID from Order webhook', [
+                            'order_id' => $orderId,
+                            'service_order_id' => $serviceOrder->id,
+                        ]);
+                    }
+                }
+            }
+
+            Log::info('Xendit: Jasa Order updated to PAID', [
+                'order_id' => $orderId,
+                'invoice_id' => $invoiceId,
+                'payment_channel' => $paymentChannel,
+                'payment_status' => $order->payment_status,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Xendit: Failed to update Jasa Order', [
+                'order_id' => $orderId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
      * Update Order (Toko/Kuliner) menjadi PAID.
      */
-    private function updateOrderPaid(int $orderId, ?string $invoiceId)
+    private function updateOrderPaid(int $orderId, ?string $invoiceId, ?string $paymentChannel = null)
     {
         try {
             $order = \App\Models\Order::find($orderId);
@@ -197,11 +337,17 @@ class XenditWebhookController extends Controller
             if ($invoiceId) {
                 $order->payment_reference = $invoiceId;
             }
+            // Simpan payment channel aktual dari Xendit
+            if ($paymentChannel) {
+                $order->payment_channel = $paymentChannel;
+                $order->paid_channel = $paymentChannel;
+            }
             $order->save();
 
             Log::info('Xendit: Order updated to PAID', [
                 'order_id' => $orderId,
                 'invoice_id' => $invoiceId,
+                'payment_channel' => $paymentChannel,
             ]);
         } catch (\Exception $e) {
             Log::error('Xendit: Failed to update Order', [
@@ -234,13 +380,14 @@ class XenditWebhookController extends Controller
             // APP_URL is for backend/webhook only (ngrok)
             $frontendUrl = config('app.frontend_url', config('app.url'));
             $isServiceOrder = str_starts_with($externalId, 'service_order_');
+            $isJasaOrder = str_starts_with($externalId, 'jasa_');
 
             // Determine the success page based on order type
-            // For service orders, redirect to booking confirmation page first (shows order details)
+            // For service orders (service_order_ or jasa_), redirect to booking confirmation page first
             // Then user can go to service history from there
-            if ($isServiceOrder) {
-                // Extract order ID from external_id (e.g., "service_order_123" -> "123")
-                $orderId = (int) str_replace('service_order_', '', $externalId);
+            if ($isServiceOrder || $isJasaOrder) {
+                // Extract order ID from external_id (e.g., "jasa_123" -> "123" or "service_order_123" -> "123")
+                $orderId = (int) preg_replace('/[^0-9]/', '', $externalId);
                 $successUrl = rtrim($frontendUrl, '/') . "/booking-confirmation?order_id={$orderId}";
                 $failureUrl = rtrim($frontendUrl, '/') . '/pembayaran-jasa?payment=failed';
             } else {
@@ -298,6 +445,162 @@ class XenditWebhookController extends Controller
                 'error' => $e->getMessage(),
             ]);
             return null;
+        }
+    }
+
+    /**
+     * Get invoice status from Xendit API.
+     * Used as fallback when webhook hasn't been received yet.
+     *
+     * @param string $invoiceId Xendit invoice ID
+     * @return array|null Invoice data or null on error
+     */
+    public static function getInvoiceStatus(string $invoiceId): ?array
+    {
+        $secretKey = config('services.xendit.secret_key');
+
+        if (!$secretKey) {
+            Log::error('Xendit: Secret key not configured');
+            return null;
+        }
+
+        try {
+            $response = Http::withBasicAuth($secretKey, '')
+                ->get("https://api.xendit.co/v2/invoices/{$invoiceId}");
+
+            if ($response->successful()) {
+                $data = $response->json();
+                Log::info('Xendit: Invoice status fetched', [
+                    'invoice_id' => $invoiceId,
+                    'status' => $data['status'] ?? null,
+                    'payment_channel' => $data['payment_channel'] ?? null,
+                ]);
+                return $data;
+            }
+
+            Log::error('Xendit: Failed to get invoice status', [
+                'invoice_id' => $invoiceId,
+                'response' => $response->json(),
+            ]);
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Xendit: Exception getting invoice status', [
+                'invoice_id' => $invoiceId,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Refresh payment status for an order.
+     * Called by frontend when returning from Xendit to ensure latest status.
+     * Accepts orders.id as primary ID.
+     *
+     * @param int $orderId orders.id (not service_orders.id)
+     * @return array Result with status info
+     */
+    public function refreshPaymentStatus(int $orderId): array
+    {
+        try {
+            // First try: look up as orders.id (primary)
+            $order = \App\Models\Order::find($orderId);
+            if (!$order) {
+                return ['success' => false, 'message' => 'Order not found'];
+            }
+
+            // If already PAID, no need to refresh
+            if ($order->payment_status === 'PAID') {
+                return [
+                    'success' => true,
+                    'payment_status' => 'PAID',
+                    'payment_channel' => $order->payment_channel,
+                    'already_paid' => true,
+                ];
+            }
+
+            // Try to find invoice_id from jasa_order_items → service_orders
+            $jasaItem = \App\Models\JasaOrderItem::where('order_id', $orderId)->first();
+            $invoiceId = $jasaItem?->serviceOrder?->xendit_invoice_id
+                ?? $order->payment_reference;
+
+            if (!$invoiceId) {
+                return [
+                    'success' => false,
+                    'message' => 'No invoice ID found',
+                    'payment_status' => $order->payment_status,
+                ];
+            }
+
+            $invoiceData = self::getInvoiceStatus($invoiceId);
+            if (!$invoiceData) {
+                return [
+                    'success' => false,
+                    'message' => 'Failed to get invoice status from Xendit',
+                    'payment_status' => $order->payment_status,
+                ];
+            }
+
+            // Update based on Xendit response
+            $xenditStatus = $invoiceData['status'] ?? null;
+            $paymentChannel = $invoiceData['payment_channel'] ?? null;
+
+            if ($xenditStatus === 'PAID' || $xenditStatus === 'SETTLED') {
+                // Update orders table (primary)
+                $order->payment_status = 'PAID';
+                $order->paid_at = now();
+                if ($paymentChannel) {
+                    $order->payment_channel = $paymentChannel;
+                    $order->paid_channel = $paymentChannel;
+                }
+                $order->save();
+
+                // Sync to service_orders for backward compatibility
+                if ($jasaItem?->service_order_id) {
+                    $serviceOrder = \App\Models\ServiceOrder::find($jasaItem->service_order_id);
+                    if ($serviceOrder) {
+                        $serviceOrder->payment_status = 'PAID';
+                        $serviceOrder->paid_at = now();
+                        $serviceOrder->payment_channel = $paymentChannel;
+                        $serviceOrder->paid_channel = $paymentChannel;
+                        if ($invoiceId) {
+                            $serviceOrder->xendit_invoice_id = $invoiceId;
+                            $serviceOrder->payment_reference = $invoiceId;
+                        }
+                        $serviceOrder->save();
+                    }
+                }
+
+                Log::info('Xendit: Payment status refreshed from Xendit API', [
+                    'order_id' => $orderId,
+                    'invoice_id' => $invoiceId,
+                    'payment_channel' => $paymentChannel,
+                ]);
+
+                return [
+                    'success' => true,
+                    'payment_status' => 'PAID',
+                    'payment_channel' => $paymentChannel,
+                    'refreshed' => true,
+                ];
+            }
+
+            // Invoice not paid yet
+            return [
+                'success' => true,
+                'payment_status' => $order->payment_status,
+                'xendit_status' => $xenditStatus,
+                'message' => 'Invoice not yet paid',
+            ];
+        } catch (\Exception $e) {
+            Log::error('Xendit: Failed to refresh payment status', [
+                'order_id' => $orderId,
+                'error' => $e->getMessage(),
+            ]);
+            return [
+                'success' => false,
+                'message' => $e->getMessage(),
+            ];
         }
     }
 }

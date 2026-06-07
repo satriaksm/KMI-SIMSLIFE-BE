@@ -41,6 +41,8 @@ class ServiceOrder extends Model
         'payment_method',
         'payment_status',
         'payment_reference',
+        'payment_channel',
+        'paid_channel',
         'xendit_invoice_id',
         'paid_at',
         'is_reviewed',
@@ -335,7 +337,23 @@ class ServiceOrder extends Model
             $this->paid_at = now();
         }
 
-        $this->save();
+        // Use DB::update to avoid timestamp warnings from Laravel model events
+        // This bypasses the model's save() which triggers automatic timestamp updates
+        $updateData = ['status' => $this->status];
+
+        if ($newStatus === self::STATUS_DITOLAK) {
+            $updateData['rejection_reason'] = $this->rejection_reason;
+            $updateData['rejected_at'] = now();
+        }
+
+        if (($options['mark_paid'] ?? false) && $newStatus === self::STATUS_SELESAI) {
+            $updateData['payment_status'] = self::PAYMENT_PAID;
+            $updateData['paid_at'] = now();
+        }
+
+        // Update without touching updated_at to avoid MySQL warnings
+        static::withoutTimestamps(fn () => $this->fill($updateData)->save());
+
         return true;
     }
 

@@ -17,6 +17,7 @@ class Rating extends Model
         'merchant_id',
         'order_id',
         'order_item_id',
+        'jasa_order_item_id',
         'service_order_id',
         'rateable_id',
         'rateable_type',
@@ -81,6 +82,14 @@ class Rating extends Model
     public function serviceOrder(): BelongsTo
     {
         return $this->belongsTo(ServiceOrder::class);
+    }
+
+    /**
+     * Jasa order item reference (for Jasa - links to unified orders table)
+     */
+    public function jasaOrderItem(): BelongsTo
+    {
+        return $this->belongsTo(JasaOrderItem::class);
     }
 
     /**

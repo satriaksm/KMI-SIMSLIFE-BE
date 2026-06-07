@@ -34,6 +34,8 @@ class Order extends Model
         'status',
         'payment_method',
         'payment_status',
+        'payment_channel',
+        'paid_channel',
         'order_type',
         'mekanisme_pemesanan',
     ];

@@ -40,6 +40,7 @@ use App\Http\Controllers\PostCommentController;
 use App\Http\Controllers\Public\PublicProfileController;
 use App\Http\Controllers\ServiceOrderController;
 use App\Http\Controllers\ServiceConsultationController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\MerchantReportController;
 use App\Models\Conversation;
 
@@ -333,6 +334,31 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
+
+        // ===== PAYMENT ENDPOINTS (PRODUCT ORDERS) =====
+        // Xendit invoice creation for produk/kuliner orders
+        // Called by frontend after order is created with PENDING status
+        Route::prefix('payments')->name('payments.')->group(function () {
+            // Create Xendit invoice for existing order
+            Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice'])
+                ->name('create-invoice')
+                ->where('orderId', '[0-9]+');
+
+            // Verify payment status (fallback when webhook not received)
+            Route::get('/{orderId}/verify', [PaymentController::class, 'verifyPayment'])
+                ->name('verify')
+                ->where('orderId', '[0-9]+');
+
+            // Cancel payment and reset to PENDING
+            Route::post('/{orderId}/cancel', [PaymentController::class, 'cancelPayment'])
+                ->name('cancel')
+                ->where('orderId', '[0-9]+');
+
+            // Get current payment status
+            Route::get('/{orderId}/status', [PaymentController::class, 'getPaymentStatus'])
+                ->name('status')
+                ->where('orderId', '[0-9]+');
+        });
 
         // ===== SERVICE ORDERS (CUSTOMER) =====
         // Service Orders (Customer)
@@ -629,3 +655,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
 // Xendit authenticates using callback token in header 'x-callback-token'
 Route::post('/payment/xendit/webhook', [XenditWebhookController::class, 'handleCallback'])
     ->name('xendit.webhook');
+
+// Refresh payment status from Xendit (fallback when webhook hasn't been received)
+Route::get('/payment/xendit/refresh/{orderId}', [XenditWebhookController::class, 'refreshPaymentStatus'])
+    ->name('xendit.refresh')
+    ->where('orderId', '[0-9]+');
