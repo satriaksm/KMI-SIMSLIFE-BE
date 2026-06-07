@@ -401,7 +401,7 @@ class AdminMerchantController extends Controller
             }
 
             $merchant->update([
-                'status' => 'approved',
+                'status'      => 'approved',
                 'response_at' => Carbon::now(),
             ]);
 
@@ -411,7 +411,7 @@ class AdminMerchantController extends Controller
                 $roleId = DB::table('roles')->where('name', 'umkm-owner')->value('id');
                 if (!$roleId) {
                     $roleId = DB::table('roles')->insertGetId([
-                        'name' => 'umkm-owner',
+                        'name'       => 'umkm-owner',
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
@@ -429,20 +429,9 @@ class AdminMerchantController extends Controller
                     $merchant->fresh(),
                     'approved'
                 ));
-
-                $webPushService->sendMerchantApplicationDecision(
-                    $merchant->user,
-                    $merchant->fresh(),
-                    'approved'
-                );
             }
 
             DB::commit();
-
-            return response()->json([
-                'message' => 'Merchant disetujui dan slug telah digenerate.',
-                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('[AdminMerchant] Failed to approve merchant: ' . $e->getMessage());
@@ -451,6 +440,24 @@ class AdminMerchantController extends Controller
                 'message' => 'Gagal menyetujui merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
             ], 500);
         }
+
+        // WebPush adalah non-critical — jalankan di luar transaction agar tidak rollback DB
+        if ($merchant->user) {
+            try {
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'approved'
+                );
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] approve sendMerchantApplicationDecision failed', ['merchant_id' => $merchant->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'message'  => 'Merchant disetujui dan slug telah digenerate.',
+            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+        ]);
     }
 
     // Admin menolak pendaftaran -> status rejected
@@ -492,7 +499,7 @@ class AdminMerchantController extends Controller
         DB::beginTransaction();
         try {
             $merchant->update([
-                'status' => 'rejected',
+                'status'      => 'rejected',
                 'response_at' => Carbon::now(),
             ]);
 
@@ -501,20 +508,9 @@ class AdminMerchantController extends Controller
                     $merchant->fresh(),
                     'rejected'
                 ));
-
-                $webPushService->sendMerchantApplicationDecision(
-                    $merchant->user,
-                    $merchant->fresh(),
-                    'rejected'
-                );
             }
 
             DB::commit();
-
-            return response()->json([
-                'message' => 'Merchant ditolak.',
-                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('[AdminMerchant] Failed to reject merchant: ' . $e->getMessage());
@@ -523,6 +519,24 @@ class AdminMerchantController extends Controller
                 'message' => 'Gagal menolak merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
             ], 500);
         }
+
+        // WebPush adalah non-critical — jalankan di luar transaction
+        if ($merchant->user) {
+            try {
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'rejected'
+                );
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] reject sendMerchantApplicationDecision failed', ['merchant_id' => $merchant->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'message'  => 'Merchant ditolak.',
+            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+        ]);
     }
 
     /**

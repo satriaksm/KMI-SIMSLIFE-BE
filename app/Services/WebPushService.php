@@ -15,13 +15,27 @@ class WebPushService
 {
     private function makeWebPush(): WebPush
     {
-        return new WebPush([
-            'VAPID' => [
-                'subject' => config('services.webpush.subject'),
-                'publicKey' => config('services.webpush.public_key'),
-                'privateKey' => config('services.webpush.private_key'),
-            ],
-        ]);
+        // Suppress E_NOTICE from minishlink/web-push when GMP/BCMath extension is missing.
+        // Laravel converts notices to ErrorException; we restore the handler after construction.
+        $previous = set_error_handler(null);
+        try {
+            $webPush = new WebPush([
+                'VAPID' => [
+                    'subject'    => config('services.webpush.subject'),
+                    'publicKey'  => config('services.webpush.public_key'),
+                    'privateKey' => config('services.webpush.private_key'),
+                ],
+            ]);
+        } finally {
+            // Always restore the original error handler
+            if ($previous !== null) {
+                set_error_handler($previous);
+            } else {
+                restore_error_handler();
+            }
+        }
+
+        return $webPush;
     }
 
     public function sendMerchantApplicationDecision(User $user, Merchant $merchant, string $status = 'approved'): void

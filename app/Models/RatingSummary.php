@@ -139,13 +139,16 @@ class RatingSummary extends Model
         // Update or create summary with polymorphic mapping
         $summary = self::updateOrCreate(
             [
-                'summaryable_id' => $modelId,
+                'summaryable_id'   => $modelId,
                 'summaryable_type' => $modelClass,
             ],
             [
-                'merchant_id' => $merchantId,
+                'merchant_id'    => $merchantId,
+                // rateable_id/type wajib diisi karena kolom NOT NULL (dari morphs())
+                'rateable_id'    => $modelId,
+                'rateable_type'  => $modelClass,
                 'average_rating' => $average,
-                'total_reviews' => $total,
+                'total_reviews'  => $total,
                 'rating_5_count' => $ratings->where('rating', 5)->count(),
                 'rating_4_count' => $ratings->where('rating', 4)->count(),
                 'rating_3_count' => $ratings->where('rating', 3)->count(),

@@ -23,6 +23,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -145,7 +146,11 @@ class OrderController extends Controller
 
         $updatedOrder = $order->fresh();
         event(new OrderStatusUpdated($updatedOrder));
-        $this->webPushService->sendOrderStatusUpdate($updatedOrder);
+        try {
+            $this->webPushService->sendOrderStatusUpdate($updatedOrder);
+        } catch (\Throwable $e) {
+            Log::warning('[WebPush] complete sendOrderStatusUpdate failed', ['order_id' => $updatedOrder->id, 'error' => $e->getMessage()]);
+        }
 
         return ApiResponse::success(
             $order->load(['items.addons.addon']),
@@ -178,7 +183,11 @@ class OrderController extends Controller
 
         $updatedOrder = $order->fresh();
         event(new OrderStatusUpdated($updatedOrder));
-        $this->webPushService->sendOrderStatusUpdate($updatedOrder, 'customer_cancel');
+        try {
+            $this->webPushService->sendOrderStatusUpdate($updatedOrder, 'customer_cancel');
+        } catch (\Throwable $e) {
+            Log::warning('[WebPush] cancel sendOrderStatusUpdate failed', ['order_id' => $updatedOrder->id, 'error' => $e->getMessage()]);
+        }
 
         return ApiResponse::success(
             $order->load(['items.addons.addon']),
@@ -443,12 +452,16 @@ class OrderController extends Controller
 
         $updatedOrder = $order->fresh();
         event(new OrderStatusUpdated($updatedOrder));
-        
+
         $cancelContext = null;
         if ($newStatus === 'cancelled') $cancelContext = 'merchant_reject';
         if ($newStatus === 'rejected') $cancelContext = 'merchant_reject';
-        
-        $this->webPushService->sendOrderStatusUpdate($updatedOrder, $cancelContext);
+
+        try {
+            $this->webPushService->sendOrderStatusUpdate($updatedOrder, $cancelContext);
+        } catch (\Throwable $e) {
+            Log::warning('[WebPush] updateStatus sendOrderStatusUpdate failed', ['order_id' => $updatedOrder->id, 'error' => $e->getMessage()]);
+        }
 
         return ApiResponse::success(
             $order->load(['items.addons.addon']),
@@ -740,7 +753,15 @@ class OrderController extends Controller
 
         $freshOrder = $order->fresh();
         event(new OrderCreated($freshOrder));
-        $this->webPushService->notifyOrderCreated($freshOrder);
+        try {
+            $this->webPushService->notifyOrderCreated($freshOrder);
+        } catch (\Throwable $e) {
+            // WebPush is non-critical — log and continue so checkout is not blocked
+            \Illuminate\Support\Facades\Log::warning('[WebPush] notifyOrderCreated failed', [
+                'order_id' => $freshOrder->id,
+                'error'    => $e->getMessage(),
+            ]);
+        }
 
         return ApiResponse::success([
             'order'  => $order->load(['items.addons']),
@@ -838,7 +859,11 @@ class OrderController extends Controller
 
             $updatedOrder = $order->fresh();
             event(new OrderStatusUpdated($updatedOrder));
-            $this->webPushService->sendOrderStatusUpdate($updatedOrder, 'auto');
+            try {
+                $this->webPushService->sendOrderStatusUpdate($updatedOrder, 'auto');
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] auto-cancel sendOrderStatusUpdate failed', ['order_id' => $updatedOrder->id, 'error' => $e->getMessage()]);
+            }
         }
 
         return $changed;

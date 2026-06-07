@@ -10,6 +10,7 @@ use App\Models\Merchant;
 use App\Models\ReviewMedia;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use App\Helpers\ApiResponse;
 
@@ -135,7 +136,7 @@ class RatingController extends Controller
             'title' => 'nullable|string|max:255',
             'comment' => 'required|string|min:10|max:2000',
             'is_anonymous' => 'nullable|boolean',
-            'order_id' => 'nullable|integer',
+            'order_id' => 'required|integer|exists:orders,id',
             // media is nullable — can be single UploadedFile or array of files
             // Normalize to array in controller logic (see below)
             'media' => 'nullable',
@@ -156,15 +157,17 @@ class RatingController extends Controller
         //     return response()->json(['message' => 'Anda harus membeli produk ini terlebih dahulu'], 403);
         // }
 
-        // Check: sudah pernah rating?
+        // Check: sudah pernah rating untuk ORDER ini? (bukan per produk)
+        // 1 review per order — boleh review lagi jika order berbeda
         $existingRating = Rating::where('user_id', $user->id)
+            ->where('order_id', $data['order_id'])
             ->where('rateable_id', $data['rateable_id'])
             ->where('rateable_type', $data['rateable_type'])
             ->exists();
 
         if ($existingRating) {
             return response()->json([
-                'message' => 'Anda sudah memberikan rating untuk produk ini'
+                'message' => 'Anda sudah memberikan rating untuk pesanan ini'
             ], 422);
         }
 
@@ -196,9 +199,9 @@ class RatingController extends Controller
             }
         }
 
-        Log::info('[RatingController::store] Processing media files:', [
+        Log::info('[RatingController::store] Processing media files', [
             'count' => count($mediaFiles),
-            'type' => gettype($rawMedia),
+            'type'  => gettype($rawMedia),
         ]);
 
         foreach ($mediaFiles as $index => $file) {
