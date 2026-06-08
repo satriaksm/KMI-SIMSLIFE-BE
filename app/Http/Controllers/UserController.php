@@ -53,7 +53,7 @@ class UserController
         $rules = [
             'name' => 'sometimes|string|max:255',
             'phone' => 'sometimes|string|max:20',
-            'nik' => 'sometimes|nullable|string|max:20',
+            'nik' => 'sometimes|nullable|string|max:20|unique:users,nik,' . $user->id,
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'profile_picture' => 'sometimes|image|mimes:jpeg,png,jpg,gif,svg|max:5048',
 
@@ -65,7 +65,12 @@ class UserController
             $rules['profile_picture'] = 'sometimes|string';
         }
 
-        $validator = Validator::make($request->all(), $rules);
+        $messages = [
+            'nik.unique' => 'NIK tidak boleh sama dengan pengguna lain.',
+            'email.unique' => 'Email telah digunakan oleh pengguna lain.',
+        ];
+
+        $validator = Validator::make($request->all(), $rules, $messages);
 
 
         if ($validator->fails()) {

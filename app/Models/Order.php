@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\ProductVariant;
 
 class Order extends Model
 {
@@ -57,6 +58,43 @@ class Order extends Model
         'cancelled_at' => 'datetime',
         'confirm_deadline' => 'datetime',
     ];
+
+    protected static function booted()
+    {
+        static::updated(function (Order $order) {
+            if ($order->wasChanged('status') && in_array($order->status, ['cancelled', 'rejected'])) {
+                $inventoryUpdates = [];
+                $order->loadMissing('productItems');
+                
+                foreach ($order->productItems as $item) {
+                    if ($item->product_variant_id) {
+                        ProductVariant::query()
+                            ->where('id', $item->product_variant_id)
+                            ->update([
+                                'stock' => \Illuminate\Support\Facades\DB::raw('stock + ' . $item->quantity),
+                            ]);
+
+                        $inventoryUpdates[] = [
+                            'product_id' => $item->product_id,
+                            'variant_id' => $item->product_variant_id,
+                        ];
+                    }
+                }
+
+                foreach ($inventoryUpdates as $update) {
+                    $stock = (int) ProductVariant::query()
+                        ->where('id', $update['variant_id'])
+                        ->value('stock');
+
+                    event(new \App\Events\InventoryStockUpdated(
+                        (int) $update['product_id'],
+                        (int) $update['variant_id'],
+                        $stock
+                    ));
+                }
+            }
+        });
+    }
 
     public function address()
     {

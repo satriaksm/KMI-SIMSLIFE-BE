@@ -371,6 +371,9 @@ class MerchantTest extends TestCase
                 'name' => 'Nama Baru',
                 'phone' => '08123456789',
                 'description' => 'Desc baru',
+                'bank_code' => '008',
+                'bank_account_number' => '1234567890',
+                'bank_account_name' => 'John Doe',
                 'operational_hours' => json_encode([
                     'monday' => ['is_open' => true, 'open' => '08:00', 'close' => '17:00'],
                 ]),
@@ -382,6 +385,33 @@ class MerchantTest extends TestCase
             'id' => $merchant->id,
             'name' => 'Nama Baru',
         ]);
+    }
+
+    #[Test]
+    public function umkm_owner_cannot_update_profile_with_invalid_operational_hours()
+    {
+        $owner = $this->createVerifiedUserWithRole(2);
+        $merchant = Merchant::factory()->approved()->create([
+            'user_id' => $owner->id,
+            'status' => 'approved',
+        ]);
+
+        $this->addPrimaryAddressToMerchant($merchant);
+
+        $this->actingAs($owner)
+            ->apiPost('/api/merchant/' . $merchant->slug . '/update', [
+                'name' => 'Nama Baru',
+                'phone' => '08123456789',
+                'description' => 'Desc baru',
+                'bank_code' => '008',
+                'bank_account_number' => '1234567890',
+                'bank_account_name' => 'John Doe',
+                'operational_hours' => json_encode([
+                    'monday' => ['is_open' => true, 'open' => '17:00', 'close' => '08:00'],
+                ]),
+            ])
+            ->assertStatus(422)
+            ->assertJsonFragment(['message' => 'Jam tutup harus setelah jam buka untuk hari Senin.']);
     }
 
     #[Test]

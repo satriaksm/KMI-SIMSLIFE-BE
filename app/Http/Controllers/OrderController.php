@@ -12,6 +12,7 @@ use App\Models\Merchant;
 use App\Models\MerchantWalletHistory;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\ProductOrderItem;
 use App\Models\ProductOrderItemAddon;
 use App\Models\ShippingSetting;
@@ -173,9 +174,6 @@ class OrderController extends Controller
             return ApiResponse::error('Order tidak bisa dibatalkan', 422);
         }
 
-        if (strtoupper($order->payment_method ?? '') !== 'COD') {
-            return ApiResponse::error('Pesanan dengan pembayaran otomatis tidak dapat dibatalkan. Silakan tunggu batas waktu pembayaran habis.', 422);
-        }
 
         $order->status = 'cancelled';
         $order->cancelled_at = now();
@@ -379,7 +377,8 @@ class OrderController extends Controller
 
         $allowed = match ($newStatus) {
             // UMKM bisa terima pesanan yang sudah bayar (paid) atau COD (pending delivery_type=pickup/delivery)
-            'responsed', 'accepted', 'rejected' => in_array($order->status, ['paid', 'pending'], true),
+            'responsed', 'accepted' => in_array($order->status, ['paid', 'pending'], true),
+            'rejected' => in_array($order->status, ['paid', 'pending', 'responsed', 'accepted'], true),
             'delivered' => in_array($order->status, ['responsed', 'accepted'], true),
             'completed' => in_array($order->status, ['delivered'], true),
             'undelivered' => in_array($order->status, ['delivered'], true),
@@ -574,9 +573,10 @@ class OrderController extends Controller
 
         $order = null;
         $payment = null;
+        $inventoryUpdates = [];
 
         try {
-            DB::transaction(function () use ($request, $cart, $user, $address, $deliveryType, $voucher, &$order, &$payment) {
+            DB::transaction(function () use ($request, $cart, $user, $address, $deliveryType, $voucher, &$order, &$payment, &$inventoryUpdates) {
                 $orderCode = $this->generateOrderCode();
 
                 $productSubtotal = 0;
@@ -703,6 +703,19 @@ class OrderController extends Controller
                         'subtotal_snapshot'          => $unitPrice * $quantity,
                     ]);
 
+                    if ($cartItem->product_variant_id) {
+                        ProductVariant::query()
+                            ->where('id', $cartItem->product_variant_id)
+                            ->update([
+                                'stock' => DB::raw('GREATEST(stock - ' . $quantity . ', 0)'),
+                            ]);
+                        
+                        $inventoryUpdates[] = [
+                            'product_id' => $product->id,
+                            'variant_id' => $cartItem->product_variant_id,
+                        ];
+                    }
+
                     foreach ($cartItem->addons as $cartAddon) {
                         ProductOrderItemAddon::query()->create([
                             'product_order_item_id' => $orderItem->id,
@@ -753,6 +766,19 @@ class OrderController extends Controller
 
         $freshOrder = $order->fresh();
         event(new OrderCreated($freshOrder));
+        
+        foreach ($inventoryUpdates as $update) {
+            $stock = (int) ProductVariant::query()
+                ->where('id', $update['variant_id'])
+                ->value('stock');
+
+            event(new \App\Events\InventoryStockUpdated(
+                (int) $update['product_id'],
+                (int) $update['variant_id'],
+                $stock
+            ));
+        }
+
         try {
             $this->webPushService->notifyOrderCreated($freshOrder);
         } catch (\Throwable $e) {
@@ -874,6 +900,8 @@ class OrderController extends Controller
      */
     private function moveBalanceToAvailable(Order $order): void
     {
+        if (strtoupper($order->payment_method ?? '') === 'COD') return;
+
         $merchant = $order->merchant;
         if (!$merchant) return;
 

@@ -613,7 +613,7 @@ class ProductController extends Controller
             'status' => ['nullable', 'in:draft,published,archived'],
 
             'price' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
+            'stock' => ['nullable', 'integer', 'min:0', 'max:9999'],
             'sku' => ['nullable', 'string', 'max:100'],
             // ✅ Categories (multiple)
             'category_ids' => ['required', 'array', 'min:1'],
@@ -653,6 +653,9 @@ class ProductController extends Controller
             'add_on_groups.*.options' => ['required', 'array', 'min:1', 'max:' . (self::MAX_ADDON_GROUP_OPTIONS)],
             'add_on_groups.*.options.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
+        ], [
+            'stock.max' => 'Stok produk tidak boleh melebihi 9999.',
+            'combinations.*.stock.max' => 'Stok variasi tidak boleh melebihi 9999.',
         ]);
 
         $images = $data['images'] ?? [];
@@ -1345,6 +1348,9 @@ class ProductController extends Controller
             'add_on_groups.*.options.*.id' => ['nullable', 'integer'],
             'add_on_groups.*.options.*.name' => ['required', 'string', 'max:100'],
             'add_on_groups.*.options.*.price' => ['required', 'numeric', 'min:0'],
+        ], [
+            'stock.max' => 'Stok produk tidak boleh melebihi 9999.',
+            'combinations.*.stock.max' => 'Stok variasi tidak boleh melebihi 9999.',
         ]);
 
 
