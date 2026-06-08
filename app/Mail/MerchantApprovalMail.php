@@ -44,6 +44,7 @@ class MerchantApprovalMail extends Mailable
             with: [
                 'merchantName' => $this->merchant->name,
                 'userName' => $this->merchant->user->name ?? 'Pengguna',
+                'merchantSlug' => $this->merchant->slug,
             ],
         );
     }
