@@ -116,10 +116,8 @@ class AdminEventController extends Controller
                     'removed_by',
                     'removed_at',
                     'responded_at'
-                ]);
+                ])->with(['segmentation', 'paguyuban']);
             },
-            'merchants.segmentation',
-            'merchants.paguyuban',
             'vouchers'
         ])
             ->withCount([
