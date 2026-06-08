@@ -330,32 +330,23 @@ class AdminDashboardController extends Controller
     private function getRecentOrders(): array
     {
         try {
-            return DB::table('orders')
-                ->join('jasas', 'orders.jasa_id', '=', 'jasas.id')
-                ->select(
-                    'orders.id',
-                    'orders.nama',
-                    'orders.tel',
-                    'orders.tanggal',
-                    'orders.waktu',
-                    'orders.total',
-                    'jasas.id as jasa_id',
-                    'jasas.title as jasa_title'
-                )
-                ->latest('orders.created_at')
+            return \App\Models\Order::with(['merchant'])
+                ->latest('created_at')
                 ->limit(10)
                 ->get()
                 ->map(fn($order) => [
                     'id' => $order->id,
-                    'nama' => $order->nama,
-                    'tel' => $order->tel,
-                    'tanggal' => $order->tanggal,
-                    'waktu' => $order->waktu,
-                    'total' => (int) $order->total,
-                    'jasa' => [
-                        'id' => $order->jasa_id,
-                        'title' => $order->jasa_title,
+                    'order_code' => $order->order_code,
+                    'nama' => $order->user_name_snapshot ?? 'Customer',
+                    'tel' => $order->user_phone_snapshot ?? '-',
+                    'tanggal' => $order->created_at->format('Y-m-d'),
+                    'waktu' => $order->created_at->format('H:i:s'),
+                    'total' => (int) $order->gross_amount,
+                    'merchant' => [
+                        'id' => $order->merchant_id,
+                        'name' => $order->merchant ? $order->merchant->name : 'Unknown Merchant',
                     ],
+                    'status' => $order->status,
                 ])
                 ->toArray();
         } catch (\Exception $e) {
@@ -493,8 +484,8 @@ class AdminDashboardController extends Controller
             $weekEnd = $weekStart->copy()->endOfWeek()->min($endDate);
 
             try {
-                $orders = Order::whereBetween('created_at', [$weekStart, $weekEnd])->count();
-                $revenue = Order::whereBetween('created_at', [$weekStart, $weekEnd])->sum('total');
+                $orders = Order::whereBetween('created_at', [$weekStart, $weekEnd])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$weekStart, $weekEnd])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
@@ -525,8 +516,8 @@ class AdminDashboardController extends Controller
             $endDate = $startDate->copy()->endOfMonth();
 
             try {
-                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->count();
-                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->sum('total');
+                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
@@ -555,8 +546,8 @@ class AdminDashboardController extends Controller
             $endDate = $startDate->copy()->endOfMonth();
 
             try {
-                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->count();
-                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->sum('total');
+                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
