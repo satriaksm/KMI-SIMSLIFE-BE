@@ -142,7 +142,7 @@ class AuthController extends Controller
         $user = User::with('roles')->where('email', $credentials['email'])->first();
 
         if (!$user || !Hash::check($credentials['password'], $user->password)) {
-            return response()->json(['message' => 'Kredensial tidak valid.'], 422);
+            return response()->json(['message' => 'Email atau kata sandi salah.'], 422);
         }
 
         if (!$user->hasVerifiedEmail()) {

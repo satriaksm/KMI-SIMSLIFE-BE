@@ -97,9 +97,7 @@ class WebhookController extends Controller
 
         // 🔹 HANDLE PAID
         if ($status === 'PAID') {
-            $inventoryUpdates = [];
-
-            DB::transaction(function () use ($data, $externalId, &$inventoryUpdates) {
+            DB::transaction(function () use ($data, $externalId) {
 
                 $payment = Payment::where('external_id', $externalId)
                     ->lockForUpdate()
@@ -142,17 +140,6 @@ class WebhookController extends Controller
                     if ($quantity <= 0) {
                         continue;
                     }
-
-                    ProductVariant::query()
-                        ->where('id', $item->product_variant_id)
-                        ->update([
-                            'stock' => DB::raw('GREATEST(stock - ' . $quantity . ', 0)'),
-                        ]);
-
-                    $inventoryUpdates[] = [
-                        'product_id' => (int) $item->product_id,
-                        'variant_id' => (int) $item->product_variant_id,
-                    ];
                 }
 
                 $merchant = $order->merchant;
@@ -190,17 +177,7 @@ class WebhookController extends Controller
                 $webPush->sendPaymentStatusUpdate($order, $payment);
             }
 
-            foreach ($inventoryUpdates as $update) {
-                $stock = (int) ProductVariant::query()
-                    ->where('id', $update['variant_id'])
-                    ->value('stock');
 
-                event(new InventoryStockUpdated(
-                    (int) $update['product_id'],
-                    (int) $update['variant_id'],
-                    $stock
-                ));
-            }
 
             return ApiResponse::success(null, 'Payment processed');
         }

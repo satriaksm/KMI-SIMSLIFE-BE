@@ -240,11 +240,11 @@ class MerchantController extends Controller
                 'address.latitude' => ['nullable', 'numeric', 'between:-90,90'],
                 'address.longitude' => ['nullable', 'numeric', 'between:-180,180'],
 
-                // Informasi pajak & bank (opsional saat pendaftaran)
+                // Informasi pajak (opsional) & bank (wajib saat pendaftaran)
                 'NPWP' => ['nullable', 'string', 'max:30', 'unique:merchants,NPWP'],
-                'bank_code' => ['nullable', 'string', 'max:100'],
-                'bank_account_number' => ['nullable', 'string', 'max:50'],
-                'bank_account_name' => ['nullable', 'string', 'max:255'],
+                'bank_code' => ['required', 'string', 'max:100'],
+                'bank_account_number' => ['required', 'string', 'max:50'],
+                'bank_account_name' => ['required', 'string', 'max:255'],
             ],
             [
                 'name.required' => 'Nama usaha wajib diisi.',
@@ -261,6 +261,9 @@ class MerchantController extends Controller
                 'address.village_id.required' => 'Desa/Kelurahan wajib dipilih.',
                 'address.village_id.exists' => 'Desa/Kelurahan tidak valid.',
                 'NPWP.unique' => 'NPWP ini sudah terdaftar. Silakan gunakan NPWP lain.',
+                'bank_code.required' => 'Bank wajib dipilih.',
+                'bank_account_number.required' => 'Nomor rekening wajib diisi.',
+                'bank_account_name.required' => 'Nama pemilik rekening wajib diisi.',
             ]
         );
 
@@ -411,16 +414,65 @@ class MerchantController extends Controller
 
             // Informasi pajak & bank
             'NPWP' => ['nullable', 'string', 'max:30', Rule::unique('merchants', 'NPWP')->ignore($merchant->id)],
-            'bank_code' => ['nullable', 'string', 'max:100'],
-            'bank_account_number' => ['nullable', 'string', 'max:50'],
-            'bank_account_name' => ['nullable', 'string', 'max:255'],
+            'bank_code' => ['required', 'string', 'max:100'],
+            'bank_account_number' => ['required', 'string', 'max:50'],
+            'bank_account_name' => ['required', 'string', 'max:255'],
         ], [
             'logo.mimes' => 'Logo harus berupa file gambar (jpg, jpeg, png, gif, webp)',
             'logo.max' => 'Ukuran logo maksimal 5MB',
             'cover.mimes' => 'Cover harus berupa file gambar (jpg, jpeg, png, gif, webp)',
             'cover.max' => 'Ukuran cover maksimal 5MB',
             'NPWP.unique' => 'NPWP ini sudah terdaftar. Silakan gunakan NPWP lain.',
+            'bank_code.required' => 'Bank wajib dipilih.',
+            'bank_account_number.required' => 'Nomor rekening wajib diisi.',
+            'bank_account_name.required' => 'Nama pemilik rekening wajib diisi.',
         ]);
+
+        if ($request->filled('operational_hours')) {
+            $hours = json_decode($request->operational_hours, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return ApiResponse::error(
+                    'Format jam operasional tidak valid.',
+                    422,
+                    ['operational_hours' => ['Format jam operasional tidak valid.']]
+                );
+            }
+
+            $dayNames = [
+                'monday' => 'Senin',
+                'tuesday' => 'Selasa',
+                'wednesday' => 'Rabu',
+                'thursday' => 'Kamis',
+                'friday' => 'Jumat',
+                'saturday' => 'Sabtu',
+                'sunday' => 'Minggu',
+            ];
+
+            foreach ($hours as $day => $data) {
+                if (isset($data['is_open']) && $data['is_open']) {
+                    $open = $data['open'] ?? null;
+                    $close = $data['close'] ?? null;
+
+                    $dayLabel = $dayNames[$day] ?? ucfirst($day);
+
+                    if (empty($open) || empty($close)) {
+                        return ApiResponse::error(
+                            "Jam buka dan jam tutup wajib diisi untuk hari {$dayLabel}.",
+                            422,
+                            ['operational_hours' => ["Jam buka dan jam tutup wajib diisi untuk hari {$dayLabel}."]]
+                        );
+                    }
+
+                    if ($close <= $open) {
+                        return ApiResponse::error(
+                            "Jam tutup harus setelah jam buka untuk hari {$dayLabel}.",
+                            422,
+                            ['operational_hours' => ["Jam tutup harus setelah jam buka untuk hari {$dayLabel}."]]
+                        );
+                    }
+                }
+            }
+        }
 
         DB::beginTransaction();
 

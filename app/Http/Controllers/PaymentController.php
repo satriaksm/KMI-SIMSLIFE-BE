@@ -174,15 +174,7 @@ class PaymentController extends Controller
                     'confirm_deadline' => now()->addMinutes($confirmMinutes),
                 ]);
 
-                // Kurangi stok
-                foreach ($order->items as $item) {
-                    if (!$item->product_variant_id) continue;
-                    $qty = (int) $item->quantity;
-                    if ($qty <= 0) continue;
 
-                    ProductVariant::where('id', $item->product_variant_id)
-                        ->update(['stock' => DB::raw('GREATEST(stock - ' . $qty . ', 0)')]);
-                }
             });
 
             $payment->refresh();
