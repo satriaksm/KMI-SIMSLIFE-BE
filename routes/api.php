@@ -376,6 +376,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
+        Route::post('checkout/{merchant:slug}/vouchers/validate', [VoucherController::class, 'validateVoucher']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
         Route::prefix('orders')->group(function () {

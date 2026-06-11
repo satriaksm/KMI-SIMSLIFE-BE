@@ -529,6 +529,10 @@ class OrderController extends Controller
             return ApiResponse::error('Merchant cart tidak valid', 422);
         }
 
+        if ($cart->merchant->user_id === $user->id) {
+            return ApiResponse::error('Anda tidak dapat membeli produk dari toko Anda sendiri.', 403);
+        }
+
         if (!$cart->merchant->is_open_now) {
             return ApiResponse::error('UMKM sedang tutup. Anda tidak dapat membuat pesanan saat ini.', 400);
         }

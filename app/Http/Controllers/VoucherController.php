@@ -31,6 +31,7 @@ class VoucherController extends Controller
             'min_purchase_amount' => 'nullable|numeric|min:0',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'nullable|integer|min:1',
+            'is_secret' => 'nullable|boolean',
         ]);
 
         return $merchant->vouchers()->create($data);
@@ -206,6 +207,7 @@ class VoucherController extends Controller
             'max_discount_amount' => 'nullable|numeric|min:0|required_if:voucher_type,percent',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'required|integer|min:0',
+            'is_secret' => 'nullable|boolean',
         ]);
 
         // Jika tidak dikirim, set null
@@ -366,6 +368,7 @@ class VoucherController extends Controller
                 $q->where('merchant_id', $merchant->id)
                     ->orWhereIn('event_id', $acceptedEventIds);
             })
+            ->where('is_secret', false)
             ->active()
 
             // ⬅️ hitung total pemakaian
@@ -468,6 +471,7 @@ class VoucherController extends Controller
                 $q->where('merchant_id', $merchant->id)
                     ->orWhereIn('event_id', $acceptedEventIds);
             })
+            ->where('is_secret', false)
             ->active()
             ->withCount('usages');
 
@@ -544,5 +548,72 @@ class VoucherController extends Controller
 
 
 
+    public function validateVoucher(Request $request, Merchant $merchant)
+    {
+        $data = $request->validate([
+            'code' => 'required|string',
+        ]);
 
+        $userId = $request->user()->id;
+
+        $acceptedEventIds = DB::table('event_merchants')
+            ->select('event_id')
+            ->where('merchant_id', $merchant->id)
+            ->where('status', 'accepted')
+            ->pluck('event_id');
+
+        $voucher = Voucher::query()
+            ->where('voucher_code', $data['code'])
+            ->where(function ($q) use ($merchant, $acceptedEventIds) {
+                $q->where('merchant_id', $merchant->id)
+                    ->orWhereIn('event_id', $acceptedEventIds);
+            })
+            ->active()
+            ->withCount('usages')
+            ->withCount([
+                'usages as user_usages_count' => function ($q) use ($userId) {
+                    $q->where('user_id', $userId);
+                }
+            ])
+            ->first([
+                'id',
+                'event_id',
+                'voucher_name',
+                'voucher_code',
+                'voucher_type',
+                'voucher_description',
+                'voucher_end_date',
+                'value',
+                'max_discount_amount',
+                'min_purchase_amount',
+                'usage_limit_per_user',
+                'usage_limit',
+                'is_secret',
+            ]);
+
+        if (!$voucher) {
+            return ApiResponse::error('Voucher tidak valid atau sudah kadaluarsa', 400);
+        }
+
+        $totalUsed = $voucher->usages_count ?? 0;
+        $userUsed = $voucher->user_usages_count ?? 0;
+
+        if ($voucher->usage_limit !== null && $totalUsed >= $voucher->usage_limit) {
+            return ApiResponse::error('Kuota voucher sudah habis', 400);
+        }
+
+        if ($voucher->usage_limit_per_user !== null && $userUsed >= $voucher->usage_limit_per_user) {
+            return ApiResponse::error('Anda sudah mencapai batas penggunaan voucher ini', 400);
+        }
+
+        $voucher->usage = $totalUsed . ' / ' . ($voucher->usage_limit ?? '∞');
+        $voucher->is_expired = false; // Karena query filter by active()
+        
+        $voucher->makeHidden([
+            'usages_count',
+            'user_usages_count',
+        ]);
+
+        return ApiResponse::success($voucher, 'Voucher berhasil digunakan');
+    }
 }
