@@ -65,9 +65,14 @@ class SearchController extends Controller
             });
 
         if (!empty($data['q'])) {
-            $query->where(function ($q) use ($data) {
-                $q->where('products.name', 'like', "%{$data['q']}%");
+            $q = $data['q'];
+            $query->where(function ($qBuilder) use ($q) {
+                $qBuilder->where('products.name', 'like', "%{$q}%")
+                  ->orWhere('products.description', 'like', "%{$q}%");
             });
+            $quotedQ = DB::getPdo()->quote("%{$q}%");
+            $query->addSelect(DB::raw("(CASE WHEN products.name LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
+            $query->orderByDesc('relevance_score');
         }
 
         if (!empty($data['categories'])) {
@@ -294,8 +299,12 @@ class SearchController extends Controller
             if (!empty($data['q'])) {
                 $q = $data['q'];
                 $jasaQuery->where(function ($sub) use ($q) {
-                    $sub->where('jasas.title', 'like', "%{$q}%");
+                    $sub->where('jasas.title', 'like', "%{$q}%")
+                        ->orWhere('jasas.description', 'like', "%{$q}%");
                 });
+                $quotedQ = DB::getPdo()->quote("%{$q}%");
+                $jasaQuery->addSelect(DB::raw("(CASE WHEN jasas.title LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
+                $jasaQuery->orderByDesc('relevance_score');
             }
 
             if (!empty($data['categories'])) {
@@ -560,7 +569,14 @@ class SearchController extends Controller
 
 
         if (!empty($data['q'])) {
-            $query->where('merchants.name', 'like', "%{$data['q']}%");
+            $q = $data['q'];
+            $query->where(function ($qBuilder) use ($q) {
+                $qBuilder->where('merchants.name', 'like', "%{$q}%")
+                  ->orWhere('merchants.description', 'like', "%{$q}%");
+            });
+            $quotedQ = DB::getPdo()->quote("%{$q}%");
+            $query->addSelect(DB::raw("(CASE WHEN merchants.name LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
+            $query->orderByDesc('relevance_score');
         }
 
         if (!empty($data['segments'])) {

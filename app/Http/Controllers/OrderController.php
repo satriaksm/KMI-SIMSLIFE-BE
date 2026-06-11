@@ -971,5 +971,22 @@ class OrderController extends Controller
             'reference_id'   => $order->id,
             'description'    => 'Order cancelled — refund from pending balance',
         ]);
+
+        // Attempt automatic refund if payment was via Xendit
+        if ($order->payment && $order->payment->xendit_invoice_id) {
+            $xenditRefundService = app(\App\Services\XenditRefundService::class);
+            $success = $xenditRefundService->processRefund($order->payment);
+
+            if (!$success && $order->payment->refund_status === 'failed') {
+                // Notifikasi ke admin bahwa refund gagal (butuh manual)
+                $admins = \App\Models\User::whereHas('roles', function ($query) {
+                    $query->where('name', 'admin');
+                })->get();
+
+                foreach ($admins as $admin) {
+                    $admin->notify(new \App\Notifications\ManualRefundRequiredNotification($order));
+                }
+            }
+        }
     }
 }

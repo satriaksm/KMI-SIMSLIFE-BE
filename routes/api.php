@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\ReportAppealController as AdminReportAppealController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Admin\AdminRefundController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\PasswordResetController;
@@ -715,6 +716,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::put('/shipping', [AdminSettingsController::class, 'shippingUpdate'])->name('shipping.update');
             Route::get('/payment-fees', [AdminSettingsController::class, 'paymentFeesIndex'])->name('payment-fees.index');
             Route::put('/payment-fees/{id}', [AdminSettingsController::class, 'paymentFeeUpdate'])->name('payment-fees.update');
+        });
+
+        // ===== REFUND MANAGEMENT =====
+        Route::prefix('refunds')->name('refunds.')->group(function () {
+            Route::get('/', [AdminRefundController::class, 'index'])->name('index');
+            Route::post('/{payment}/process', [AdminRefundController::class, 'processManualRefund'])->name('process');
         });
     });
 });
