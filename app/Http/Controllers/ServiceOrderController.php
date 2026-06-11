@@ -344,8 +344,8 @@ class ServiceOrderController extends Controller
         $perPage = $request->get('per_page', 100); // Increase to 100 for client-side filtering
 
         // PRIMARY: Query from orders table (jasa type)
+        // NOTE: Access jasas through jasaItems.jasa, NOT Order::jasa (relation doesn't exist)
         $query = Order::with([
-            'jasa:id,title,image',
             'merchant:id,name,slug,logo_path,segmentation_id',
             'jasaItems.jasa:id,title,image',
             'jasaItems.review.media',
@@ -2181,7 +2181,8 @@ class ServiceOrderController extends Controller
             }
 
             // Determine the jasa for the review
-            $jasa = $order?->jasa ?? ($serviceOrder?->jasa ?? Jasa::find($jasaId));
+            // NOTE: Order doesn't have 'jasa' relation - use jasaItems.jasa instead
+            $jasa = $jasaItem?->jasa ?? $serviceOrder?->jasa ?? Jasa::find($jasaId);
 
             // Create rating for the service (jasa) with order reference
             $ratingData = [

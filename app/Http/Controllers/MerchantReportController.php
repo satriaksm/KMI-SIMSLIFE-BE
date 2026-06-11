@@ -98,8 +98,9 @@ class MerchantReportController extends Controller
     private function getJasaMerchantSummaryFromOrders(int $merchantId, Carbon $startDate, Carbon $endDate)
     {
         // PRIMARY: Query from orders table
+        // Use whereHas('jasaItems') to detect jasa orders (NOT order_type='jasa')
         $baseQuery = Order::where('merchant_id', $merchantId)
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems')
             ->whereBetween('created_at', [$startDate, $endDate]);
 
         // For COD: count if status = selesai
@@ -211,9 +212,11 @@ class MerchantReportController extends Controller
     private function getJasaMerchantTransactionsFromOrders(int $merchantId, Carbon $startDate, Carbon $endDate, string $sortBy, int $perPage)
     {
         // PRIMARY: Query from orders table
-        $query = Order::with(['jasa:id,title', 'jasaItems'])
+        // Use whereHas('jasaItems') to detect jasa orders (NOT order_type='jasa')
+        // Use jasaItems.jasa for accessing jasa data (NOT Order::jasa)
+        $query = Order::with(['jasaItems.jasa:id,title'])
             ->where('merchant_id', $merchantId)
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems')
             ->whereBetween('created_at', [$startDate, $endDate])
             ->where(function ($q) {
                 $q->where(function ($inner) {
@@ -240,14 +243,14 @@ class MerchantReportController extends Controller
             $transactions = $paginated->map(function ($order) {
                 $isWithdrawable = $order->updated_at->lt(Carbon::now()->subHours(24));
 
-                // Get service_order for additional data
+                // Get jasa data through jasaItems (not $order->jasa which doesn't exist)
                 $jasaItem = $order->jasaItems->first();
                 $serviceOrder = $jasaItem?->serviceOrder;
 
                 return [
                     'id' => $order->id,
                     'order_number' => $serviceOrder?->order_number ?? 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-                    'service_name' => $order->jasa?->title ?? 'Layanan Jasa',
+                    'service_name' => $jasaItem?->jasa?->title ?? 'Layanan Jasa',
                     'customer_name' => $order->nama,
                     'total_price' => (float) ($serviceOrder?->total_price ?? $order->total_price),
                     'payment_method' => $serviceOrder?->payment_method ?? $order->payment_method,
