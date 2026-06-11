@@ -21,10 +21,11 @@ class OrderController extends Controller
     /**
      * GET /api/orders/mine
      * Customer lihat order miliknya sendiri
+     * NOTE: Access jasas through jasaItems.jasa
      */
     public function myOrders(Request $request)
     {
-        return Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])
+        return Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])
             ->where('user_id', $request->user()->id)
             ->latest()
             ->get();
@@ -36,7 +37,7 @@ class OrderController extends Controller
      */
     public function myOrderShow(Request $request, int $id)
     {
-        $order = Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
+        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
         if (!$order) {
             return response()->json(['message' => 'Order tidak ditemukan.'], 404);
         }
@@ -103,7 +104,7 @@ class OrderController extends Controller
         ]);
     }
 
-    // ============================================================
+// ============================================================
     // ADMIN (optional)
     // ============================================================
 
@@ -112,7 +113,7 @@ class OrderController extends Controller
      */
     public function adminIndex()
     {
-        return Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
+        return Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
     }
 
     /**
@@ -120,7 +121,7 @@ class OrderController extends Controller
      */
     public function adminShow(int $id)
     {
-        $order = Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
+        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
         if (!$order) {
             return response()->json(['message' => 'Order tidak ditemukan.'], 404);
         }
@@ -133,12 +134,12 @@ class OrderController extends Controller
 
     public function index()
     {
-        return Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
+        return Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
     }
 
     public function show($id)
     {
-        $order = Order::with(['jasa', 'package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->findOrFail($id);
+        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->findOrFail($id);
         return response()->json($order);
     }
 

@@ -424,6 +424,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
             Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
 
+            // ===== MERCHANT ORDERS (JASA) =====
+            // Get merchant orders from orders table + jasa_order_items
+            Route::get('orders', [ServiceOrderController::class, 'getMerchantOrders'])->name('orders.index');
+            Route::get('orders/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('orders.show');
+            Route::match(['patch', 'post'], 'orders/{id}/status', [ServiceOrderController::class, 'updateMerchantOrderStatus'])->name('orders.update-status');
+
             // ===== SERVICE ORDERS (MERCHANT) =====
             // Full lifecycle with status validation, evidence upload, rejection
             Route::prefix('service-orders')->name('service-orders.')->group(function () {

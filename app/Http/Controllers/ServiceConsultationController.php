@@ -352,8 +352,14 @@ class ServiceConsultationController extends Controller
             return ApiResponse::error('Merchant ini tidak memiliki layanan jasa', 400);
         }
 
+        Log::info('[getMerchantHistory] Request received', [
+            'merchant_id' => $merchant->id,
+            'params' => $request->all(),
+        ]);
+
         $status = $request->get('status');
         $statusGroup = $request->get('status_group');
+        $sortBy = $request->get('sort_by', 'newest');
         $perPage = $request->get('per_page', 10);
 
         $query = ServiceConsultation::with([
@@ -362,8 +368,7 @@ class ServiceConsultationController extends Controller
                 'messages.media',
                 'notes',
             ])
-            ->forMerchant($merchant->id)
-            ->orderByDesc('created_at');
+            ->forMerchant($merchant->id);
 
         // Filter by status_group (menunggu, negosiasi, selesai)
         if ($statusGroup) {
@@ -373,7 +378,31 @@ class ServiceConsultationController extends Controller
             $query->where('status', $status);
         }
 
+        // Sorting
+        switch ($sortBy) {
+            case 'oldest':
+                $query->orderBy('created_at', 'asc');
+                break;
+            case 'date':
+                // Sort by consultation date (customer_deadline) or created_at
+                $query->orderByRaw("COALESCE(customer_deadline, created_at) DESC");
+                break;
+            case 'price':
+                // Sort by offered price - try offered_price first, then final_price, then total_price
+                $query->orderByRaw("COALESCE(offered_price, final_price, 0) DESC");
+                break;
+            case 'newest':
+            default:
+                $query->orderBy('created_at', 'desc');
+                break;
+        }
+
         $consultations = $query->paginate($perPage);
+
+        Log::info('[getMerchantHistory] Response built', [
+            'total' => $consultations->total(),
+            'current_page' => $consultations->currentPage(),
+        ]);
 
         return ApiResponse::success($consultations, 'success');
     }
@@ -638,7 +667,7 @@ class ServiceConsultationController extends Controller
 
         $jasa = $consultation->jasa;
         $serviceType = $jasa->service_type ?? null;
-        $mekanismePemesanan = 'konsultasi';
+        $orderType = 'consultation'; // Consultation flow uses 'consultation'
         $finalPrice = $consultation->negotiated_price ?? $consultation->merchant_offered_price ?? $consultation->original_price;
         $paymentMethod = 'COD';
 
@@ -659,23 +688,16 @@ class ServiceConsultationController extends Controller
             DB::beginTransaction();
 
             // ===== 1. Create order in orders table (PRIMARY SOURCE) =====
-            // NOTE: orders table does NOT have mekanisme_pemesanan column
-            // Mechanism is stored in jasa_order_items.service_type_booking
+            // NOTE: order_type = mekanisme pemesanan (consultation, direct_checkout, booking)
+            // jasa_id disimpan di jasa_order_items, BUKAN di orders
             $order = Order::create([
                 'user_id' => $consultation->customer_id,
                 'merchant_id' => $consultation->merchant_id,
-                'jasa_id' => $consultation->jasa_id,
-                'nama' => $consultation->customer?->name ?? 'Pelanggan',
-                'tel' => $consultation->customer?->phone ?? null,
-                'alamat' => $serviceLocationAddress,
-                'catatan' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
-                'tanggal' => $consultation->proposed_date,
-                'waktu' => $consultation->proposed_time,
+                'order_type' => $orderType, // consultation
                 'total_price' => $finalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
                 'status' => 'pending',
-                'order_type' => 'jasa',
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
@@ -688,7 +710,7 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $consultation->proposed_date,
                 'booking_time' => $consultation->proposed_time,
                 'service_type' => $serviceType,
-                'service_type_booking' => $mekanismePemesanan,
+                'service_type_booking' => $orderType, // consultation
                 'note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
                 'booking_note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
                 'service_location_address' => $serviceLocationAddress,
@@ -709,7 +731,7 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $consultation->proposed_date,
                 'booking_time' => $consultation->proposed_time,
                 'booking_note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
-                'mekanisme_pemesanan' => $mekanismePemesanan,
+                // NOTE: mekanisme_pemesanan TIDAK disimpan - order_type adalah PRIMARY
                 'customer_name' => $consultation->customer?->name ?? 'Pelanggan',
                 'customer_phone' => $consultation->customer?->phone ?? null,
                 'payment_method' => $paymentMethod,
@@ -1039,12 +1061,13 @@ class ServiceConsultationController extends Controller
             );
         }
 
-        // Prevent double booking - check if order already exists in orders table
-        $existingOrder = Order::where('jasa_id', $consultation->jasa_id)
-            ->where('user_id', $consultation->customer_id)
-            ->where('order_type', 'jasa')
-            ->whereHas('jasaItems', function ($q) {
-                $q->where('service_type_booking', 'konsultasi');
+        // Prevent double booking - check if order already exists
+        // NOTE: Query through jasa_order_items since orders.jasa_id is no longer used
+        $existingOrder = Order::where('user_id', $consultation->customer_id)
+            ->where('order_type', 'consultation')
+            ->whereHas('jasaItems', function ($q) use ($consultation) {
+                $q->where('jasa_id', $consultation->jasa_id)
+                  ->where('service_type_booking', 'consultation');
             })
             ->first();
 
@@ -1142,7 +1165,7 @@ class ServiceConsultationController extends Controller
             $bookingTime = !empty($data['booking_time']) ? $data['booking_time'] : ($consultation->proposed_time ?? null);
             $bookingNote = $data['booking_note'] ?? $consultation->proposed_notes ?? null;
             $paymentMethod = strtoupper($data['payment_method'] ?? 'COD');
-            $mekanismePemesanan = 'konsultasi';
+            $orderType = 'consultation'; // Consultation flow uses 'consultation'
 
             // Get service image URL
             $serviceImage = $jasa->coverImage
@@ -1150,23 +1173,16 @@ class ServiceConsultationController extends Controller
                 : ($jasa->image ? asset('storage/' . $jasa->image) : null);
 
             // ===== 1. Create order in orders table (PRIMARY SOURCE) =====
-            // NOTE: orders table does NOT have mekanisme_pemesanan column
-            // Mechanism is stored in jasa_order_items.service_type_booking
+            // NOTE: order_type = mekanisme pemesanan (consultation, direct_checkout, booking)
+            // jasa_id disimpan di jasa_order_items, BUKAN di orders
             $order = Order::create([
                 'user_id' => $consultation->customer_id,
                 'merchant_id' => $consultation->merchant_id,
-                'jasa_id' => $consultation->jasa_id,
-                'nama' => $customerName,
-                'tel' => $customerPhone,
-                'alamat' => $serviceLocationAddress,
-                'catatan' => $bookingNote,
-                'tanggal' => $bookingDate,
-                'waktu' => $bookingTime,
+                'order_type' => $orderType, // consultation
                 'total_price' => $finalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
                 'status' => 'pending',
-                'order_type' => 'jasa',
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
@@ -1179,7 +1195,7 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $bookingDate,
                 'booking_time' => $bookingTime,
                 'service_type' => $serviceType,
-                'service_type_booking' => $mekanismePemesanan,
+                'service_type_booking' => $orderType, // consultation
                 'note' => $bookingNote,
                 'booking_note' => $bookingNote,
                 'service_location_address' => $serviceLocationAddress,
@@ -1202,7 +1218,7 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $bookingDate,
                 'booking_time' => $bookingTime,
                 'booking_note' => $bookingNote,
-                'mekanisme_pemesanan' => $mekanismePemesanan,
+                // NOTE: mekanisme_pemesanan TIDAK disimpan - order_type adalah PRIMARY
                 'customer_name' => $customerName,
                 'customer_phone' => $customerPhone,
                 'customer_address' => $customerAddress,

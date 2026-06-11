@@ -270,8 +270,7 @@ class CheckoutController extends Controller
                     'user_id' => $user->id,
                     'merchant_id' => $merchant->id,
                     'order_type' => 'product',
-                    'jasa_id' => null,
-                    'package_id' => null,
+                    // NOTE: jasa_id is NO_LONGER accepted - use product_order_items instead
                     'nama' => $data['customer_name'],
                     'tel' => $data['customer_phone'],
                     'alamat' => $orderAddress,

@@ -326,12 +326,14 @@ class AdminDashboardController extends Controller
 
     /**
      * Get recent orders
+     * NOTE: Access jasas through jasa_order_items (orders.jasa_id removed)
      */
     private function getRecentOrders(): array
     {
         try {
             return DB::table('orders')
-                ->join('jasas', 'orders.jasa_id', '=', 'jasas.id')
+                ->join('jasa_order_items', 'orders.id', '=', 'jasa_order_items.order_id')
+                ->join('jasas', 'jasa_order_items.jasa_id', '=', 'jasas.id')
                 ->select(
                     'orders.id',
                     'orders.nama',

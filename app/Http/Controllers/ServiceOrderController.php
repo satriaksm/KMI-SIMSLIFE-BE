@@ -47,7 +47,10 @@ class ServiceOrderController extends Controller
             'booking_date' => 'nullable|date',
             'booking_time' => 'nullable|date_format:H:i',
             'booking_note' => 'nullable|string|max:1000',
-            'mekanisme_pemesanan' => 'nullable|string|max:50',
+            // order_type: mekanisme pemesanan baru (consultation, direct_checkout, booking)
+            'order_type' => 'nullable|string|in:consultation,direct_checkout,booking',
+            // Legacy: mekanisme_pemesanan (backward compatibility untuk request lama)
+            'mekanisme_pemesanan' => 'nullable|string',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'total_price' => 'nullable|numeric|min:0',
@@ -73,7 +76,12 @@ class ServiceOrderController extends Controller
         $customerId = Auth::id();
         $merchantId = $jasa->merchant_id;
         $serviceType = $jasa->service_type ?? null;
-        $mekanismePemesanan = $request->mekanisme_pemesanan ?? 'keranjang';
+
+        // order_type: mekanisme pemesanan (PRIMARY)
+        // Mapping: keranjang -> direct_checkout, booking -> booking, konsultasi -> consultation
+        $orderType = $request->order_type ?? $this->mapMekanismeToOrderType($request->mekanisme_pemesanan);
+        $orderType = $orderType ?: 'direct_checkout'; // Default
+
         $paymentMethod = strtoupper($request->payment_method ?? 'COD');
         $isCodPayment = strtolower($paymentMethod) === 'cod';
 
@@ -82,7 +90,8 @@ class ServiceOrderController extends Controller
             'raw_payment_method' => $request->payment_method,
             'uppercased' => $paymentMethod,
             'is_cod' => $isCodPayment,
-            'order_id_will_be' => 'N/A (order not created yet)',
+            'order_type' => $orderType,
+            'legacy_mekanisme' => $request->mekanisme_pemesanan,
         ]);
 
         // Calculate total price
@@ -107,28 +116,20 @@ class ServiceOrderController extends Controller
         DB::beginTransaction();
         try {
             // ===== 1. Create order in orders table (UNIFIED) =====
-            // NOTE: orders table does NOT have mekanisme_pemesanan column
-            // Mechanism is stored in jasa_order_items.service_type_booking
+            // NOTE: order_type = mekanisme pemesanan (direct_checkout, booking, consultation)
+            // jasa_id disimpan di jasa_order_items, BUKAN di orders
             $order = Order::create([
                 'user_id' => $customerId,
                 'merchant_id' => $merchantId,
-                'jasa_id' => $jasa->id,
-                'nama' => $request->customer_name,
-                'tel' => $request->customer_phone,
-                'alamat' => ($serviceType === 'ke_rumah_pelanggan' || $serviceType === 'on_site')
-                    ? $request->customer_address
-                    : $serviceLocationAddress,
-                'catatan' => $request->booking_note,
-                'tanggal' => $request->booking_date,
-                'waktu' => $request->booking_time,
+                'order_type' => $orderType, // consultation | direct_checkout | booking
                 'total_price' => $totalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
                 'status' => 'pending',
-                'order_type' => 'jasa',
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
+            // jasa_id disimpan di sini, bukan di orders
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $jasa->id,
@@ -138,7 +139,7 @@ class ServiceOrderController extends Controller
                 'booking_date' => $request->booking_date,
                 'booking_time' => $request->booking_time,
                 'service_type' => $serviceType,
-                'service_type_booking' => $mekanismePemesanan,
+                'service_type_booking' => $orderType, // Use order_type as booking type
                 'note' => $request->booking_note,
                 'booking_note' => $request->booking_note,
                 'service_location_address' => $serviceLocationAddress,
@@ -147,6 +148,8 @@ class ServiceOrderController extends Controller
             ]);
 
             // ===== 3. Create service_orders for backward compatibility =====
+            // NOTE: service_orders.mekanisme_pemesanan adalah LEGACY, JANGAN ditulis lagi
+            // order_type di orders adalah yang PRIMARY - jangan duplikasi ke service_orders
             $serviceOrder = ServiceOrder::create([
                 'customer_id' => $customerId,
                 'merchant_id' => $merchantId,
@@ -160,7 +163,6 @@ class ServiceOrderController extends Controller
                 'booking_date' => $request->booking_date,
                 'booking_time' => $request->booking_time,
                 'booking_note' => $request->booking_note,
-                'mekanisme_pemesanan' => $mekanismePemesanan,
                 'customer_name' => $request->customer_name,
                 'customer_phone' => $request->customer_phone,
                 'customer_address' => ($serviceType === 'ke_rumah_pelanggan' || $serviceType === 'on_site')
@@ -345,12 +347,13 @@ class ServiceOrderController extends Controller
         $query = Order::with([
             'jasa:id,title,image',
             'merchant:id,name,slug,logo_path,segmentation_id',
+            'jasaItems.jasa:id,title,image',
             'jasaItems.review.media',
             'jasaItems.completionEvidences',
             'jasaItems',
         ])
             ->where('user_id', $customerId)
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
             ->orderByDesc('created_at');
 
         // Filter by status - DISABLED for now, frontend will handle filtering
@@ -368,12 +371,11 @@ class ServiceOrderController extends Controller
         // Transform to array - merge with service_orders data for backward compatibility
         $ordersArray = $orders->toArray();
         $transformedData = collect($orders->items())->map(function ($order) {
-            // Get related service_order for backward compatibility
-            $serviceOrder = ServiceOrder::where('merchant_id', $order->merchant_id)
-                ->where('jasa_id', $order->jasa_id)
-                ->where('customer_id', $order->user_id)
-                ->where('created_at', $order->created_at)
-                ->first();
+            // Get jasa_order_item first (jasa_id ada di sini, bukan di orders)
+            $jasaItem = $order->jasaItems->first();
+
+            // Get related service_order via jasa_order_items (backward compatibility)
+            $serviceOrder = $jasaItem?->serviceOrder;
 
             $orderArray = [];
 
@@ -383,7 +385,7 @@ class ServiceOrderController extends Controller
             // id: alias for order_id (backward compatibility with frontend)
             $orderArray['id'] = $order->id;
             $orderArray['order_id'] = $order->id; // PRIMARY ID - Use this for updates
-            $orderArray['jasa_order_item_id'] = null;
+            $orderArray['jasa_order_item_id'] = $jasaItem?->id;
             $orderArray['service_order_id'] = $serviceOrder?->id; // Only for backward compatibility
 
             // ============================================================
@@ -421,11 +423,11 @@ class ServiceOrderController extends Controller
                 ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
 
             // ============================================================
-            // Customer Info
+            // Customer Info - dari service_order (backward compatibility)
             // ============================================================
-            $orderArray['customer_name'] = $order->nama;
-            $orderArray['customer_phone'] = $order->tel;
-            $orderArray['customer_address'] = $order->alamat;
+            $orderArray['customer_name'] = $serviceOrder?->customer_name ?? $order->user?->name;
+            $orderArray['customer_phone'] = $serviceOrder?->customer_phone ?? $order->user?->phone;
+            $orderArray['customer_address'] = $serviceOrder?->customer_address ?? $jasaItem?->service_location_address;
 
             // ============================================================
             // Payment Info - Use orders.payment_status as source of truth
@@ -437,12 +439,17 @@ class ServiceOrderController extends Controller
             $orderArray['is_payment_completed'] = strtoupper($order->payment_status ?? '') === 'PAID' || strtoupper($order->payment_method ?? '') === 'COD';
 
             // ============================================================
-            // Service Info
+            // Service Info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
             // ============================================================
             $orderArray['total_price'] = (float) ($serviceOrder?->total_price ?? $order->total_price);
-            $orderArray['service_name'] = $order->jasa?->title;
+            $orderArray['service_name'] = $jasaItem?->jasa?->title;
             $orderArray['service_image'] = $serviceOrder?->service_image
-                ?? ($order->jasa?->image ? asset('storage/' . $order->jasa->image) : null);
+                ?? ($jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null);
+
+            // ============================================================
+            // Order Type - mekanisme pemesanan (PRIMARY)
+            // ============================================================
+            $orderArray['order_type'] = $this->resolveOrderType($order, $jasaItem, $serviceOrder);
 
             // ============================================================
             // Review Data
@@ -494,13 +501,13 @@ class ServiceOrderController extends Controller
             ];
 
             // ============================================================
-            // Jasa Info
+            // Jasa Info - ambil dari jasa_order_items, bukan dari orders
             // ============================================================
             $orderArray['jasa'] = [
-                'id' => $order->jasa_id,
-                'title' => $order->jasa?->title,
-                'image' => $order->jasa?->image,
-                'slug' => $order->jasa?->slug,
+                'id' => $jasaItem?->jasa_id,
+                'title' => $jasaItem?->jasa?->title,
+                'image' => $jasaItem?->jasa?->image,
+                'slug' => $jasaItem?->jasa?->slug,
             ];
 
             // ============================================================
@@ -531,16 +538,16 @@ class ServiceOrderController extends Controller
             // Try to find order in orders table first
             // NOTE: 'address' is NOT a DB column on merchants — it's a computed accessor.
             // We must eager-load primaryAddress relationship instead.
+            // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
             $order = Order::with([
-                'jasa:id,title,image',
                 'merchant:id,name,slug,logo_path,segmentation_id,phone',
                 'merchant.primaryAddress',
+                'jasaItems.jasa:id,title,image,slug',
                 'jasaItems.review.media',
                 'jasaItems.completionEvidences',
-                'jasaItems',
             ])
                 ->where('user_id', $customerId)
-                ->where('order_type', 'jasa')
+                ->whereHas('jasaItems') // Orders yang punya jasa_order_items
                 ->find($id);
 
             if (!$order) {
@@ -663,13 +670,12 @@ class ServiceOrderController extends Controller
             'service_order_id' => $serviceOrder?->id,
             'jasa_order_item_id' => $jasaItem?->id,
             'order_number' => $serviceOrder?->order_number ?? 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-            'customer_name' => $order->nama,
-            'customer_phone' => $order->tel,
-            'customer_address' => $order->alamat,
-            'booking_date' => $jasaItem?->booking_date ?? $order->tanggal,
-            'booking_time' => $jasaItem?->booking_time ?? $order->waktu,
-            'tanggal' => $order->tanggal, // Backward compatibility
-            'waktu' => $order->waktu, // Backward compatibility
+            // Customer info - dari service_order (backward compatibility)
+            'customer_name' => $serviceOrder?->customer_name ?? $order->user?->name,
+            'customer_phone' => $serviceOrder?->customer_phone ?? $order->user?->phone,
+            'customer_address' => $serviceOrder?->customer_address ?? $jasaItem?->service_location_address,
+            'booking_date' => $jasaItem?->booking_date,
+            'booking_time' => $jasaItem?->booking_time,
             'payment_method' => $paymentMethod,
             'payment_method_display' => $paymentMethodDisplay,
             'payment_status' => $paymentStatus,
@@ -679,13 +685,17 @@ class ServiceOrderController extends Controller
             'is_payment_completed' => $isPaymentCompleted,
             'total_price' => $totalPrice,
             'service_type' => $serviceType,
-            'service_name' => $order->jasa?->title,
+            // Service info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
+            'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
             'service_image' => $serviceOrder?->service_image
-                ?? ($order->jasa?->image ? asset('storage/' . $order->jasa->image) : null),
+                ?? ($jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null),
+            // order_type: mekanisme pemesanan (PRIMARY) - gunakan resolveOrderType
+            'order_type' => $this->resolveOrderType($order, $jasaItem, $serviceOrder),
+            // Legacy: mekanisme_pemesanan (backward compatibility - akan dihapus nanti)
             'mekanisme_pemesanan' => $jasaItem?->service_type_booking,
             'status' => $status,
             'status_label' => $statusLabel,
-            'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note ?? $order->catatan,
+            'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
             'created_at' => $order->created_at?->toIso8601String(),
             'updated_at' => $order->updated_at?->toIso8601String(),
             // Merchant info
@@ -695,12 +705,12 @@ class ServiceOrderController extends Controller
                 'slug' => $orderArray['merchant']['slug'] ?? null,
                 'address' => $merchantAddress,
             ],
-            // Jasa info
+            // Jasa info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
             'jasa' => [
-                'id' => $orderArray['jasa']['id'] ?? null,
-                'title' => $orderArray['jasa']['title'] ?? null,
-                'image' => $orderArray['jasa']['image'] ?? null,
-                'cover_image' => $orderArray['jasa']['image'] ?? null, // Alias for backward compatibility
+                'id' => $jasaItem?->jasa_id,
+                'title' => $jasaItem?->jasa?->title ?? null,
+                'image' => $jasaItem?->jasa?->image ?? null,
+                'cover_image' => $jasaItem?->jasa?->image ?? null,
             ],
             // Review data (backward compatibility)
             'review' => $review ? array_merge($review->toArray(), [
@@ -785,10 +795,17 @@ class ServiceOrderController extends Controller
         // Check if order is reviewed (for old service_orders without order entry)
         $isReviewed = $order->review_id !== null;
 
+        // Resolve order_type: Check if there's a related orders entry
+        // 1. First, try to get order_type from related orders via jasa_order_items
+        $jasaItem = $order->jasaOrderItems->first();
+        $relatedOrder = $jasaItem?->order;
+        $resolvedOrderType = $relatedOrder?->order_type
+            ?? $this->mapMekanismeToOrderType($order->mekanisme_pemesanan);
+
         return [
             'id' => $order->id,
             'order_number' => $order->formatted_order_number,
-            'jasa_order_item_id' => null, // Old service_orders don't have jasa_order_item_id
+            'jasa_order_item_id' => $jasaItem?->id,
             'customer_name' => $order->customer_name,
             'customer_phone' => $order->customer_phone,
             'customer_address' => $order->customer_address,
@@ -805,6 +822,9 @@ class ServiceOrderController extends Controller
             'service_type' => $order->service_type,
             'service_name' => $order->service_name,
             'service_image' => $order->service_image,
+            // order_type: from orders.order_type (PRIMARY), fallback to mekanisme_pemesanan mapping
+            'order_type' => $resolvedOrderType,
+            // Legacy: mekanisme_pemesanan (backward compatibility)
             'mekanisme_pemesanan' => $order->mekanisme_pemesanan,
             'status' => $order->status,
             'status_label' => $order->status_label,
@@ -856,8 +876,9 @@ class ServiceOrderController extends Controller
         $customerId = Auth::id();
 
         // Try to find order in orders table first
+        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan (direct_checkout, booking, consultation)
         $order = Order::where('user_id', $customerId)
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
             ->find($id);
 
         $serviceOrder = null;
@@ -996,6 +1017,63 @@ class ServiceOrderController extends Controller
     }
 
     /**
+     * Map legacy mekanisme_pemesanan to order_type
+     *
+     * Legacy values (service_orders.mekanisme_pemesanan):
+     * - konsultasi -> consultation
+     * - booking -> booking
+     * - keranjang -> direct_checkout
+     *
+     * New values (orders.order_type):
+     * - consultation
+     * - booking
+     * - direct_checkout
+     */
+    private function mapMekanismeToOrderType(?string $mekanisme): ?string
+    {
+        if (!$mekanisme) {
+            return null;
+        }
+
+        $mapping = [
+            'konsultasi' => 'consultation',
+            'booking' => 'booking',
+            'keranjang' => 'direct_checkout',
+            // Aliases
+            'langsung_pesan' => 'direct_checkout',
+            'direct_checkout' => 'direct_checkout',
+            'consultation' => 'consultation',
+        ];
+
+        return $mapping[strtolower($mekanisme)] ?? null;
+    }
+
+    /**
+     * Get order_type from various sources (orders, jasa_order_items, service_orders)
+     * Used for unified access across all tables
+     */
+    private function resolveOrderType(?Order $order, ?JasaOrderItem $jasaItem, ?ServiceOrder $serviceOrder): ?string
+    {
+        // 1. Check orders.order_type (PRIMARY)
+        if ($order && !empty($order->order_type)) {
+            return $order->order_type;
+        }
+
+        // 2. Check jasa_order_items.service_type_booking
+        if ($jasaItem && !empty($jasaItem->service_type_booking)) {
+            return $this->mapMekanismeToOrderType($jasaItem->service_type_booking);
+        }
+
+        // 3. Check service_orders.mekanisme_pemesanan (LEGACY)
+        if ($serviceOrder && !empty($serviceOrder->mekanisme_pemesanan)) {
+            return $this->mapMekanismeToOrderType($serviceOrder->mekanisme_pemesanan);
+        }
+
+        // 4. Fallback to 'direct_checkout'
+        return 'direct_checkout';
+    }
+
+    /**
      * Get merchant service order history
      *
      * Refactored: Uses orders as primary source, jasa_order_items for service details,
@@ -1017,15 +1095,16 @@ class ServiceOrderController extends Controller
         $perPage = $request->get('per_page', 100); // Increase to 100 for client-side filtering
 
         // PRIMARY: Query from orders table (jasa type)
+        // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
         $query = Order::with([
-            'jasa:id,title,image',
             'user:id,name,phone',
+            'jasaItems.jasa:id,title,image,slug',
             'jasaItems.review.media',
             'jasaItems.completionEvidences',
-            'jasaItems',
+            'jasaItems.serviceOrder',
         ])
             ->where('merchant_id', $merchant->id)
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
             ->orderByDesc('created_at');
 
         // Filter by status - DISABLED for now, frontend will handle filtering
@@ -1044,12 +1123,11 @@ class ServiceOrderController extends Controller
         // Transform orders - merge with service_orders data for backward compatibility
         $ordersArray = $orders->toArray();
         $transformedData = collect($orders->items())->map(function ($order) {
-            // Get related service_order for backward compatibility
-            $serviceOrder = ServiceOrder::where('merchant_id', $order->merchant_id)
-                ->where('jasa_id', $order->jasa_id)
-                ->where('customer_id', $order->user_id)
-                ->where('created_at', $order->created_at)
-                ->first();
+            // Get jasa_order_item first (jasa_id ada di sini, bukan di orders)
+            $jasaItem = $order->jasaItems->first();
+
+            // Get related service_order via jasa_order_items (backward compatibility)
+            $serviceOrder = $jasaItem?->serviceOrder;
 
             $orderArray = [];
 
@@ -1100,11 +1178,11 @@ class ServiceOrderController extends Controller
                 ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
 
             // ============================================================
-            // Customer Info - from orders table as primary
+            // Customer Info - dari service_order (backward compatibility)
             // ============================================================
-            $orderArray['customer_name'] = $order->nama;
-            $orderArray['customer_phone'] = $order->tel;
-            $orderArray['customer_address'] = $order->alamat;
+            $orderArray['customer_name'] = $serviceOrder?->customer_name ?? $order->user?->name;
+            $orderArray['customer_phone'] = $serviceOrder?->customer_phone ?? $order->user?->phone;
+            $orderArray['customer_address'] = $serviceOrder?->customer_address ?? $jasaItem?->service_location_address;
             $orderArray['customer_latitude'] = $jasaItem?->customer_latitude ?? null;
             $orderArray['customer_longitude'] = $jasaItem?->customer_longitude ?? null;
 
@@ -1117,11 +1195,13 @@ class ServiceOrderController extends Controller
             $orderArray['paid_channel'] = $order->paid_channel;
 
             // ============================================================
-            // Service Info
+            // Service Info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
             // ============================================================
             $orderArray['total_price'] = (float) $order->total_price;
-            $orderArray['service_name'] = $order->jasa?->title;
-            $orderArray['service_image'] = $order->jasa?->image ? asset('storage/' . $order->jasa->image) : null;
+            $orderArray['service_name'] = $jasaItem?->jasa?->title;
+            $orderArray['service_image'] = $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null;
+            // order_type: mekanisme pemesanan (PRIMARY)
+            $orderArray['order_type'] = $this->resolveOrderType($order, $jasaItem, $serviceOrder);
             $orderArray['completion_note'] = $jasaItem?->completion_note ?? $serviceOrder?->completion_note;
             $orderArray['rejection_reason'] = $jasaItem?->rejection_reason ?? $serviceOrder?->rejection_reason;
 
@@ -1189,12 +1269,12 @@ class ServiceOrderController extends Controller
             ];
 
             // ============================================================
-            // Jasa Info
+            // Jasa Info - ambil dari jasa_order_items, bukan dari orders
             // ============================================================
             $orderArray['jasa'] = [
-                'id' => $order->jasa_id,
-                'title' => $order->jasa?->title,
-                'image' => $order->jasa?->image,
+                'id' => $jasaItem?->jasa_id,
+                'title' => $jasaItem?->jasa?->title,
+                'image' => $jasaItem?->jasa?->image,
             ];
 
             // ============================================================
@@ -1221,6 +1301,240 @@ class ServiceOrderController extends Controller
     }
 
     /**
+     * Map orders.status to service_orders.status format
+     * orders.status: pending, proses, selesai, batal
+     * service_orders.status: menunggu_konfirmasi_merchant, diterima, ditolak, layanan_dikerjakan, menunggu_konfirmasi_selesai, selesai
+     */
+    private function mapOrdersStatusToServiceStatus(string $ordersStatus): string
+    {
+        $mapping = [
+            'pending' => 'menunggu_konfirmasi_merchant',
+            'proses' => 'diterima', // In process = accepted
+            'selesai' => 'selesai',
+            'batal' => 'ditolak',
+        ];
+
+        return $mapping[$ordersStatus] ?? 'menunggu_konfirmasi_merchant';
+    }
+
+    /**
+     * Get merchant orders from orders table (JASA)
+     *
+     * This endpoint uses orders as the primary source with jasa_order_items for service details.
+     * Compatible with frontend Index.vue - Pesanan Masuk tab Jasa.
+     *
+     * @param Request $request
+     * @param Merchant $merchant - supports both id and slug via {merchant:slug} route binding
+     */
+    public function getMerchantOrders(Request $request, Merchant $merchant)
+    {
+        // Authorization: current user must own this merchant
+        if ($merchant->user_id !== Auth::id()) {
+            return ApiResponse::error('Tidak memiliki akses ke merchant ini', 403);
+        }
+
+        Log::info('[getMerchantOrders] Request received', [
+            'merchant_id' => $merchant->id,
+            'merchant_slug' => $merchant->slug,
+            'params' => $request->all(),
+        ]);
+
+        // Build query from orders table
+        // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
+        $query = Order::with([
+            'user:id,name,phone',
+            'jasaItems.jasa:id,title,image,slug',
+            'jasaItems.review.media',
+            'jasaItems.completionEvidences',
+            'jasaItems.serviceOrder',
+        ])
+            ->where('merchant_id', $merchant->id)
+            ->whereHas('jasaItems')
+            ->orderByDesc('created_at');
+
+        // Filter by order_type if provided (jasa, consultation, booking, direct_checkout)
+        if ($request->has('order_type')) {
+            $query->where('order_type', $request->order_type);
+        }
+
+        // Filter by status if provided
+        if ($request->has('status')) {
+            $status = $request->get('status');
+            $query->where('status', $status);
+        }
+
+        // Search by order code or customer name
+        if ($request->has('q') && !empty($request->q)) {
+            $search = $request->q;
+            $query->where(function ($q) use ($search) {
+                $q->where('order_code', 'like', "%{$search}%")
+                    ->orWhereHas('user', function ($uq) use ($search) {
+                        $uq->where('name', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Filter by date range
+        if ($request->has('start_date') && !empty($request->start_date)) {
+            $query->whereDate('created_at', '>=', $request->start_date);
+        }
+        if ($request->has('end_date') && !empty($request->end_date)) {
+            $query->whereDate('created_at', '<=', $request->end_date);
+        }
+
+        // Sorting
+        $sortBy = $request->get('sort_by', 'newest');
+        if ($sortBy === 'oldest') {
+            $query->orderBy('created_at', 'asc');
+        } else {
+            $query->orderBy('created_at', 'desc');
+        }
+
+        // Pagination
+        $perPage = $request->get('per_page', 10);
+        $page = $request->get('page', 1);
+        $orders = $query->paginate($perPage, ['*'], 'page', $page);
+
+        // Transform orders to API response format
+        $transformedData = collect($orders->items())->map(function ($order) {
+            $jasaItem = $order->jasaItems->first();
+            $serviceOrder = $jasaItem?->serviceOrder;
+
+            // Use service_orders.status if available, otherwise map from orders.status
+            $mappedServiceStatus = $serviceOrder?->status
+                ?? $this->mapOrdersStatusToServiceStatus($order->status);
+
+            return [
+                // IDs
+                'id' => $order->id,
+                'order_id' => $order->id,
+                'jasa_order_item_id' => $jasaItem?->id,
+                'service_order_id' => $serviceOrder?->id,
+
+                // Order Number
+                'order_number' => $serviceOrder?->order_number ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                'formatted_order_number' => $serviceOrder?->formatted_order_number ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+
+                // Status (from orders table as primary)
+                'order_status' => $order->status,
+                'order_status_label' => $this->getOrdersStatusLabel($order->status ?? 'pending'),
+                'status' => $order->status, // Original orders table status
+                'status_label' => $this->getServiceStatusLabel($order->status),
+                // Mapped service status for frontend filter (always populated)
+                'service_status' => $mappedServiceStatus,
+                'service_status_label' => ServiceOrder::getStatusLabelStatic($mappedServiceStatus),
+                'service_status_label' => $serviceOrder?->status_label,
+
+                // Customer Info
+                'customer_name' => $serviceOrder?->customer_name ?? $order->user?->name,
+                'customer_phone' => $serviceOrder?->customer_phone ?? $order->user?->phone,
+                'customer_address' => $serviceOrder?->customer_address ?? $jasaItem?->service_location_address,
+                'customer' => [
+                    'id' => $order->user_id,
+                    'name' => $order->user?->name,
+                    'phone' => $order->user?->phone,
+                ],
+
+                // Payment Info
+                'payment_method' => $order->payment_method,
+                'payment_status' => $order->payment_status,
+                'payment_channel' => $order->payment_channel ?? $order->paid_channel,
+
+                // Service/Jasa Info
+                'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
+                'service_image' => $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null,
+                'service_type' => $jasaItem?->service_type ?? $serviceOrder?->service_type,
+                'order_type' => $order->order_type, // direct_checkout, booking, consultation
+                'booking_type' => $jasaItem?->service_type_booking,
+
+                // Booking Info
+                'booking_date' => $jasaItem?->booking_date,
+                'booking_time' => $jasaItem?->booking_time,
+                'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
+                'service_location_address' => $jasaItem?->service_location_address,
+
+                // Pricing
+                'total_price' => (float) ($order->total_price ?? $serviceOrder?->total_price ?? 0),
+
+                // Completion
+                'completion_note' => $jasaItem?->completion_note ?? $serviceOrder?->completion_note,
+                'rejection_reason' => $jasaItem?->rejection_reason ?? $serviceOrder?->rejection_reason,
+
+                // Review (from jasa_order_items as primary)
+                'review' => $jasaItem?->review ? array_merge($jasaItem->review->toArray(), [
+                    'media' => $jasaItem->review->media->map(function ($media) {
+                        $arr = $media->toArray();
+                        $arr['file_url'] = $media->media_url ?? ($media->file_path ? asset('storage/' . $media->file_path) : null);
+                        return $arr;
+                    })->toArray()
+                ]) : null,
+                'is_reviewed' => $jasaItem?->is_reviewed === true || $serviceOrder?->review_id !== null,
+
+                // Completion Evidences
+                'completion_evidences' => $jasaItem?->completionEvidences->map(function ($evidence) {
+                    $arr = $evidence->toArray();
+                    $arr['file_url'] = $evidence->media_url ?? ($evidence->file_path ? asset('storage/' . $evidence->file_path) : null);
+                    return $arr;
+                })->toArray() ?? [],
+
+                // Timestamps
+                'created_at' => $order->created_at?->toIso8601String(),
+                'updated_at' => $order->updated_at?->toIso8601String(),
+
+                // Merchant Info (for reference)
+                'merchant' => [
+                    'id' => $order->merchant_id,
+                    'name' => $order->merchant?->name,
+                ],
+
+                // Jasa Info
+                'jasa' => [
+                    'id' => $jasaItem?->jasa_id,
+                    'title' => $jasaItem?->jasa?->title,
+                    'image' => $jasaItem?->jasa?->image,
+                ],
+            ];
+        })->toArray();
+
+        // Build paginated response
+        $response = [
+            'current_page' => $orders->currentPage(),
+            'data' => $transformedData,
+            'first_page_url' => $orders->url(1),
+            'from' => $orders->firstItem(),
+            'last_page' => $orders->lastPage(),
+            'last_page_url' => $orders->url($orders->lastPage()),
+            'next_page_url' => $orders->nextPageUrl(),
+            'path' => $orders->path(),
+            'per_page' => $orders->perPage(),
+            'prev_page_url' => $orders->previousPageUrl(),
+            'to' => $orders->lastItem(),
+            'total' => $orders->total(),
+        ];
+
+        Log::info('[getMerchantOrders] Response built', [
+            'merchant_id' => $merchant->id,
+            'total_orders' => $orders->total(),
+            'current_page' => $orders->currentPage(),
+        ]);
+
+        return ApiResponse::success($response, 'success');
+    }
+
+    /**
+     * Update merchant order status (from orders table)
+     *
+     * @param Request $request
+     * @param Merchant $merchant
+     * @param int $id - order id from orders table
+     */
+    public function updateMerchantOrderStatus(Request $request, Merchant $merchant, int $id)
+    {
+        // Reuse the existing updateStatus method
+        return $this->updateStatus($request, $merchant, $id);
+    }
+
+    /**
      * Get single service order detail (for merchant)
      *
      * Refactored: Uses orders as primary source, jasa_order_items for service details,
@@ -1233,15 +1547,16 @@ class ServiceOrderController extends Controller
         }
 
         // Try to find order in orders table first
+        // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
         $order = Order::with([
-            'jasa:id,title,image',
             'user:id,name,phone',
+            'jasaItems.jasa:id,title,image,slug',
             'jasaItems.review.media',
             'jasaItems.completionEvidences',
-            'jasaItems',
+            'jasaItems.serviceOrder',
         ])
             ->where('merchant_id', $merchant->id)
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
             ->find($id);
 
         if (!$order) {
@@ -1315,25 +1630,28 @@ class ServiceOrderController extends Controller
             'service_order_id' => $serviceOrder?->id, // Only for backward compatibility
             'jasa_order_item_id' => $jasaItem?->id,
             'order_number' => $serviceOrder?->order_number ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-            // Customer Info - from orders table
-            'customer_name' => $order->nama,
-            'customer_phone' => $order->tel,
-            'customer_address' => $order->alamat,
+            // Customer Info - dari service_order (backward compatibility)
+            'customer_name' => $serviceOrder?->customer_name ?? $order->user?->name,
+            'customer_phone' => $serviceOrder?->customer_phone ?? $order->user?->phone,
+            'customer_address' => $serviceOrder?->customer_address ?? $jasaItem?->service_location_address,
             'customer_latitude' => $jasaItem?->customer_latitude ?? null,
             'customer_longitude' => $jasaItem?->customer_longitude ?? null,
             // Booking Info - from jasa_order_items
-            'booking_date' => $jasaItem?->booking_date ?? $order->tanggal,
-            'booking_time' => $jasaItem?->booking_time ?? $order->waktu,
-            'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note ?? $order->catatan,
+            'booking_date' => $jasaItem?->booking_date,
+            'booking_time' => $jasaItem?->booking_time,
+            'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
             // Payment Info - from orders table as primary
             'payment_method' => $paymentMethod,
             'payment_channel' => $order->payment_channel ?? $order->paid_channel,
             'payment_status' => $paymentStatus,
             'total_price' => $totalPrice,
-            // Service Info - from orders + jasa_order_items
+            // Service Info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
             'service_type' => $jasaItem?->service_type ?? $serviceOrder?->service_type,
-            'service_name' => $order->jasa?->title,
-            'service_image' => $order->jasa?->image ? asset('storage/' . $order->jasa->image) : null,
+            'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
+            'service_image' => $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null,
+            // order_type: mekanisme pemesanan (PRIMARY)
+            'order_type' => $this->resolveOrderType($order, $jasaItem, $serviceOrder),
+            // Legacy: mekanisme_pemesanan (backward compatibility)
             'mekanisme_pemesanan' => $jasaItem?->service_type_booking,
             // Status - from orders table as primary
             'status' => $status,
@@ -1350,8 +1668,12 @@ class ServiceOrderController extends Controller
                 'name' => $orderArray['user']['name'] ?? null,
                 'phone' => $orderArray['user']['phone'] ?? null,
             ],
-            // Jasa info
-            'jasa' => $orderArray['jasa'] ?? null,
+            // Jasa info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
+            'jasa' => $jasaItem?->jasa ? [
+                'id' => $jasaItem->jasa->id,
+                'title' => $jasaItem->jasa->title,
+                'image' => $jasaItem->jasa->image,
+            ] : null,
             // Review - from jasa_order_items as primary
             'review' => $review ? array_merge($review->toArray(), [
                 'media' => $review->media->map(function ($media) {
@@ -1461,9 +1783,10 @@ class ServiceOrderController extends Controller
         // ============================================================
 
         // Try to find as orders.id first (PRIMARY)
+        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan
         $order = Order::with(['jasaItems.serviceOrder'])
             ->where('merchant_id', $merchant->id)
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
             ->find($id);
 
         $serviceOrder = null;
@@ -1785,19 +2108,22 @@ class ServiceOrderController extends Controller
         ]);
 
         // Try to find order in orders table first
-        $order = Order::with(['jasa', 'merchant', 'jasaItems'])
+        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan
+        $order = Order::with(['merchant', 'jasaItems.jasa'])
             ->where('user_id', Auth::id())
-            ->where('order_type', 'jasa')
+            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
             ->find($id);
 
         $serviceOrder = null;
         $jasaId = null;
         $merchantId = null;
+        $jasaItem = null;
 
         if ($order) {
-            $jasaId = $order->jasa_id;
-            $merchantId = $order->merchant_id;
             $jasaItem = $order->jasaItems->first();
+            // jasa_id ada di jasa_order_items, BUKAN di orders
+            $jasaId = $jasaItem?->jasa_id;
+            $merchantId = $order->merchant_id;
             if ($jasaItem && $jasaItem->service_order_id) {
                 $serviceOrder = ServiceOrder::find($jasaItem->service_order_id);
             }
@@ -1828,13 +2154,10 @@ class ServiceOrderController extends Controller
             ->where('user_id', Auth::id())
             ->first();
 
-        if (!$existingReview && $order) {
-            $jasaItem = $order->jasaItems->first();
-            if ($jasaItem) {
-                $existingReview = Rating::where('jasa_order_item_id', $jasaItem->id)
-                    ->where('user_id', Auth::id())
-                    ->first();
-            }
+        if (!$existingReview && $jasaItem) {
+            $existingReview = Rating::where('jasa_order_item_id', $jasaItem->id)
+                ->where('user_id', Auth::id())
+                ->first();
         }
 
         if ($existingReview) {
@@ -1874,11 +2197,8 @@ class ServiceOrderController extends Controller
             ];
 
             // Add jasa_order_item_id if available
-            if ($order) {
-                $jasaItem = $order->jasaItems->first();
-                if ($jasaItem) {
-                    $ratingData['jasa_order_item_id'] = $jasaItem->id;
-                }
+            if ($jasaItem) {
+                $ratingData['jasa_order_item_id'] = $jasaItem->id;
             }
 
             Log::info('[submitReview] Creating rating with data:', $ratingData);

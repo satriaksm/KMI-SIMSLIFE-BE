@@ -16,10 +16,14 @@ class Order extends Model
     ];
 
     protected $fillable = [
-        'merchant_id',
-        'jasa_id',
+        // Common fields
         'user_id',
-        'package_id',
+        'merchant_id',
+        'order_type', // PRIMARY: mekanisme pemesanan (consultation, direct_checkout, booking)
+        'status',
+
+        // Legacy fields (still in table, for backward compatibility with existing data)
+        // NOTE: For new orders, DO NOT write these fields - use jasa_order_items instead
         'nama',
         'tel',
         'alamat',
@@ -30,25 +34,35 @@ class Order extends Model
         'metode_pembayaran',
         'promo_code',
         'total',
-        'total_price',
-        'status',
+        'package_id',
+
+        // Payment fields
         'payment_method',
         'payment_status',
         'payment_channel',
         'paid_channel',
-        'order_type',
-        'mekanisme_pemesanan',
+        'payment_reference',
+        'paid_at',
+
+        // Price fields
+        'total_price',
+        'subtotal',
+        'discount_total',
+        'delivery_fee_snapshot',
+        'platform_fee',
+        'gross_amount',
+        'net_amount',
+        'delivery_type',
+
+        // Other
+        'notes',
+        'order_code',
+        'proof_image_path',
+        'failed_reason',
+
+        // CRITICAL: jasa_id is NO LONGER accepted via mass assignment
+        // For new orders, use jasa_order_items.jasa_id instead
     ];
-
-    public function jasa()
-    {
-        return $this->belongsTo(Jasa::class);
-    }
-
-    public function package()
-    {
-        return $this->belongsTo(Package::class);
-    }
 
     public function user()
     {
@@ -73,17 +87,6 @@ class Order extends Model
     public function jasaItems(): HasMany
     {
         return $this->hasMany(JasaOrderItem::class);
-    }
-
-    public function getOrderTypeAttribute(): string
-    {
-        $storedType = $this->attributes['order_type'] ?? null;
-
-        if (is_string($storedType) && $storedType !== '') {
-            return $storedType;
-        }
-
-        return $this->jasa_id ? 'jasa' : 'product';
     }
 
     public function getItemsAttribute(): string
