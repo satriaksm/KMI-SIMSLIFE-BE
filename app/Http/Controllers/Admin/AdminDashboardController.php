@@ -326,40 +326,74 @@ class AdminDashboardController extends Controller
 
     /**
      * Get recent orders
-     * NOTE: Access jasas through jasa_order_items (orders.jasa_id removed)
+     *
+     * Zero-downtime compatible:
+     * - If jasa_order_items table exists, use join to jasa_order_items
+     * - If not exists, fallback to query orders directly
+     * - orders.jasa_id kept as legacy column for backward compatibility
      */
     private function getRecentOrders(): array
     {
         try {
-            return DB::table('orders')
-                ->join('jasa_order_items', 'orders.id', '=', 'jasa_order_items.order_id')
-                ->join('jasas', 'jasa_order_items.jasa_id', '=', 'jasas.id')
-                ->select(
-                    'orders.id',
-                    'orders.nama',
-                    'orders.tel',
-                    'orders.tanggal',
-                    'orders.waktu',
-                    'orders.total',
-                    'jasas.id as jasa_id',
-                    'jasas.title as jasa_title'
-                )
-                ->latest('orders.created_at')
-                ->limit(10)
-                ->get()
-                ->map(fn($order) => [
-                    'id' => $order->id,
-                    'nama' => $order->nama,
-                    'tel' => $order->tel,
-                    'tanggal' => $order->tanggal,
-                    'waktu' => $order->waktu,
-                    'total' => (int) $order->total,
-                    'jasa' => [
-                        'id' => $order->jasa_id,
-                        'title' => $order->jasa_title,
-                    ],
-                ])
-                ->toArray();
+            // Check if jasa_order_items table exists (zero-downtime compatible)
+            $jasaOrderItemsTableExists = \Illuminate\Support\Facades\Schema::hasTable('jasa_order_items');
+
+            if ($jasaOrderItemsTableExists) {
+                // PRIMARY: Use jasa_order_items for jasa orders
+                return DB::table('orders')
+                    ->join('jasa_order_items', 'orders.id', '=', 'jasa_order_items.order_id')
+                    ->join('jasas', 'jasa_order_items.jasa_id', '=', 'jasas.id')
+                    ->select(
+                        'orders.id',
+                        'orders.nama',
+                        'orders.tel',
+                        'orders.tanggal',
+                        'orders.waktu',
+                        'orders.total',
+                        'jasas.id as jasa_id',
+                        'jasas.title as jasa_title'
+                    )
+                    ->latest('orders.created_at')
+                    ->limit(10)
+                    ->get()
+                    ->map(fn($order) => [
+                        'id' => $order->id,
+                        'nama' => $order->nama,
+                        'tel' => $order->tel,
+                        'tanggal' => $order->tanggal,
+                        'waktu' => $order->waktu,
+                        'total' => (int) $order->total,
+                        'jasa' => [
+                            'id' => $order->jasa_id,
+                            'title' => $order->jasa_title,
+                        ],
+                    ])
+                    ->toArray();
+            } else {
+                // FALLBACK: Query orders directly (legacy, before jasa_order_items migration)
+                return DB::table('orders')
+                    ->select(
+                        'id',
+                        'nama',
+                        'tel',
+                        'tanggal',
+                        'waktu',
+                        'total'
+                    )
+                    ->latest('created_at')
+                    ->limit(10)
+                    ->get()
+                    ->map(fn($order) => [
+                        'id' => $order->id,
+                        'nama' => $order->nama,
+                        'tel' => $order->tel,
+                        'tanggal' => $order->tanggal,
+                        'waktu' => $order->waktu,
+                        'total' => (int) $order->total,
+                        'jasa' => null,
+                    ])
+                    ->toArray();
+            }
         } catch (\Exception $e) {
             Log::error('[Orders] ' . $e->getMessage());
             return [];
