@@ -667,7 +667,6 @@ class ServiceConsultationController extends Controller
 
         $jasa = $consultation->jasa;
         $serviceType = $jasa->service_type ?? null;
-        $orderType = 'consultation'; // Consultation flow uses 'consultation'
         $finalPrice = $consultation->negotiated_price ?? $consultation->merchant_offered_price ?? $consultation->original_price;
         $paymentMethod = 'COD';
 
@@ -688,12 +687,12 @@ class ServiceConsultationController extends Controller
             DB::beginTransaction();
 
             // ===== 1. Create order in orders table (PRIMARY SOURCE) =====
-            // NOTE: order_type = mekanisme pemesanan (consultation, direct_checkout, booking)
-            // jasa_id disimpan di jasa_order_items, BUKAN di orders
+            // NOTE: order_type = 'jasa' (jenis order utama: product/jasa)
+            // order_method disimpan di jasa_order_items, BUKAN di orders
             $order = Order::create([
                 'user_id' => $consultation->customer_id,
                 'merchant_id' => $consultation->merchant_id,
-                'order_type' => $orderType, // consultation
+                'order_type' => 'jasa', // All service orders are type 'jasa'
                 'total_price' => $finalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
@@ -701,6 +700,7 @@ class ServiceConsultationController extends Controller
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
+            // order_method: consultation (PRIMARY)
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $consultation->jasa_id,
@@ -710,7 +710,8 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $consultation->proposed_date,
                 'booking_time' => $consultation->proposed_time,
                 'service_type' => $serviceType,
-                'service_type_booking' => $orderType, // consultation
+                'service_type_booking' => 'consultation', // Legacy - for backward compat
+                'order_method' => 'consultation', // PRIMARY
                 'note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
                 'booking_note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
                 'service_location_address' => $serviceLocationAddress,
@@ -1064,10 +1065,10 @@ class ServiceConsultationController extends Controller
         // Prevent double booking - check if order already exists
         // NOTE: Query through jasa_order_items since orders.jasa_id is no longer used
         $existingOrder = Order::where('user_id', $consultation->customer_id)
-            ->where('order_type', 'consultation')
+            ->where('order_type', 'jasa')
             ->whereHas('jasaItems', function ($q) use ($consultation) {
                 $q->where('jasa_id', $consultation->jasa_id)
-                  ->where('service_type_booking', 'consultation');
+                  ->where('order_method', 'consultation');
             })
             ->first();
 
@@ -1165,7 +1166,7 @@ class ServiceConsultationController extends Controller
             $bookingTime = !empty($data['booking_time']) ? $data['booking_time'] : ($consultation->proposed_time ?? null);
             $bookingNote = $data['booking_note'] ?? $consultation->proposed_notes ?? null;
             $paymentMethod = strtoupper($data['payment_method'] ?? 'COD');
-            $orderType = 'consultation'; // Consultation flow uses 'consultation'
+            // order_method: consultation (PRIMARY) - konsultasi flow always uses consultation
 
             // Get service image URL
             $serviceImage = $jasa->coverImage
@@ -1173,12 +1174,12 @@ class ServiceConsultationController extends Controller
                 : ($jasa->image ? asset('storage/' . $jasa->image) : null);
 
             // ===== 1. Create order in orders table (PRIMARY SOURCE) =====
-            // NOTE: order_type = mekanisme pemesanan (consultation, direct_checkout, booking)
-            // jasa_id disimpan di jasa_order_items, BUKAN di orders
+            // NOTE: order_type = 'jasa' (jenis order utama: product/jasa)
+            // order_method disimpan di jasa_order_items, BUKAN di orders
             $order = Order::create([
                 'user_id' => $consultation->customer_id,
                 'merchant_id' => $consultation->merchant_id,
-                'order_type' => $orderType, // consultation
+                'order_type' => 'jasa', // All service orders are type 'jasa'
                 'total_price' => $finalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
@@ -1186,6 +1187,7 @@ class ServiceConsultationController extends Controller
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
+            // order_method: consultation (PRIMARY)
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $consultation->jasa_id,
@@ -1195,7 +1197,8 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $bookingDate,
                 'booking_time' => $bookingTime,
                 'service_type' => $serviceType,
-                'service_type_booking' => $orderType, // consultation
+                'service_type_booking' => 'consultation', // Legacy - for backward compat
+                'order_method' => 'consultation', // PRIMARY
                 'note' => $bookingNote,
                 'booking_note' => $bookingNote,
                 'service_location_address' => $serviceLocationAddress,

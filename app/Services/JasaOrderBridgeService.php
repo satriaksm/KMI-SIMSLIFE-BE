@@ -26,27 +26,26 @@ class JasaOrderBridgeService
         $bookingTime = $attributes['waktu']
             ?? ($serviceOrder->booking_time?->format('H:i') ?? null);
 
-        // Map mekanisme_pemesanan (legacy) to order_type (new)
-        // Flow baru tidak menggunakan mekanisme_pemesanan lagi
-        $orderType = $this->mapMekanismeToOrderType(
+        // Map mekanisme_pemesanan (legacy) to order_method
+        // order_method values: direct, scheduled, consultation
+        $orderMethod = $this->mapMekanismeToOrderMethod(
             $serviceOrder->mekanisme_pemesanan ?? $attributes['mekanisme_pemesanan'] ?? null
         );
 
-        // Create order with order_type (PRIMARY) - NOT jasa_id
+        // Create order with order_type = 'jasa' (PRIMARY - jenis order)
         // jasa_id disimpan di jasa_order_items, bukan di orders
+        // order_method disimpan di jasa_order_items, bukan di orders
         $order = Order::create([
             'user_id' => $serviceOrder->customer_id,
             'merchant_id' => $serviceOrder->merchant_id,
-            'order_type' => $orderType, // consultation | direct_checkout | booking
+            'order_type' => 'jasa', // PRIMARY: jenis order (jasa/product)
             'total_price' => $serviceOrder->total_price,
             'payment_method' => $attributes['payment_method'] ?? $serviceOrder->payment_method ?? 'COD',
             'payment_status' => $attributes['payment_status'] ?? 'PENDING',
             'status' => $attributes['status'] ?? 'pending',
-            // NOTE: mekanisme_pemesanan TIDAK disimpan ke orders table
         ]);
 
-        // Create jasa_order_items with jasa_id from serviceOrder
-        // service_type_booking stores the booking mechanism type
+        // Create jasa_order_items with order_method
         $jasaOrderItem = JasaOrderItem::create([
             'order_id' => $order->id,
             'jasa_id' => $serviceOrder->jasa_id,
@@ -58,7 +57,8 @@ class JasaOrderBridgeService
             'booking_date' => $bookingDate,
             'booking_time' => $bookingTime,
             'service_type' => $serviceOrder->service_type ?? $attributes['service_type'] ?? null,
-            'service_type_booking' => $orderType, // Store order_type as booking type
+            'service_type_booking' => $orderMethod, // Legacy - for backward compat
+            'order_method' => $orderMethod, // PRIMARY
             'note' => $attributes['note'] ?? $serviceOrder->booking_note ?? null,
             'booking_note' => $serviceOrder->booking_note ?? null,
             'service_location_address' => $serviceOrder->service_location_address ?? null,
@@ -70,27 +70,29 @@ class JasaOrderBridgeService
     }
 
     /**
-     * Map legacy mekanisme_pemesanan to order_type
+     * Map legacy mekanisme_pemesanan to order_method
      *
      * Legacy values: konsultasi, booking, keranjang
-     * New values: consultation, direct_checkout, booking
+     * New values: consultation, scheduled, direct
      */
-    private function mapMekanismeToOrderType(?string $mekanisme): string
+    private function mapMekanismeToOrderMethod(?string $mekanisme): string
     {
         if (!$mekanisme) {
-            return 'direct_checkout'; // Default
+            return 'direct'; // Default
         }
 
         $mapping = [
             'konsultasi' => 'consultation',
-            'booking' => 'booking',
-            'keranjang' => 'direct_checkout',
+            'booking' => 'scheduled',
+            'keranjang' => 'direct',
             // Aliases
-            'langsung_pesan' => 'direct_checkout',
-            'direct_checkout' => 'direct_checkout',
+            'langsung_pesan' => 'direct',
+            'direct_checkout' => 'direct',
             'consultation' => 'consultation',
+            'scheduled' => 'scheduled',
+            'direct' => 'direct',
         ];
 
-        return $mapping[strtolower($mekanisme)] ?? 'direct_checkout';
+        return $mapping[strtolower($mekanisme)] ?? 'direct';
     }
 }

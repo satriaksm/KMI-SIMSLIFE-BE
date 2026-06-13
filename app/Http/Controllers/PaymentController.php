@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Order;
 use App\Models\ProductOrderItem;
+use App\Models\JasaOrderItem;
 use App\Helpers\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -12,11 +13,10 @@ use Illuminate\Support\Facades\Auth;
 /**
  * PaymentController
  *
- * Handles Xendit payment integration for produk/kuliner orders.
- * Follows the same pattern as ServiceOrderController for jasa orders.
+ * Handles Xendit payment integration for produk/kuliner AND jasa orders.
  *
  * Flow:
- * 1. Order created via CheckoutController (payment_status = PENDING)
+ * 1. Order created (payment_status = PENDING/UNPAID)
  * 2. Frontend calls POST /api/payments/{orderId}/invoice to create Xendit invoice
  * 3. Backend returns invoice_url for redirect to Xendit
  * 4. Customer pays via Xendit
@@ -26,10 +26,9 @@ use Illuminate\Support\Facades\Auth;
 class PaymentController extends Controller
 {
     /**
-     * Create Xendit invoice for an existing product order.
+     * Create Xendit invoice for an existing order.
      *
-     * Called by frontend after order is created with PENDING status.
-     * Creates Xendit invoice and returns invoice_url for redirect.
+     * Supports both product and jasa orders.
      *
      * @param Request $request
      * @param int $orderId Order ID
@@ -39,11 +38,10 @@ class PaymentController extends Controller
     {
         $userId = Auth::id();
 
-        // Find order - must belong to current user and be product type
-        $order = Order::with(['merchant', 'productItems.product'])
+        // Find order - must belong to current user
+        $order = Order::with(['merchant', 'productItems', 'jasaItems.jasa'])
             ->where('id', $orderId)
             ->where('user_id', $userId)
-            ->where('order_type', 'product')
             ->first();
 
         if (!$order) {
@@ -61,23 +59,16 @@ class PaymentController extends Controller
             return ApiResponse::success([
                 'order_id' => $order->id,
                 'invoice_id' => $order->payment_reference,
-                'invoice_url' => null, // We don't store invoice_url for products
+                'invoice_url' => null,
                 'payment_status' => $order->payment_status,
                 'message' => 'Invoice sudah pernah dibuat',
             ], 'Invoice sudah tersedia');
         }
 
-        // Get order items for description
-        $productItems = $order->productItems;
-        $itemCount = $productItems->count();
-        $itemNames = $productItems->take(3)->map(fn($item) => $item->product?->name ?? 'Produk')->implode(', ');
-        $remainingCount = $itemCount - 3;
-        $description = $itemCount > 3
-            ? "Pembayaran {$itemNames} dan {$remainingCount} item lainnya"
-            : "Pembayaran {$itemNames}";
+        // Get order description based on type
+        $description = $this->getOrderDescription($order);
 
-        // Use order_{id} as external_id so webhook can identify this as product order
-        // and update the orders table (not service_orders)
+        // Use order_{id} as external_id - XenditWebhookController handles routing based on order_type
         $externalId = 'order_' . $order->id;
 
         // Create Xendit invoice
@@ -87,12 +78,13 @@ class PaymentController extends Controller
             description: $description,
             customer: [
                 'email' => $userId ? Auth::user()?->email : null,
-                'name' => $order->nama,
+                'name' => $order->nama ?? $order->user?->name ?? 'Customer',
             ]
         );
 
-        Log::info('[PaymentController] Creating Xendit invoice for product order', [
+        Log::info('[PaymentController] Creating Xendit invoice', [
             'order_id' => $order->id,
+            'order_type' => $order->order_type,
             'external_id' => $externalId,
             'amount' => $order->total_price,
             'invoice_data_exists' => !empty($invoiceData),
@@ -128,10 +120,31 @@ class PaymentController extends Controller
     }
 
     /**
-     * Verify payment status for a product order.
-     *
-     * Called by frontend to check payment status after returning from Xendit.
-     * This is a fallback when webhook hasn't been received yet.
+     * Get order description based on order type.
+     */
+    private function getOrderDescription(Order $order): string
+    {
+        // Jasa order
+        if ($order->order_type === 'jasa') {
+            $jasaItem = $order->jasaItems->first();
+            $serviceName = $jasaItem?->jasa?->title ?? 'Layanan Jasa';
+            return "Pembayaran Layanan: {$serviceName}";
+        }
+
+        // Product order
+        $productItems = $order->productItems;
+        $itemCount = $productItems->count();
+        $itemNames = $productItems->take(3)->map(fn($item) => $item->product?->name ?? 'Produk')->implode(', ');
+        $remainingCount = $itemCount - 3;
+
+        if ($itemCount > 3) {
+            return "Pembayaran {$itemNames} dan {$remainingCount} item lainnya";
+        }
+        return "Pembayaran {$itemNames}";
+    }
+
+    /**
+     * Verify payment status for an order.
      *
      * @param Request $request
      * @param int $orderId Order ID
@@ -143,7 +156,6 @@ class PaymentController extends Controller
 
         $order = Order::where('id', $orderId)
             ->where('user_id', $userId)
-            ->where('order_type', 'product')
             ->first();
 
         if (!$order) {
@@ -207,9 +219,7 @@ class PaymentController extends Controller
     }
 
     /**
-     * Cancel/expiring invoice for a product order.
-     *
-     * Called by frontend if customer wants to cancel payment and try again.
+     * Cancel/expiring invoice for an order.
      *
      * @param Request $request
      * @param int $orderId Order ID
@@ -221,7 +231,6 @@ class PaymentController extends Controller
 
         $order = Order::where('id', $orderId)
             ->where('user_id', $userId)
-            ->where('order_type', 'product')
             ->first();
 
         if (!$order) {
@@ -239,7 +248,7 @@ class PaymentController extends Controller
             'payment_reference' => null,
         ]);
 
-        Log::info('[PaymentController] Payment cancelled for order', [
+        Log::info('[PaymentController] Payment cancelled', [
             'order_id' => $order->id,
         ]);
 
@@ -250,9 +259,7 @@ class PaymentController extends Controller
     }
 
     /**
-     * Get payment status for a product order.
-     *
-     * Simple endpoint to get current payment status.
+     * Get payment status for an order.
      *
      * @param Request $request
      * @param int $orderId Order ID
@@ -264,7 +271,6 @@ class PaymentController extends Controller
 
         $order = Order::where('id', $orderId)
             ->where('user_id', $userId)
-            ->where('order_type', 'product')
             ->first();
 
         if (!$order) {

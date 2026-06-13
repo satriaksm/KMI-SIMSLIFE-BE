@@ -408,7 +408,17 @@ class JasaController extends Controller
             $this->attachCoverImg($jasa, true);
         }
 
-        // Map cara_pemesanan to service_type_booking for FE compatibility
+        // Map cara_pemesanan to order_method for FE compatibility
+        // order_method: direct | scheduled | consultation
+        // Mapping: langsung_pesan → direct, booking → scheduled, memerlukan_konsultasi → consultation
+        $jasa->order_method = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
+            'langsung_pesan' => 'direct',
+            'booking' => 'scheduled',
+            'memerlukan_konsultasi' => 'consultation',
+            default => 'direct',
+        };
+
+        // Map cara_pemesanan to service_type_booking for FE compatibility (legacy)
         // - langsung_pesan → keranjang (keranjang tanpa jadwal)
         // - booking → booking (pilih jadwal)
         // - memerlukan_konsultasi → konsultasi

@@ -47,9 +47,11 @@ class ServiceOrderController extends Controller
             'booking_date' => 'nullable|date',
             'booking_time' => 'nullable|date_format:H:i',
             'booking_note' => 'nullable|string|max:1000',
-            // order_type: mekanisme pemesanan baru (consultation, direct_checkout, booking)
-            'order_type' => 'nullable|string|in:consultation,direct_checkout,booking',
-            // Legacy: mekanisme_pemesanan (backward compatibility untuk request lama)
+            // order_method: mekanisme pemesanan baru (direct, scheduled, consultation)
+            'order_method' => 'nullable|string|in:direct,scheduled,consultation',
+            // Legacy: service_type_booking, cara_pemesanan, mekanisme_pemesanan (backward compatibility)
+            'service_type_booking' => 'nullable|string',
+            'cara_pemesanan' => 'nullable|string',
             'mekanisme_pemesanan' => 'nullable|string',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
@@ -77,10 +79,17 @@ class ServiceOrderController extends Controller
         $merchantId = $jasa->merchant_id;
         $serviceType = $jasa->service_type ?? null;
 
-        // order_type: mekanisme pemesanan (PRIMARY)
-        // Mapping: keranjang -> direct_checkout, booking -> booking, konsultasi -> consultation
-        $orderType = $request->order_type ?? $this->mapMekanismeToOrderType($request->mekanisme_pemesanan);
-        $orderType = $orderType ?: 'direct_checkout'; // Default
+        // order_method: mekanisme pemesanan (PRIMARY)
+        // Mapping dari berbagai input legacy:
+        // - order_method: direct, scheduled, consultation (PRIMARY)
+        // - service_type_booking: keranjang, booking, konsultasi
+        // - cara_pemesanan: langsung_pesan, booking, memerlukan_konsultasi
+        // - mekanisme_pemesanan: keranjang, booking, konsultasi
+        $orderMethod = $request->order_method
+            ?? JasaOrderItem::mapToOrderMethod($request->service_type_booking)
+            ?? JasaOrderItem::mapToOrderMethod($request->cara_pemesanan)
+            ?? JasaOrderItem::mapToOrderMethod($request->mekanisme_pemesanan);
+        $orderMethod = $orderMethod ?: 'direct'; // Default
 
         $paymentMethod = strtoupper($request->payment_method ?? 'COD');
         $isCodPayment = strtolower($paymentMethod) === 'cod';
@@ -90,7 +99,7 @@ class ServiceOrderController extends Controller
             'raw_payment_method' => $request->payment_method,
             'uppercased' => $paymentMethod,
             'is_cod' => $isCodPayment,
-            'order_type' => $orderType,
+            'order_method' => $orderMethod,
             'legacy_mekanisme' => $request->mekanisme_pemesanan,
         ]);
 
@@ -116,12 +125,12 @@ class ServiceOrderController extends Controller
         DB::beginTransaction();
         try {
             // ===== 1. Create order in orders table (UNIFIED) =====
-            // NOTE: order_type = mekanisme pemesanan (direct_checkout, booking, consultation)
-            // jasa_id disimpan di jasa_order_items, BUKAN di orders
+            // NOTE: order_type = 'jasa' (jenis order utama: product/jasa)
+            // order_method disimpan di jasa_order_items, BUKAN di orders
             $order = Order::create([
                 'user_id' => $customerId,
                 'merchant_id' => $merchantId,
-                'order_type' => $orderType, // consultation | direct_checkout | booking
+                'order_type' => 'jasa', // All service orders are type 'jasa'
                 'total_price' => $totalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
@@ -129,7 +138,7 @@ class ServiceOrderController extends Controller
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
-            // jasa_id disimpan di sini, bukan di orders
+            // order_method: mekanisme pemesanan (direct, scheduled, consultation)
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $jasa->id,
@@ -139,7 +148,8 @@ class ServiceOrderController extends Controller
                 'booking_date' => $request->booking_date,
                 'booking_time' => $request->booking_time,
                 'service_type' => $serviceType,
-                'service_type_booking' => $orderType, // Use order_type as booking type
+                'service_type_booking' => $orderMethod, // Legacy - for backward compat
+                'order_method' => $orderMethod, // PRIMARY
                 'note' => $request->booking_note,
                 'booking_note' => $request->booking_note,
                 'service_location_address' => $serviceLocationAddress,
@@ -181,61 +191,6 @@ class ServiceOrderController extends Controller
 
             DB::commit();
 
-            // ===== 4. Handle non-COD payment (Xendit) =====
-            $invoiceData = null;
-
-            if (!$isCodPayment) {
-                // Use jasa_{orders.id} as external_id so webhook can find order via orders table
-                // external_id format: jasa_{orders.id}
-                $externalId = 'jasa_' . $order->id;
-                $invoiceData = XenditWebhookController::createInvoice(
-                    externalId: $externalId,
-                    amount: (int) $totalPrice,
-                    description: 'Pembayaran Layanan: ' . $jasa->title,
-                    customer: [
-                        'email' => Auth::user()?->email,
-                        'name' => $request->customer_name,
-                    ]
-                );
-
-                Log::info('[ServiceOrder Create] Xendit invoice attempt', [
-                    'order_id' => $order->id,
-                    'external_id' => $externalId,
-                    'payment_method' => $paymentMethod,
-                    'is_cod' => $isCodPayment,
-                    'invoice_data_exists' => !empty($invoiceData),
-                    'invoice_url' => $invoiceData['invoice_url'] ?? null,
-                ]);
-
-                if ($invoiceData && !empty($invoiceData['invoice_url'])) {
-                    $order->update([
-                        'payment_status' => 'WAITING_CONFIRMATION',
-                    ]);
-
-                    $serviceOrder->update([
-                        'xendit_invoice_id' => $invoiceData['id'] ?? null,
-                        'payment_reference' => $invoiceData['id'] ?? null,
-                        'payment_status' => 'WAITING_CONFIRMATION',
-                    ]);
-
-                    $jasaOrderItem->update([
-                        'whatsapp_redirect_url' => $invoiceData['invoice_url'] ?? null,
-                    ]);
-
-                    Log::info('[ServiceOrder Create] Xendit invoice created', [
-                        'order_id' => $order->id,
-                        'service_order_id' => $serviceOrder->id,
-                        'invoice_id' => $invoiceData['id'] ?? null,
-                        'invoice_url' => $invoiceData['invoice_url'] ?? null,
-                    ]);
-                } else {
-                    Log::warning('[ServiceOrder Create] Xendit invoice creation failed', [
-                        'order_id' => $order->id,
-                        'invoice_data' => $invoiceData,
-                    ]);
-                }
-            }
-
             Log::info('[ServiceOrder Create] Order created', [
                 'order_id' => $order->id,
                 'service_order_id' => $serviceOrder->id,
@@ -245,26 +200,18 @@ class ServiceOrderController extends Controller
                 'is_cod' => $isCodPayment,
             ]);
 
-            // Build response - NEW STRUCTURE
-            // External consumers should read payment_method and invoice_url directly
+            // Build response
+            // For Xendit: Frontend should call POST /api/payments/{order_id}/invoice to create Xendit invoice
+            // For COD: Redirect to booking confirmation
             $responseData = [
                 'success' => true,
-                'payment_method' => $isCodPayment ? 'COD' : 'XENDIT',
-                'payment_channel' => $paymentMethod, // actual method: QRIS, BCA, DANA, COD, etc.
                 'order_id' => $order->id,
                 'jasa_order_item_id' => $jasaOrderItem->id,
                 'service_order_id' => $serviceOrder->id,
+                'payment_method' => $paymentMethod,
+                'is_cod' => $isCodPayment,
+                // Frontend should call POST /api/payments/{order_id}/invoice for Xendit
             ];
-
-            // Xendit: include invoice_url for frontend to redirect to checkout
-            // Don't use redirect_url for Xendit - frontend must use invoice_url
-            if (!$isCodPayment && $invoiceData && !empty($invoiceData['invoice_url'])) {
-                $responseData['invoice_url'] = $invoiceData['invoice_url'];
-                Log::info('[ServiceOrder Create] Xendit invoice included in response', [
-                    'order_id' => $order->id,
-                    'invoice_url' => $responseData['invoice_url'],
-                ]);
-            }
 
             // COD: include redirect_url for frontend convenience
             if ($isCodPayment) {
@@ -283,11 +230,11 @@ class ServiceOrderController extends Controller
             Log::info('[ServiceOrder Create] Final response built', [
                 'order_id' => $responseData['order_id'],
                 'payment_method' => $responseData['payment_method'],
-                'has_invoice_url' => !empty($responseData['invoice_url']),
+                'is_cod' => $isCodPayment,
                 'has_redirect_url' => !empty($responseData['redirect_url']),
             ]);
 
-            return ApiResponse::success($responseData, $isCodPayment ? 'Pesanan COD berhasil dibuat.' : 'Invoice Xendit berhasil dibuat.');
+            return ApiResponse::success($responseData, $isCodPayment ? 'Pesanan COD berhasil dibuat.' : 'Pesanan berhasil dibuat. Gunakan endpoint pembayaran untuk invoice.');
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('[ServiceOrder Create] Error', ['error' => $e->getMessage()]);
@@ -447,8 +394,11 @@ class ServiceOrderController extends Controller
                 ?? ($jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null);
 
             // ============================================================
-            // Order Type - mekanisme pemesanan (PRIMARY)
+            // Order Method - mekanisme pemesanan (PRIMARY)
             // ============================================================
+            $orderArray['order_method'] = $jasaItem?->order_method;
+            $orderArray['order_method_label'] = $jasaItem?->order_method_label;
+            // Legacy: order_type (backward compatibility)
             $orderArray['order_type'] = $this->resolveOrderType($order, $jasaItem, $serviceOrder);
 
             // ============================================================
@@ -689,9 +639,11 @@ class ServiceOrderController extends Controller
             'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
             'service_image' => $serviceOrder?->service_image
                 ?? ($jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null),
-            // order_type: mekanisme pemesanan (PRIMARY) - gunakan resolveOrderType
+            // order_method: mekanisme pemesanan (PRIMARY) - gunakan jasa_order_items.order_method
+            'order_method' => $jasaItem?->order_method,
+            'order_method_label' => $jasaItem?->order_method_label,
+            // Legacy: order_type, mekanisme_pemesanan (backward compatibility - akan dihapus nanti)
             'order_type' => $this->resolveOrderType($order, $jasaItem, $serviceOrder),
-            // Legacy: mekanisme_pemesanan (backward compatibility - akan dihapus nanti)
             'mekanisme_pemesanan' => $jasaItem?->service_type_booking,
             'status' => $status,
             'status_label' => $statusLabel,
@@ -876,7 +828,7 @@ class ServiceOrderController extends Controller
         $customerId = Auth::id();
 
         // Try to find order in orders table first
-        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan (direct_checkout, booking, consultation)
+        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan lama
         $order = Order::where('user_id', $customerId)
             ->whereHas('jasaItems') // Orders yang punya jasa_order_items
             ->find($id);
@@ -1017,32 +969,30 @@ class ServiceOrderController extends Controller
     }
 
     /**
-     * Map legacy mekanisme_pemesanan to order_type
+     * Map frontend mechanism to internal order_method format.
      *
-     * Legacy values (service_orders.mekanisme_pemesanan):
-     * - konsultasi -> consultation
-     * - booking -> booking
-     * - keranjang -> direct_checkout
-     *
-     * New values (orders.order_type):
-     * - consultation
-     * - booking
-     * - direct_checkout
+     * Frontend sends: keranjang/booking/konsultasi/direct_checkout/etc.
+     * We store: direct/scheduled/consultation
      */
-    private function mapMekanismeToOrderType(?string $mekanisme): ?string
+    private function mapMekanismeToOrderMethod(?string $mekanisme): ?string
     {
         if (!$mekanisme) {
             return null;
         }
 
         $mapping = [
+            // Frontend values -> internal values
             'konsultasi' => 'consultation',
-            'booking' => 'booking',
-            'keranjang' => 'direct_checkout',
+            'booking' => 'scheduled',
+            'keranjang' => 'direct',
             // Aliases
-            'langsung_pesan' => 'direct_checkout',
-            'direct_checkout' => 'direct_checkout',
+            'langsung_pesan' => 'direct',
+            'langsung_pesan_lagi' => 'direct',
+            'checkout' => 'direct',
+            'direct_checkout' => 'direct',
             'consultation' => 'consultation',
+            'scheduled' => 'scheduled',
+            'direct' => 'direct',
         ];
 
         return $mapping[strtolower($mekanisme)] ?? null;
@@ -1051,26 +1001,42 @@ class ServiceOrderController extends Controller
     /**
      * Get order_type from various sources (orders, jasa_order_items, service_orders)
      * Used for unified access across all tables
+     *
+     * Priority:
+     * 1. jasa_order_items.order_method (PRIMARY - mechanism)
+     * 2. orders.order_type (legacy - but for jasa should be 'jasa')
+     * 3. jasa_order_items.service_type_booking (legacy)
+     * 4. service_orders.mekanisme_pemesanan (legacy)
      */
     private function resolveOrderType(?Order $order, ?JasaOrderItem $jasaItem, ?ServiceOrder $serviceOrder): ?string
     {
-        // 1. Check orders.order_type (PRIMARY)
+        // 1. Check jasa_order_items.order_method (PRIMARY)
+        if ($jasaItem && !empty($jasaItem->order_method)) {
+            return $jasaItem->order_method;
+        }
+
+        // 2. Check orders.order_type - for jasa orders this should be 'jasa'
+        // But if it's consultation/booking/direct, treat as order_method
         if ($order && !empty($order->order_type)) {
-            return $order->order_type;
+            $orderType = $order->order_type;
+            // If it's not 'jasa' or 'product', it's a legacy order_method
+            if (!in_array($orderType, ['jasa', 'product'])) {
+                return $orderType;
+            }
         }
 
-        // 2. Check jasa_order_items.service_type_booking
+        // 3. Check jasa_order_items.service_type_booking (legacy)
         if ($jasaItem && !empty($jasaItem->service_type_booking)) {
-            return $this->mapMekanismeToOrderType($jasaItem->service_type_booking);
+            return $this->mapMekanismeToOrderMethod($jasaItem->service_type_booking);
         }
 
-        // 3. Check service_orders.mekanisme_pemesanan (LEGACY)
+        // 4. Check service_orders.mekanisme_pemesanan (LEGACY)
         if ($serviceOrder && !empty($serviceOrder->mekanisme_pemesanan)) {
-            return $this->mapMekanismeToOrderType($serviceOrder->mekanisme_pemesanan);
+            return $this->mapMekanismeToOrderMethod($serviceOrder->mekanisme_pemesanan);
         }
 
-        // 4. Fallback to 'direct_checkout'
-        return 'direct_checkout';
+        // 5. Fallback to 'direct'
+        return 'direct';
     }
 
     /**
@@ -1352,7 +1318,7 @@ class ServiceOrderController extends Controller
             ->whereHas('jasaItems')
             ->orderByDesc('created_at');
 
-        // Filter by order_type if provided (jasa, consultation, booking, direct_checkout)
+        // Filter by order_type if provided (jasa, product - primary type)
         if ($request->has('order_type')) {
             $query->where('order_type', $request->order_type);
         }
@@ -1444,7 +1410,7 @@ class ServiceOrderController extends Controller
                 'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
                 'service_image' => $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null,
                 'service_type' => $jasaItem?->service_type ?? $serviceOrder?->service_type,
-                'order_type' => $order->order_type, // direct_checkout, booking, consultation
+                'order_type' => $order->order_type, // Legacy: mechanism (jasa/product)
                 'booking_type' => $jasaItem?->service_type_booking,
 
                 // Booking Info

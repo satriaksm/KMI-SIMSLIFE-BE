@@ -6,6 +6,20 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
 
+/**
+ * XenditWebhookController
+ *
+ * Centralized Xendit webhook handler for all order types.
+ * Handles callbacks from Xendit for:
+ * - Product orders (order_{id})
+ * - Service/Jasa orders (order_{id})
+ * - Legacy ServiceOrders (service_order_{id})
+ *
+ * External ID format:
+ * - order_{id} = all new orders (product/jasa)
+ * - service_order_{id} = legacy service orders
+ * - jasa_{id} = legacy jasa orders (kept for backward compat)
+ */
 class XenditWebhookController extends Controller
 {
     /**
@@ -79,14 +93,12 @@ class XenditWebhookController extends Controller
         ]);
 
         // Cek format external_id:
-        // "jasa_{id}" → Order (Jasa primary) - NEW FORMAT
-        // "service_order_{id}" → ServiceOrder (Jasa legacy)
-        // "order_{id}" → Order (Toko/Kuliner)
+        // "order_{id}" → Order (Toko/Kuliner atau Jasa) - XenditWebhookController auto-detects via order_type
 
-        // 1. Coba cari sebagai jasa order (orders.id)
-        if (str_starts_with($externalId, 'jasa_')) {
-            $orderId = (int) str_replace('jasa_', '', $externalId);
-            $this->updateJasaOrderPaid($orderId, $invoiceId, $paymentChannel);
+        // 1. Coba cari sebagai Order via order_{id} format
+        if (str_starts_with($externalId, 'order_')) {
+            $orderId = (int) str_replace('order_', '', $externalId);
+            $this->updateOrderPaid($orderId, $invoiceId, $paymentChannel);
             return;
         }
 
@@ -97,14 +109,7 @@ class XenditWebhookController extends Controller
             return;
         }
 
-        // 3. Coba cari sebagai Order (Toko/Kuliner)
-        if (str_starts_with($externalId, 'order_')) {
-            $orderId = (int) str_replace('order_', '', $externalId);
-            $this->updateOrderPaid($orderId, $invoiceId, $paymentChannel);
-            return;
-        }
-
-        // 4. Jika external_id adalah invoice ID langsung, cari di ServiceOrder
+        // 3. Jika external_id adalah invoice ID langsung, cari di ServiceOrder
         if ($invoiceId) {
             $serviceOrder = \App\Models\ServiceOrder::where('xendit_invoice_id', $invoiceId)->first();
             if ($serviceOrder) {
@@ -135,14 +140,14 @@ class XenditWebhookController extends Controller
             'invoice_id' => $invoiceId,
         ]);
 
-        // jasa_{id} → Order (Jasa)
-        if (str_starts_with($externalId, 'jasa_')) {
-            $orderId = (int) str_replace('jasa_', '', $externalId);
+        // order_{id} → Order (Toko/Kuliner atau Jasa)
+        if (str_starts_with($externalId, 'order_')) {
+            $orderId = (int) str_replace('order_', '', $externalId);
             $order = \App\Models\Order::find($orderId);
             if ($order) {
                 $order->payment_status = 'UNPAID';
                 $order->save();
-                Log::info('Xendit: Jasa order expired', ['order_id' => $orderId]);
+                Log::info('Xendit: Order expired', ['order_id' => $orderId]);
             }
             return;
         }
@@ -159,14 +164,14 @@ class XenditWebhookController extends Controller
             return;
         }
 
-        // order_{id} → Order (Toko/Kuliner)
-        if (str_starts_with($externalId, 'order_')) {
-            $orderId = (int) str_replace('order_', '', $externalId);
+        // jasa_{id} → Order (Jasa legacy)
+        if (str_starts_with($externalId, 'jasa_')) {
+            $orderId = (int) str_replace('jasa_', '', $externalId);
             $order = \App\Models\Order::find($orderId);
             if ($order) {
                 $order->payment_status = 'UNPAID';
                 $order->save();
-                Log::info('Xendit: Order expired', ['order_id' => $orderId]);
+                Log::info('Xendit: Jasa order expired', ['order_id' => $orderId]);
             }
         }
     }
@@ -315,7 +320,8 @@ class XenditWebhookController extends Controller
     }
 
     /**
-     * Update Order (Toko/Kuliner) menjadi PAID.
+     * Update Order (Toko/Kuliner atau Jasa) menjadi PAID.
+     * Auto-detects order type and syncs to related tables.
      */
     private function updateOrderPaid(int $orderId, ?string $invoiceId, ?string $paymentChannel = null)
     {
@@ -344,11 +350,47 @@ class XenditWebhookController extends Controller
             }
             $order->save();
 
-            Log::info('Xendit: Order updated to PAID', [
-                'order_id' => $orderId,
-                'invoice_id' => $invoiceId,
-                'payment_channel' => $paymentChannel,
-            ]);
+            // Sync to related tables based on order_type
+            if ($order->order_type === 'jasa') {
+                // Sync to service_orders for backward compatibility
+                $jasaOrderItems = $order->jasaOrderItems;
+                foreach ($jasaOrderItems as $jasaOrderItem) {
+                    if ($jasaOrderItem->service_order_id) {
+                        $serviceOrder = \App\Models\ServiceOrder::find($jasaOrderItem->service_order_id);
+                        if ($serviceOrder && $serviceOrder->payment_status !== 'PAID') {
+                            $serviceOrder->payment_status = 'PAID';
+                            $serviceOrder->paid_at = now();
+                            if ($invoiceId) {
+                                $serviceOrder->xendit_invoice_id = $invoiceId;
+                                $serviceOrder->payment_reference = $invoiceId;
+                            }
+                            if ($paymentChannel) {
+                                $serviceOrder->payment_channel = $paymentChannel;
+                                $serviceOrder->paid_channel = $paymentChannel;
+                            }
+                            $serviceOrder->save();
+
+                            Log::info('Xendit: ServiceOrder synced to PAID', [
+                                'order_id' => $orderId,
+                                'service_order_id' => $serviceOrder->id,
+                            ]);
+                        }
+                    }
+                }
+
+                Log::info('Xendit: Jasa Order updated to PAID', [
+                    'order_id' => $orderId,
+                    'invoice_id' => $invoiceId,
+                    'payment_channel' => $paymentChannel,
+                ]);
+            } else {
+                // Product order - no additional sync needed
+                Log::info('Xendit: Product Order updated to PAID', [
+                    'order_id' => $orderId,
+                    'invoice_id' => $invoiceId,
+                    'payment_channel' => $paymentChannel,
+                ]);
+            }
         } catch (\Exception $e) {
             Log::error('Xendit: Failed to update Order', [
                 'order_id' => $orderId,
@@ -360,7 +402,7 @@ class XenditWebhookController extends Controller
     /**
      * Buat invoice Xendit (static method, dipanggil dari controller lain).
      *
-     * @param string $externalId Format: "service_order_{id}" atau "order_{id}"
+     * @param string $externalId Format: "order_{id}" (semua jenis order)
      * @param int $amount
      * @param string $description
      * @param array $customer ['email' => '', 'name' => '']
@@ -379,21 +421,20 @@ class XenditWebhookController extends Controller
             // Use FRONTEND_URL for redirect URLs (customer-facing pages)
             // APP_URL is for backend/webhook only (ngrok)
             $frontendUrl = config('app.frontend_url', config('app.url'));
-            $isServiceOrder = str_starts_with($externalId, 'service_order_');
-            $isJasaOrder = str_starts_with($externalId, 'jasa_');
 
-            // Determine the success page based on order type
-            // For service orders (service_order_ or jasa_), redirect to booking confirmation page first
-            // Then user can go to service history from there
-            if ($isServiceOrder || $isJasaOrder) {
-                // Extract order ID from external_id (e.g., "jasa_123" -> "123" or "service_order_123" -> "123")
+            // Determine success/failure redirect URLs based on order type
+            // All orders use order_{id} format, redirect based on order_type
+            $isServiceOrder = str_starts_with($externalId, 'service_order_');
+
+            if ($isServiceOrder) {
+                // Legacy service order -> booking confirmation
                 $orderId = (int) preg_replace('/[^0-9]/', '', $externalId);
                 $successUrl = rtrim($frontendUrl, '/') . "/booking-confirmation?order_id={$orderId}";
                 $failureUrl = rtrim($frontendUrl, '/') . '/pembayaran-jasa?payment=failed';
             } else {
-                // Product order -> order history
+                // Standard order -> order history (auto-detects product vs jasa in frontend)
                 $successUrl = rtrim($frontendUrl, '/') . '/orders';
-                $failureUrl = rtrim($frontendUrl, '/') . '/pembayaran-product?payment=failed';
+                $failureUrl = rtrim($frontendUrl, '/') . '/orders';
             }
 
             $payload = [

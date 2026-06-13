@@ -15,7 +15,7 @@ class Order extends Model
         // Common fields
         'user_id',
         'merchant_id',
-        'order_type', // PRIMARY: mekanisme pemesanan (consultation, direct_checkout, booking)
+        'order_type', // PRIMARY: jenis order utama (jasa, product)
         'status',
 
         // Legacy fields (still in table, for backward compatibility with existing data)

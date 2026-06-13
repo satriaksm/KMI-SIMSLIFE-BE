@@ -335,9 +335,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
-        // ===== PAYMENT ENDPOINTS (PRODUCT ORDERS) =====
-        // Xendit invoice creation for produk/kuliner orders
-        // Called by frontend after order is created with PENDING status
+        // ===== PAYMENT ENDPOINTS (PRODUCT & JASA ORDERS) =====
+        // Xendit invoice creation for all orders
+        // Called by frontend after order is created with PENDING/UNPAID status
+        // Supports both product and jasa orders via PaymentController
         Route::prefix('payments')->name('payments.')->group(function () {
             // Create Xendit invoice for existing order
             Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice'])

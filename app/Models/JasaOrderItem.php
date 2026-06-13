@@ -25,7 +25,8 @@ class JasaOrderItem extends Model
         'booking_date',
         'booking_time',
         'service_type',
-        'service_type_booking',
+        'service_type_booking', // Legacy: keranjang/booking/konsultasi
+        'order_method', // NEW: direct/scheduled/consultation
         'note',
         // Service-specific fields
         'booking_note',
@@ -107,11 +108,55 @@ class JasaOrderItem extends Model
 
     public function getBookingTypeLabelAttribute(): string
     {
-        return match ($this->service_type_booking) {
-            'keranjang' => 'Keranjang (Tanpa Jadwal)',
-            'booking' => 'Booking (Pilih Tanggal & Jam)',
-            'konsultasi' => 'Konsultasi',
-            default => ucfirst($this->service_type_booking ?? '-'),
+        // Use order_method first, then fallback to service_type_booking
+        return $this->order_method
+            ?? match ($this->service_type_booking) {
+                'keranjang' => 'Langsung Pesan',
+                'booking' => 'Terjadwal',
+                'konsultasi' => 'Konsultasi',
+                default => ucfirst($this->service_type_booking ?? '-'),
+            };
+    }
+
+    public function getOrderMethodLabelAttribute(): string
+    {
+        return match ($this->order_method) {
+            'direct' => 'Langsung Pesan',
+            'scheduled' => 'Terjadwal',
+            'consultation' => 'Konsultasi',
+            default => ucfirst($this->order_method ?? '-'),
         };
+    }
+
+    // =================================================================
+    // HELPER: Map frontend order method to internal order_method
+    // =================================================================
+
+    /**
+     * Map frontend order method to internal order_method format.
+     * Accepts: direct_checkout, keranjang, booking, konsultasi, consultation, scheduled, direct
+     * Returns: direct, scheduled, consultation
+     */
+    public static function mapToOrderMethod(?string $value): ?string
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        return match (strtolower($value)) {
+            'direct_checkout', 'keranjang', 'langsung_pesan', 'direct' => 'direct',
+            'booking', 'scheduled' => 'scheduled',
+            'konsultasi', 'consultation' => 'consultation',
+            default => strtolower($value),
+        };
+    }
+
+    /**
+     * Get order_type for orders table.
+     * Returns 'jasa' for all jasa orders.
+     */
+    public static function getOrderTypeValue(): string
+    {
+        return 'jasa';
     }
 }
