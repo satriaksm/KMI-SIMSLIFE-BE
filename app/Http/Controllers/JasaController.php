@@ -408,26 +408,7 @@ class JasaController extends Controller
             $this->attachCoverImg($jasa, true);
         }
 
-        // Map cara_pemesanan to order_method for FE compatibility
-        // order_method: direct | scheduled | consultation
-        // Mapping: langsung_pesan → direct, booking → scheduled, memerlukan_konsultasi → consultation
-        $jasa->order_method = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
-            'langsung_pesan' => 'direct',
-            'booking' => 'scheduled',
-            'memerlukan_konsultasi' => 'consultation',
-            default => 'direct',
-        };
-
-        // Map cara_pemesanan to service_type_booking for FE compatibility (legacy)
-        // - langsung_pesan → keranjang (keranjang tanpa jadwal)
-        // - booking → booking (pilih jadwal)
-        // - memerlukan_konsultasi → konsultasi
-        $jasa->service_type_booking = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
-            'langsung_pesan' => 'keranjang',
-            'booking' => 'booking',
-            'memerlukan_konsultasi' => 'konsultasi',
-            default => 'keranjang',
-        };
+        // API response now includes cara_pemesanan (DB value) — FE maps to display format
 
         // Calculate rating summary if not found via relationship
         $ratingSummary = $jasa->ratingSummary;
@@ -492,14 +473,7 @@ class JasaController extends Controller
             $this->attachCoverImg($jasa, true);
         }
 
-        // Map cara_pemesanan to service_type_booking for FE
-        // Standard values: keranjang, booking, konsultasi
-        $jasa->service_type_booking = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
-            'langsung_pesan' => 'keranjang',
-            'booking' => 'booking',
-            'memerlukan_konsultasi' => 'konsultasi',
-            default => 'keranjang',
-        };
+        // API response now includes cara_pemesanan (DB value) — FE maps to display format
 
         // Calculate rating summary if not found via relationship
         $ratingSummary = $jasa->ratingSummary;
@@ -562,38 +536,36 @@ class JasaController extends Controller
      */
     public function update(Request $request, $id)
     {
+        \Log::info('[JasaController.update] RAW REQUEST price fields:', [
+            'fixed_price' => $request->input('fixed_price'),
+            'base_price'  => $request->input('base_price'),
+            'price'       => $request->input('price'),
+        ]);
+
         $jasa = Jasa::find($id);
 
         if (!$jasa) {
             return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
         }
 
-        // NORMALIZE ALL booking_type fields BEFORE validation
-        // Prioritas: service_type_booking → booking_type → cara_pemesanan
-        $stb = $request->input('service_type_booking');
+        // Normalize booking type input to DB value for cara_pemesanan
+        // Accepts: booking_type | cara_pemesanan (FE format values: keranjang, langsung_pesan, booking, konsultasi, dll.)
+        // DB values for jasas.cara_pemesanan: langsung_pesan | booking | memerlukan_konsultasi
         $bt = $request->input('booking_type');
         $cp = $request->input('cara_pemesanan');
+        $canonical = $bt ?? $cp ?? null;
 
-        // Determine canonical booking type from any of the fields
-        $canonical = $stb ?? $bt ?? $cp ?? null;
-
-        // Normalize to standard values
-        if (in_array($canonical, ['cart', 'langsung_pesan', 'direct_checkout'])) {
-            $normalized = 'keranjang';
-        } elseif (in_array($canonical, ['booking'])) {
+        if (in_array($canonical, ['cart', 'keranjang', 'langsung_pesan', 'direct_checkout', 'direct'])) {
+            $normalized = 'langsung_pesan';
+        } elseif (in_array($canonical, ['booking', 'scheduled'])) {
             $normalized = 'booking';
-        } elseif (in_array($canonical, ['consultation', 'memerlukan_konsultasi'])) {
-            $normalized = 'konsultasi';
+        } elseif (in_array($canonical, ['konsultasi', 'consultation', 'memerlukan_konsultasi'])) {
+            $normalized = 'memerlukan_konsultasi';
         } else {
-            $normalized = 'keranjang'; // default
+            $normalized = 'langsung_pesan'; // default
         }
 
-        // Merge all three fields with normalized value
-        $request->merge([
-            'service_type_booking' => $normalized,
-            'booking_type' => $normalized,
-            'cara_pemesanan' => $normalized,
-        ]);
+        $request->merge(['cara_pemesanan' => $normalized]);
 
         // Also normalize service_type if sent (convert old values to new standard)
         $st = $request->input('service_type');
@@ -607,6 +579,7 @@ class JasaController extends Controller
         // Validasi field lama + field baru yang dipakai di MerchantJasa (kategori, status, jadwal, dll)
         // Status mendukung skema lama (active/inactive) dan baru (published/archived)
         $validated = $request->validate([
+            'title' => 'sometimes|string|max:255',
             'vendor' => 'nullable|string|max:255',
             'price' => 'sometimes|required|integer|min:0',
             'image' => 'nullable|string|max:500',
@@ -620,16 +593,13 @@ class JasaController extends Controller
             'fixed_price' => 'nullable|integer|min:0',
             'base_price' => 'nullable|integer|min:0',
 
-            // FE: keranjang, booking, konsultasi, direct_checkout, consultation
-            // DB: langsung_pesan, booking, memerlukan_konsultasi
-            'service_type_booking' => 'nullable|string|in:keranjang,booking,konsultasi,langsung_pesan,memerlukan_konsultasi,direct_checkout,consultation',
+            // FE: keranjang, booking, konsultasi | DB: langsung_pesan, booking, memerlukan_konsultasi
             'cara_pemesanan' => 'nullable|string|in:keranjang,booking,konsultasi,langsung_pesan,memerlukan_konsultasi,direct_checkout,consultation',
             'booking_type' => 'nullable|string|in:keranjang,booking,konsultasi,langsung_pesan,memerlukan_konsultasi,direct_checkout,consultation',
 
             // Tipe layanan - normalize to new standard format
             'service_type' => 'nullable|string|in:online,di_tempat_umkm,ke_rumah_pelanggan,at_location,on_site,ditempat_saya,kerumah_pelanggan',
             'location_address' => 'nullable|string|max:500',
-            'service_area' => 'nullable|string|max:255',
             'special_notes' => 'nullable|string',
             'payment_methods' => 'nullable|string|max:255',
             'status' => 'nullable|string|in:draft,active,inactive,published,archived',
@@ -645,29 +615,9 @@ class JasaController extends Controller
 
         $data = $validated;
 
-        // MAP CARA PEMESANAN
-        // Prioritas: service_type_booking → booking_type → cara_pemesanan
-        $bookingValue = $data['service_type_booking']
-            ?? $data['booking_type']
-            ?? $data['cara_pemesanan']
-            ?? null;
-
-        // Mapping ke DB field cara_pemesanan
-        // FE/Baru: keranjang, booking, konsultasi, direct_checkout, consultation
-        // DB: langsung_pesan, booking, memerlukan_konsultasi
-        $data['cara_pemesanan'] = match (true) {
-            $bookingValue === 'booking' => 'booking',
-            in_array($bookingValue, ['keranjang', 'langsung_pesan', 'direct_checkout']) => 'langsung_pesan',
-            in_array($bookingValue, ['konsultasi', 'memerlukan_konsultasi', 'consultation']) => 'memerlukan_konsultasi',
-            default => 'langsung_pesan',
-        };
-
-        // Set service_type_booking untuk response/kompatibilitas FE
-        $data['service_type_booking'] = match ($data['cara_pemesanan']) {
-            'booking' => 'booking',
-            'memerlukan_konsultasi' => 'konsultasi',
-            default => 'keranjang',
-        };
+        // CARA PEMESANAN sudah dinormalisasi oleh $request->merge() di atas.
+        // $data['cara_pemesanan'] sudah berisi nilai DB yang benar.
+        // Hapus field frontend-only sebelum menyimpan ke tabel jasas.
 
         // Sinkronkan alamat layanan sesuai tipe layanan
         // service_type sudah dinormalisasi ke format baru di atas
@@ -719,7 +669,26 @@ class JasaController extends Controller
             $data['is_active'] = in_array($status, ['active', 'published']);
         }
 
+        // Hapus field frontend-only sebelum menyimpan ke tabel jasas
+        unset($data['booking_type'], $data['order_method']);
+
+        // === DEBUG: log data yang akan di-update ===
+        \Log::info('[JasaController.update] $data before update:', $data);
+        \Log::info('[JasaController.update] price fields:', [
+            'fixed_price' => $data['fixed_price'] ?? 'NOT_IN_DATA',
+            'base_price'  => $data['base_price']  ?? 'NOT_IN_DATA',
+            'price'       => $data['price']       ?? 'NOT_IN_DATA',
+        ]);
+
         $jasa->update($data);
+
+        // === DEBUG: log data yang BENAR-BENAR disimpan ===
+        $jasa->refresh();
+        \Log::info('[JasaController.update] After update - saved values:', [
+            'fixed_price' => $jasa->fixed_price,
+            'base_price'  => $jasa->base_price,
+            'price'       => $jasa->price,
+        ]);
 
         // Sync categories (pivot) if provided
         $this->syncJasaCategoriesFromRequest($jasa, $request);
@@ -814,15 +783,7 @@ class JasaController extends Controller
             || ($jasa->status === null && (bool) $jasa->is_active);
         $this->attachCoverImg($jasa, $isPublic);
 
-        // Map cara_pemesanan to service_type_booking for FE compatibility
-        // DB values: keranjang, booking, konsultasi
-        // FE values: keranjang, booking, konsultasi (same for simplicity)
-        $jasa->service_type_booking = match ($jasa->cara_pemesanan ?? 'langsung_pesan') {
-            'langsung_pesan' => 'keranjang',
-            'booking' => 'booking',
-            'memerlukan_konsultasi' => 'konsultasi',
-            default => 'keranjang',
-        };
+        // API response now includes cara_pemesanan (DB value) — FE maps to display format
 
         return response()->json([
             'message' => 'Data jasa berhasil diperbarui',
@@ -843,22 +804,23 @@ class JasaController extends Controller
             ->where('user_id', $user->id)
             ->firstOrFail();
 
-        // NORMALIZE ALL booking type fields BEFORE validation
-        // Prioritas: service_type_booking → booking_type → cara_pemesanan
-        $stb = $request->input('service_type_booking');
+        // Normalize booking type input to DB value for cara_pemesanan
+        // Normalize booking type input to DB value for cara_pemesanan
+        // Accepts: booking_type | cara_pemesanan (FE format values: keranjang, langsung_pesan, booking, konsultasi, dll.)
+        // DB values for jasas.cara_pemesanan: langsung_pesan | booking | memerlukan_konsultasi
         $bt = $request->input('booking_type');
         $cp = $request->input('cara_pemesanan');
-        $canonical = $stb ?? $bt ?? $cp ?? null;
-        if (in_array($canonical, ['cart', 'keranjang', 'langsung_pesan', 'direct_checkout'])) {
-            $normalized = 'keranjang';
-        } elseif (in_array($canonical, ['booking'])) {
+        $canonical = $bt ?? $cp ?? null;
+        if (in_array($canonical, ['cart', 'keranjang', 'langsung_pesan', 'direct_checkout', 'direct'])) {
+            $normalized = 'langsung_pesan';
+        } elseif (in_array($canonical, ['booking', 'scheduled'])) {
             $normalized = 'booking';
-        } elseif (in_array($canonical, ['konsultasi', 'memerlukan_konsultasi', 'consultation'])) {
-            $normalized = 'konsultasi';
+        } elseif (in_array($canonical, ['konsultasi', 'consultation', 'memerlukan_konsultasi'])) {
+            $normalized = 'memerlukan_konsultasi';
         } else {
-            $normalized = 'keranjang';
+            $normalized = 'langsung_pesan';
         }
-        $request->merge(['service_type_booking' => $normalized, 'booking_type' => $normalized, 'cara_pemesanan' => $normalized]);
+        $request->merge(['cara_pemesanan' => $normalized]);
 
         // Normalize service_type (convert old values to new standard)
         $st = $request->input('service_type');
@@ -878,16 +840,13 @@ class JasaController extends Controller
             'fixed_price' => 'nullable|integer|min:0',
             'base_price' => 'nullable|integer|min:0',
 
-            // FE: keranjang, booking, konsultasi, direct_checkout, consultation
-            // DB: langsung_pesan, booking, memerlukan_konsultasi
-            'service_type_booking' => 'nullable|string|in:keranjang,booking,konsultasi,langsung_pesan,memerlukan_konsultasi,direct_checkout,consultation',
+            // FE: keranjang, booking, konsultasi | DB: langsung_pesan, booking, memerlukan_konsultasi
             'cara_pemesanan' => 'nullable|string|in:keranjang,booking,konsultasi,langsung_pesan,memerlukan_konsultasi,direct_checkout,consultation',
             'booking_type' => 'nullable|string|in:keranjang,booking,konsultasi,langsung_pesan,memerlukan_konsultasi,direct_checkout,consultation',
 
             // Tipe & lokasi layanan
             'service_type' => 'required|string|in:online,di_tempat_umkm,ke_rumah_pelanggan,at_location,on_site,ditempat_saya,kerumah_pelanggan',
             'location_address' => 'nullable|string|max:500',
-            'service_area' => 'nullable|string|max:255',
             'special_notes' => 'nullable|string',
 
             // Pembayaran & status
@@ -907,21 +866,8 @@ class JasaController extends Controller
 
         $data = $validated;
 
-        // VALIDASI KHUSUS: Jika booking, operating_times wajib ada
-        // MAP CARA PEMESANAN
-        // Prioritas: service_type_booking → booking_type → cara_pemesanan
-        $bookingValue = $data['service_type_booking']
-            ?? $data['booking_type']
-            ?? $data['cara_pemesanan']
-            ?? null;
-
-        // Mapping ke DB field cara_pemesanan
-        $data['cara_pemesanan'] = match (true) {
-            $bookingValue === 'booking' => 'booking',
-            in_array($bookingValue, ['keranjang', 'langsung_pesan', 'direct_checkout']) => 'langsung_pesan',
-            in_array($bookingValue, ['konsultasi', 'memerlukan_konsultasi', 'consultation']) => 'memerlukan_konsultasi',
-            default => 'langsung_pesan',
-        };
+        // CARA PEMESANAN sudah dinormalisasi oleh $request->merge() di atas.
+        // $data['cara_pemesanan'] sudah berisi nilai DB yang benar.
         $isBooking = $data['cara_pemesanan'] === 'booking';
         if ($isBooking && empty($data['operating_times'])) {
             return response()->json([
@@ -986,6 +932,9 @@ class JasaController extends Controller
         // Atur is_active mengikuti status
         $status = $data['status'] ?? null;
         $data['is_active'] = in_array($status, ['active', 'published']);
+
+        // Hapus field frontend-only sebelum menyimpan ke tabel jasas
+        unset($data['booking_type'], $data['order_method']);
 
         $jasa = Jasa::create($data);
 
