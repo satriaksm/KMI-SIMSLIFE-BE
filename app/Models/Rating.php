@@ -25,11 +25,15 @@ class Rating extends Model
         'title',
         'comment',
         'is_anonymous',
+        'update_count',
+        'review_updated_at',
     ];
 
     protected $casts = [
         'rating' => 'integer',
         'is_anonymous' => 'boolean',
+        'update_count' => 'integer',
+        'review_updated_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -182,6 +186,12 @@ class Rating extends Model
         $array['reviewer_name'] = $this->reviewer_name;
         $array['is_anonymous'] = (bool) $this->is_anonymous;
 
+        // Include update metadata for frontend UX
+        $array['update_count'] = (int) ($this->update_count ?? 0);
+        $array['review_updated_at'] = $this->review_updated_at;
+        $array['can_update'] = $this->canUpdate();
+        $array['is_update_exhausted'] = $this->isUpdateExhausted();
+
         return $array;
     }
 
@@ -201,5 +211,31 @@ class Rating extends Model
     public function isForProductOrder(): bool
     {
         return $this->order_id !== null;
+    }
+
+    /**
+     * Check if the review can still be updated.
+     * Returns true if update_count < 1.
+     */
+    public function canUpdate(): bool
+    {
+        return ($this->update_count ?? 0) < 1;
+    }
+
+    /**
+     * Check if the review update has already been used.
+     * Returns true if update_count >= 1.
+     */
+    public function isUpdateExhausted(): bool
+    {
+        return ($this->update_count ?? 0) >= 1;
+    }
+
+    /**
+     * Get remaining update count (max 1).
+     */
+    public function getRemainingUpdateCount(): int
+    {
+        return max(0, 1 - ($this->update_count ?? 0));
     }
 }

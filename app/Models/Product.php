@@ -125,6 +125,6 @@ class Product extends Model
 
     public function ratingSummary(): MorphOne
     {
-        return $this->morphOne(RatingSummary::class, 'summaryable');
+        return $this->morphOne(RatingSummary::class, 'rateable');
     }
 }

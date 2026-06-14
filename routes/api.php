@@ -28,7 +28,7 @@ use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\ContentReportController;
-use App\Http\Controllers\XenditWebhookController;
+use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\Admin\AdminManagementController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Product\ProductOptionValueImageController;
@@ -386,6 +386,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{id}/close', [ServiceConsultationController::class, 'closeConsultation'])->name('close');
         });
 
+        // Ratings / Reviews (customer-owned)
+        Route::prefix('reviews')->group(function () {
+            Route::get('/{ratingId}', [RatingController::class, 'show'])->name('reviews.show');
+            Route::put('/{ratingId}', [RatingController::class, 'update'])->name('reviews.update');
+            Route::delete('/{ratingId}', [RatingController::class, 'destroy'])->name('reviews.destroy');
+        });
+
     });
 
 
@@ -656,14 +663,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
 });
 
 // ============================================================
-// XENDIT PAYMENT WEBHOOK
+// XENDIT PAYMENT WEBHOOK (via WebhookController)
 // ============================================================
 // Public route - NO auth middleware, Xendit calls this without Bearer token
 // Xendit authenticates using callback token in header 'x-callback-token'
-Route::post('/payment/xendit/webhook', [XenditWebhookController::class, 'handleCallback'])
+Route::post('/payment/xendit/webhook', [WebhookController::class, 'callback'])
     ->name('xendit.webhook');
 
 // Refresh payment status from Xendit (fallback when webhook hasn't been received)
-Route::get('/payment/xendit/refresh/{orderId}', [XenditWebhookController::class, 'refreshPaymentStatus'])
+Route::get('/payment/xendit/refresh/{orderId}', [WebhookController::class, 'refreshPaymentStatus'])
     ->name('xendit.refresh')
     ->where('orderId', '[0-9]+');

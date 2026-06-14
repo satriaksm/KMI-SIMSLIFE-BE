@@ -136,14 +136,17 @@ class RatingSummary extends Model
         $sum = $ratings->sum('rating');
         $average = $total > 0 ? round($sum / $total, 2) : 0;
 
-        // Update or create summary with polymorphic mapping
+        // Update or create summary using rateable_* as primary key
+        // Also fill summaryable_* for backward compatibility with legacy data
         $summary = self::updateOrCreate(
+            [
+                'rateable_id' => $modelId,
+                'rateable_type' => $modelClass,
+                'merchant_id' => $merchantId,
+            ],
             [
                 'summaryable_id' => $modelId,
                 'summaryable_type' => $modelClass,
-            ],
-            [
-                'merchant_id' => $merchantId,
                 'average_rating' => $average,
                 'total_reviews' => $total,
                 'rating_5_count' => $ratings->where('rating', 5)->count(),
@@ -233,9 +236,9 @@ class RatingSummary extends Model
      */
     public static function getProductRatingSummary(int $productId): array
     {
-        // Try polymorphic summary first (new approach)
-        $summary = self::where('summaryable_id', $productId)
-            ->where('summaryable_type', Product::class)
+        // Query using rateable_* (primary columns)
+        $summary = self::where('rateable_id', $productId)
+            ->where('rateable_type', Product::class)
             ->first(['average_rating', 'total_reviews', 'total_ratings']);
 
         if ($summary) {
@@ -264,9 +267,9 @@ class RatingSummary extends Model
      */
     public static function getJasaRatingSummary(int $jasaId): array
     {
-        // Try polymorphic summary first
-        $summary = self::where('summaryable_id', $jasaId)
-            ->where('summaryable_type', Jasa::class)
+        // Query using rateable_* (primary columns)
+        $summary = self::where('rateable_id', $jasaId)
+            ->where('rateable_type', Jasa::class)
             ->first(['average_rating', 'total_reviews', 'total_ratings']);
 
         if ($summary) {

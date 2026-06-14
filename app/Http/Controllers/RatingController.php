@@ -202,7 +202,7 @@ class RatingController extends Controller
         ]);
 
         foreach ($mediaFiles as $index => $file) {
-            $path = $file->store('review-media', 'public');
+            $path = $file->store('reviews', 'public');
             $fileUrl = asset('storage/' . $path);
             $fileType = str_starts_with($file->getMimeType(), 'image') ? 'image' : 'video';
 
@@ -251,9 +251,74 @@ class RatingController extends Controller
      */
     public function show($ratingId)
     {
-        $rating = Rating::with('user')->findOrFail($ratingId);
+        $user = auth()->user();
+        $rating = Rating::with(['user', 'media', 'rateable', 'orderItem', 'jasaOrderItem'])
+            ->findOrFail($ratingId);
 
-        return response()->json($rating);
+        // Only include user data if not anonymous, or if viewer is the owner
+        $isOwner = $user && $rating->user_id === $user->id;
+
+        $response = $rating->toArray();
+
+        // Strip user data if anonymous and not owner
+        if ($rating->is_anonymous && !$isOwner) {
+            unset($response['user']);
+        }
+
+        // Always include polymorphic rateable relation for universal FE
+        $response['rateable_type'] = $rating->rateable_type;
+        $response['rateable'] = $rating->rateable;
+        $response['rateable_image'] = $this->getRateableImageUrl($rating->rateable);
+
+        // Include order item image for product orders
+        if ($rating->orderItem) {
+            $response['item_image'] = $rating->orderItem->image_snapshot_path
+                ?? $rating->orderItem->image_url
+                ?? $rating->orderItem->product?->image_url
+                ?? $rating->orderItem->product?->image
+                ?? null;
+        }
+
+        // Include jasa order item image for service orders
+        if ($rating->jasaOrderItem) {
+            $response['item_image'] = $rating->jasaOrderItem->service_image
+                ?? $rating->jasaOrderItem->image_url
+                ?? $rating->jasaOrderItem->jasa?->image_url
+                ?? $rating->jasaOrderItem->jasa?->image
+                ?? null;
+        }
+
+        return response()->json([
+            'data' => $response,
+        ]);
+    }
+
+    /**
+     * Get item image URL from polymorphic rateable (Product/Jasa).
+     */
+    private function getRateableImageUrl($rateable): ?string
+    {
+        if (!$rateable) return null;
+        // Try multiple image fields depending on item type
+        $fields = [
+            'logo_url',
+            'cover_url',
+            'image_url',
+            'image',
+            'thumbnail_url',
+        ];
+        foreach ($fields as $field) {
+            if (!empty($rateable->{$field})) return $rateable->{$field};
+        }
+        // Try first image from images relation
+        if ($rateable->relationLoaded('images') && $rateable->images->isNotEmpty()) {
+            return $rateable->images->first()->url ?? $rateable->images->first()->image_url ?? null;
+        }
+        // Try cover_img
+        if ($rateable->relationLoaded('cover_img') && $rateable->cover_img) {
+            return $rateable->cover_img->url ?? $rateable->cover_img->image_url ?? null;
+        }
+        return null;
     }
 
     /**
@@ -263,7 +328,7 @@ class RatingController extends Controller
     public function update(Request $request, $ratingId)
     {
         $user = $request->user();
-        $rating = Rating::findOrFail($ratingId);
+        $rating = Rating::with('media')->findOrFail($ratingId);
 
         // Validasi: hanya pemberi rating yang bisa edit
         if ($rating->user_id !== $user->id) {
@@ -272,13 +337,91 @@ class RatingController extends Controller
             ], 403);
         }
 
+        // Rule: ulasan hanya bisa diperbarui 1 kali
+        if ($rating->isUpdateExhausted()) {
+            return response()->json([
+                'message' => 'Kesempatan pembaruan ulasan sudah digunakan'
+            ], 403);
+        }
+
         $data = $request->validate([
             'rating' => 'sometimes|integer|min:1|max:5',
             'title' => 'nullable|string|max:255',
             'comment' => 'nullable|string|max:2000',
+            'is_anonymous' => 'nullable',
         ]);
 
+        // Konversi is_anonymous dari string '1'/'0' ke boolean
+        if (array_key_exists('is_anonymous', $data)) {
+            $val = $data['is_anonymous'];
+            if (is_string($val)) {
+                $data['is_anonymous'] = in_array(strtolower($val), ['1', 'true', 'yes']);
+            } elseif ($val === null) {
+                unset($data['is_anonymous']);
+            } else {
+                $data['is_anonymous'] = (bool) $val;
+            }
+        }
+
         $rating->update($data);
+
+        // Increment update_count and set review_updated_at
+        $rating->update([
+            'update_count' => ($rating->update_count ?? 0) + 1,
+            'review_updated_at' => now(),
+        ]);
+
+        // Handle removed_media_ids - delete only selected old media
+        $removedIds = [];
+        $rawRemoved = $request->input('removed_media_ids');
+        if ($rawRemoved) {
+            if (is_string($rawRemoved)) {
+                $decoded = json_decode($rawRemoved, true);
+                $removedIds = is_array($decoded) ? $decoded : [];
+            } elseif (is_array($rawRemoved)) {
+                $removedIds = $rawRemoved;
+            }
+        }
+        if (!empty($removedIds)) {
+            $mediaToDelete = $rating->media()->whereIn('id', $removedIds)->get();
+            foreach ($mediaToDelete as $media) {
+                if ($media->file_path && Storage::disk('public')->exists($media->file_path)) {
+                    Storage::disk('public')->delete($media->file_path);
+                }
+                $media->delete();
+            }
+        }
+
+        // Handle new media uploads (support media[], images[], files[])
+        $rawMedia = $request->file('media')
+            ?? $request->file('images')
+            ?? $request->file('files')
+            ?? [];
+        if ($rawMedia && !is_array($rawMedia)) {
+            $rawMedia = [$rawMedia];
+        }
+        if (is_array($rawMedia) && count($rawMedia) > 0) {
+            $currentCount = $rating->media()->count();
+            $maxFiles = 5;
+            foreach ($rawMedia as $index => $file) {
+                if (!($file instanceof \Illuminate\Http\UploadedFile)) continue;
+                if ($currentCount + $index >= $maxFiles) break;
+
+                $path = $file->store('reviews', 'public');
+                $fileUrl = asset('storage/' . $path);
+                $fileType = str_starts_with($file->getMimeType(), 'image') ? 'image' : 'video';
+
+                ReviewMedia::create([
+                    'review_id' => $rating->id,
+                    'file_path' => $path,
+                    'file_url' => $fileUrl,
+                    'file_type' => $fileType,
+                    'original_name' => $file->getClientOriginalName(),
+                    'file_size' => $file->getSize(),
+                    'display_order' => $currentCount + $index,
+                ]);
+            }
+        }
 
         // Update rating summary for the item (legacy + polymorphic)
         RatingSummary::updateFromRating($rating);
@@ -304,7 +447,7 @@ class RatingController extends Controller
 
         return response()->json([
             'message' => 'Rating berhasil diperbarui',
-            'data' => $rating
+            'data' => $rating->load(['user', 'media'])
         ]);
     }
 

@@ -47,11 +47,9 @@ class ServiceOrderController extends Controller
             'booking_date' => 'nullable|date',
             'booking_time' => 'nullable|date_format:H:i',
             'booking_note' => 'nullable|string|max:1000',
-            // order_method: mekanisme pemesanan baru (direct, scheduled, consultation)
-            'order_method' => 'nullable|string|in:direct,scheduled,consultation',
-            // Legacy: service_type_booking, cara_pemesanan, mekanisme_pemesanan (backward compatibility)
-            'service_type_booking' => 'nullable|string',
-            'cara_pemesanan' => 'nullable|string',
+            // order_method: mekanisme pemesanan (FE format: keranjang, booking, konsultasi)
+            'order_method' => 'nullable|string|in:keranjang,booking,konsultasi',
+            // Legacy aliases (still accepted for backward compat)
             'mekanisme_pemesanan' => 'nullable|string',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
@@ -79,17 +77,17 @@ class ServiceOrderController extends Controller
         $merchantId = $jasa->merchant_id;
         $serviceType = $jasa->service_type ?? null;
 
-        // order_method: mekanisme pemesanan (PRIMARY)
+        // order_method: mekanisme pemesanan (PRIMARY - FE format: keranjang, booking, konsultasi)
         // Mapping dari berbagai input legacy:
-        // - order_method: direct, scheduled, consultation (PRIMARY)
-        // - service_type_booking: keranjang, booking, konsultasi
-        // - cara_pemesanan: langsung_pesan, booking, memerlukan_konsultasi
+        // - order_method: keranjang, booking, konsultasi
+        // - cara_pemesanan: langsung_pesan, booking, memerlukan_konsultasi (DB format)
         // - mekanisme_pemesanan: keranjang, booking, konsultasi
+        // Fallback: ambil dari jasa.cara_pemesanan (DB format)
         $orderMethod = $request->order_method
-            ?? JasaOrderItem::mapToOrderMethod($request->service_type_booking)
             ?? JasaOrderItem::mapToOrderMethod($request->cara_pemesanan)
-            ?? JasaOrderItem::mapToOrderMethod($request->mekanisme_pemesanan);
-        $orderMethod = $orderMethod ?: 'direct'; // Default
+            ?? JasaOrderItem::mapToOrderMethod($request->mekanisme_pemesanan)
+            ?? JasaOrderItem::mapToOrderMethod($jasa->cara_pemesanan); // fallback dari DB
+        $orderMethod = $orderMethod ?: 'keranjang'; // Default FE format
 
         $paymentMethod = strtoupper($request->payment_method ?? 'COD');
         $isCodPayment = strtolower($paymentMethod) === 'cod';
@@ -127,10 +125,19 @@ class ServiceOrderController extends Controller
             // ===== 1. Create order in orders table (UNIFIED) =====
             // NOTE: order_type = 'jasa' (jenis order utama: product/jasa)
             // order_method disimpan di jasa_order_items, BUKAN di orders
+            $customerName = $request->customer_name
+                ?? Auth::user()?->name
+                ?? Auth::user()?->nama
+                ?? 'Customer';
             $order = Order::create([
                 'user_id' => $customerId,
                 'merchant_id' => $merchantId,
                 'order_type' => 'jasa', // All service orders are type 'jasa'
+                'nama' => $customerName,
+                'tel' => $request->customer_phone ?? '',
+                'alamat' => $request->customer_address ?? '',
+                'tanggal' => $request->booking_date ?? now()->toDateString(),
+                'waktu' => $request->booking_time ?? '00:00',
                 'total_price' => $totalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
@@ -138,7 +145,7 @@ class ServiceOrderController extends Controller
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
-            // order_method: mekanisme pemesanan (direct, scheduled, consultation)
+            // order_method: mekanisme pemesanan (keranjang, booking, konsultasi)
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $jasa->id,
@@ -148,8 +155,7 @@ class ServiceOrderController extends Controller
                 'booking_date' => $request->booking_date,
                 'booking_time' => $request->booking_time,
                 'service_type' => $serviceType,
-                'service_type_booking' => $orderMethod, // Legacy - for backward compat
-                'order_method' => $orderMethod, // PRIMARY
+                'order_method' => $orderMethod, // PRIMARY: keranjang | booking | konsultasi
                 'note' => $request->booking_note,
                 'booking_note' => $request->booking_note,
                 'service_location_address' => $serviceLocationAddress,
@@ -343,7 +349,7 @@ class ServiceOrderController extends Controller
                 $orderArray['jasa_order_item_id'] = $jasaItem->id;
                 $orderArray['service_type'] = $jasaItem->service_type;
                 $orderArray['service_type_label'] = $jasaItem->service_type_label;
-                $orderArray['booking_type'] = $jasaItem->service_type_booking;
+                $orderArray['booking_type'] = $jasaItem->order_method;
                 $orderArray['booking_date'] = $jasaItem->booking_date;
                 $orderArray['booking_time'] = $jasaItem->booking_time;
                 $orderArray['tanggal'] = $jasaItem->booking_date ?? $order->tanggal; // Backward compatibility
@@ -492,6 +498,7 @@ class ServiceOrderController extends Controller
             $order = Order::with([
                 'merchant:id,name,slug,logo_path,segmentation_id,phone',
                 'merchant.primaryAddress',
+                'payment',
                 'jasaItems.jasa:id,title,image,slug',
                 'jasaItems.review.media',
                 'jasaItems.completionEvidences',
@@ -562,10 +569,22 @@ class ServiceOrderController extends Controller
         $statusLabel = $serviceOrder?->status_label ?? ucfirst(str_replace('_', ' ', $order->status ?? 'unknown'));
 
         // Payment Info - Use orders.payment_status as source of truth
+        // Also read from Payment relation if available
         $paymentStatus = $order->payment_status ?? $serviceOrder?->payment_status;
         $paymentMethod = $order->payment_method ?? $serviceOrder?->payment_method;
         $paymentChannel = $order->payment_channel ?? $order->paid_channel ?? $serviceOrder?->payment_channel;
         $totalPrice = (float) ($serviceOrder?->total_price ?? $order->total_price);
+
+        // Read from Payment relation (Xendit channel is stored here after webhook)
+        $paymentRelation = $order->payment;
+        if ($paymentRelation) {
+            if ($paymentRelation->status === 'PAID') {
+                $paymentStatus = 'PAID';
+            }
+            if ($paymentRelation->paid_channel) {
+                $paymentChannel = $paymentRelation->paid_channel;
+            }
+        }
 
         // Payment method display mapping
         $paymentMethodLabels = [
@@ -633,6 +652,15 @@ class ServiceOrderController extends Controller
             'payment_channel' => $paymentChannel,
             'paid_channel' => $order->paid_channel ?? $serviceOrder?->paid_channel,
             'is_payment_completed' => $isPaymentCompleted,
+            // Payment relation data (from payments table)
+            'payment' => $paymentRelation ? [
+                'id' => $paymentRelation->id,
+                'status' => $paymentRelation->status,
+                'payment_method' => $paymentRelation->payment_method,
+                'paid_channel' => $paymentRelation->paid_channel,
+                'paid_at' => $paymentRelation->paid_at?->toIso8601String(),
+                'xendit_invoice_id' => $paymentRelation->xendit_invoice_id,
+            ] : null,
             'total_price' => $totalPrice,
             'service_type' => $serviceType,
             // Service info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
@@ -644,7 +672,7 @@ class ServiceOrderController extends Controller
             'order_method_label' => $jasaItem?->order_method_label,
             // Legacy: order_type, mekanisme_pemesanan (backward compatibility - akan dihapus nanti)
             'order_type' => $this->resolveOrderType($order, $jasaItem, $serviceOrder),
-            'mekanisme_pemesanan' => $jasaItem?->service_type_booking,
+            'mekanisme_pemesanan' => $jasaItem?->order_method,
             'status' => $status,
             'status_label' => $statusLabel,
             'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
@@ -972,7 +1000,7 @@ class ServiceOrderController extends Controller
      * Map frontend mechanism to internal order_method format.
      *
      * Frontend sends: keranjang/booking/konsultasi/direct_checkout/etc.
-     * We store: direct/scheduled/consultation
+     * We store: keranjang, booking, konsultasi (frontend display format)
      */
     private function mapMekanismeToOrderMethod(?string $mekanisme): ?string
     {
@@ -982,17 +1010,18 @@ class ServiceOrderController extends Controller
 
         $mapping = [
             // Frontend values -> internal values
-            'konsultasi' => 'consultation',
-            'booking' => 'scheduled',
-            'keranjang' => 'direct',
+            'konsultasi' => 'konsultasi',
+            'booking' => 'booking',
+            'keranjang' => 'keranjang',
             // Aliases
-            'langsung_pesan' => 'direct',
-            'langsung_pesan_lagi' => 'direct',
-            'checkout' => 'direct',
-            'direct_checkout' => 'direct',
-            'consultation' => 'consultation',
-            'scheduled' => 'scheduled',
-            'direct' => 'direct',
+            'langsung_pesan' => 'keranjang',
+            'langsung_pesan_lagi' => 'keranjang',
+            'checkout' => 'keranjang',
+            'direct_checkout' => 'keranjang',
+            'consultation' => 'konsultasi',
+            'scheduled' => 'booking',
+            'direct' => 'keranjang',
+            'memerlukan_konsultasi' => 'konsultasi',
         ];
 
         return $mapping[strtolower($mekanisme)] ?? null;
@@ -1005,8 +1034,7 @@ class ServiceOrderController extends Controller
      * Priority:
      * 1. jasa_order_items.order_method (PRIMARY - mechanism)
      * 2. orders.order_type (legacy - but for jasa should be 'jasa')
-     * 3. jasa_order_items.service_type_booking (legacy)
-     * 4. service_orders.mekanisme_pemesanan (legacy)
+     * 3. service_orders.mekanisme_pemesanan (legacy fallback)
      */
     private function resolveOrderType(?Order $order, ?JasaOrderItem $jasaItem, ?ServiceOrder $serviceOrder): ?string
     {
@@ -1025,18 +1053,13 @@ class ServiceOrderController extends Controller
             }
         }
 
-        // 3. Check jasa_order_items.service_type_booking (legacy)
-        if ($jasaItem && !empty($jasaItem->service_type_booking)) {
-            return $this->mapMekanismeToOrderMethod($jasaItem->service_type_booking);
-        }
-
-        // 4. Check service_orders.mekanisme_pemesanan (LEGACY)
+        // 3. Check service_orders.mekanisme_pemesanan (LEGACY fallback)
         if ($serviceOrder && !empty($serviceOrder->mekanisme_pemesanan)) {
             return $this->mapMekanismeToOrderMethod($serviceOrder->mekanisme_pemesanan);
         }
 
-        // 5. Fallback to 'direct'
-        return 'direct';
+        // 4. Fallback to 'keranjang' (FE format)
+        return 'keranjang';
     }
 
     /**
@@ -1114,7 +1137,7 @@ class ServiceOrderController extends Controller
                 $orderArray['jasa_order_item_id'] = $jasaItem->id;
                 $orderArray['service_type'] = $jasaItem->service_type;
                 $orderArray['service_type_label'] = $jasaItem->service_type_label;
-                $orderArray['booking_type'] = $jasaItem->service_type_booking;
+                $orderArray['booking_type'] = $jasaItem->order_method;
                 $orderArray['booking_date'] = $jasaItem->booking_date;
                 $orderArray['booking_time'] = $jasaItem->booking_time;
                 $orderArray['booking_note'] = $jasaItem->booking_note ?? $jasaItem->note;
@@ -1411,7 +1434,7 @@ class ServiceOrderController extends Controller
                 'service_image' => $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null,
                 'service_type' => $jasaItem?->service_type ?? $serviceOrder?->service_type,
                 'order_type' => $order->order_type, // Legacy: mechanism (jasa/product)
-                'booking_type' => $jasaItem?->service_type_booking,
+                'booking_type' => $jasaItem?->order_method,
 
                 // Booking Info
                 'booking_date' => $jasaItem?->booking_date,
@@ -1618,7 +1641,7 @@ class ServiceOrderController extends Controller
             // order_type: mekanisme pemesanan (PRIMARY)
             'order_type' => $this->resolveOrderType($order, $jasaItem, $serviceOrder),
             // Legacy: mekanisme_pemesanan (backward compatibility)
-            'mekanisme_pemesanan' => $jasaItem?->service_type_booking,
+            'mekanisme_pemesanan' => $jasaItem?->order_method,
             // Status - from orders table as primary
             'status' => $status,
             'status_label' => $statusLabel,
@@ -2187,7 +2210,7 @@ class ServiceOrderController extends Controller
                     'type' => gettype($mediaFiles),
                 ]);
 
-                $basePath = 'service-reviews';
+                $basePath = 'reviews';
                 if (!Storage::disk('public')->exists($basePath)) {
                     Storage::disk('public')->makeDirectory($basePath);
                 }
@@ -2325,17 +2348,18 @@ class ServiceOrderController extends Controller
     }
 
     /**
-     * Update rating summaries for jasa and merchant
+     * Update rating summaries for jasa and merchant.
+     * Uses rateable_id/rateable_type polymorphic pattern consistently.
      */
     private function updateRatingSummary(int $jasaId, int $merchantId): void
     {
-        // Update jasa rating summary
+        // Update jasa rating summary — polymorphic: rateable_id = jasa_id, rateable_type = Jasa::class
         $jasaRatings = Rating::where('rateable_id', $jasaId)
             ->where('rateable_type', Jasa::class)
             ->get();
 
         RatingSummary::updateOrCreate(
-            ['summaryable_id' => $jasaId, 'summaryable_type' => Jasa::class],
+            ['rateable_id' => $jasaId, 'rateable_type' => Jasa::class],
             [
                 'merchant_id' => $merchantId,
                 'average_rating' => round($jasaRatings->avg('rating') ?? 0, 1),
@@ -2349,11 +2373,12 @@ class ServiceOrderController extends Controller
             ]
         );
 
-        // Update merchant overall rating
+        // Update merchant overall rating summary
+        // Polymorphic: use rateable_id = merchant_id, rateable_type = 'Merchant' (no actual Merchant model class)
         $merchantRatings = Rating::where('merchant_id', $merchantId)->get();
 
         RatingSummary::updateOrCreate(
-            ['summaryable_id' => $merchantId, 'summaryable_type' => Merchant::class],
+            ['rateable_id' => $merchantId, 'rateable_type' => 'Merchant'],
             [
                 'merchant_id' => $merchantId,
                 'average_rating' => round($merchantRatings->avg('rating') ?? 0, 1),
