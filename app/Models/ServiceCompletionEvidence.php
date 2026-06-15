@@ -17,6 +17,7 @@ class ServiceCompletionEvidence extends Model
     protected $appends = ['file_url', 'media_url', 'is_image', 'is_video'];
 
     protected $fillable = [
+        'jasa_order_item_id',
         'service_order_id',
         'file_name',
         'file_path',
@@ -28,6 +29,7 @@ class ServiceCompletionEvidence extends Model
     ];
 
     protected $casts = [
+        'jasa_order_item_id' => 'integer',
         'file_size' => 'integer',
         'display_order' => 'integer',
         'created_at' => 'datetime',
@@ -47,9 +49,21 @@ class ServiceCompletionEvidence extends Model
     // RELATIONSHIPS
     // ============================================================
 
+    /**
+     * @deprecated Gunakan jasaOrderItem() sebagai gantinya.
+     */
     public function serviceOrder(): BelongsTo
     {
         return $this->belongsTo(ServiceOrder::class, 'service_order_id');
+    }
+
+    /**
+     * Relasi ke JasaOrderItem.
+     * Gunakan ini sebagai pengganti serviceOrder().
+     */
+    public function jasaOrderItem(): BelongsTo
+    {
+        return $this->belongsTo(JasaOrderItem::class, 'jasa_order_item_id');
     }
 
     // ============================================================

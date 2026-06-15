@@ -24,18 +24,25 @@ use Illuminate\Validation\Rules\Enum;
  * ServiceOrderController
  *
  * Full UMKM Jasa service order lifecycle:
- * - Create order (from langsung_pesan or from consultation)
+ * - Create order (Order + JasaOrderItem - no ServiceOrder)
  * - Merchant accept/reject
  * - Work evidence upload
  * - Customer confirmation
  * - Review submission
+ *
+ * NOTE: ServiceOrder table is deprecated. New orders use Order + JasaOrderItem only.
+ * This controller maintains backward compatibility with existing ServiceOrder data.
  */
 class ServiceOrderController extends Controller
 {
     /**
      * Create a new service order (langsung_pesan flow)
-     * Creates order in BOTH orders table (for unified reporting) AND service_orders table (for backward compatibility)
+     * Creates order using Order + JasaOrderItem (NO ServiceOrder anymore)
      * Service-specific details are stored in jasa_order_items table
+     *
+     * Flow:
+     * - COD: langsung masuk 'menunggu_konfirmasi_merchant' + set confirm_deadline
+     * - Xendit: masuk 'pending' (menunggu pembayaran), setelah bayar baru ke 'menunggu_konfirmasi_merchant'
      */
     public function create(Request $request)
     {
@@ -1917,6 +1924,7 @@ class ServiceOrderController extends Controller
 
                     if ($serviceOrder) {
                         ServiceCompletionEvidence::create([
+                            'jasa_order_item_id' => $jasaOrderItem?->id,
                             'service_order_id' => $serviceOrder->id,
                             'file_name' => $file->getClientOriginalName(),
                             'file_path' => $path,
@@ -1973,6 +1981,7 @@ class ServiceOrderController extends Controller
 
                     if ($serviceOrder) {
                         ServiceCompletionEvidence::create([
+                            'jasa_order_item_id' => $jasaOrderItem?->id,
                             'service_order_id' => $serviceOrder->id,
                             'file_name' => $file->getClientOriginalName(),
                             'file_path' => $path,
