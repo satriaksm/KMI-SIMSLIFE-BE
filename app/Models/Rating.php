@@ -27,6 +27,9 @@ class Rating extends Model
         'is_anonymous',
         'update_count',
         'review_updated_at',
+        // Merchant reply to review
+        'merchant_reply',
+        'merchant_reply_at',
     ];
 
     protected $casts = [
@@ -34,6 +37,7 @@ class Rating extends Model
         'is_anonymous' => 'boolean',
         'update_count' => 'integer',
         'review_updated_at' => 'datetime',
+        'merchant_reply_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -81,7 +85,9 @@ class Rating extends Model
     }
 
     /**
-     * Service order reference (for Jasa)
+     * Service order reference (for Jasa - DEPRECATED)
+     * Gunakan jasaOrderItem() sebagai gantinya.
+     * @deprecated Gunakan jasaOrderItem() untuk link ke unified orders
      */
     public function serviceOrder(): BelongsTo
     {
@@ -89,7 +95,8 @@ class Rating extends Model
     }
 
     /**
-     * Jasa order item reference (for Jasa - links to unified orders table)
+     * Jasa order item reference (for unified Jasa orders).
+     * Link ke JasaOrderItem yang merupakan bagian dari Order.
      */
     public function jasaOrderItem(): BelongsTo
     {
@@ -102,6 +109,14 @@ class Rating extends Model
     public function media(): HasMany
     {
         return $this->hasMany(ReviewMedia::class, 'review_id')->orderBy('display_order');
+    }
+
+    /**
+     * History perubahan review (saat customer update review)
+     */
+    public function histories(): HasMany
+    {
+        return $this->hasMany(ReviewHistory::class)->orderBy('created_at', 'desc');
     }
 
     // ===== SCOPES =====
@@ -126,9 +141,20 @@ class Rating extends Model
         return $query->where('order_id', $orderId);
     }
 
+    /**
+     * @deprecated Gunakan scopeForJasaOrderItem() sebagai gantinya.
+     */
     public function scopeForServiceOrder($query, int $serviceOrderId)
     {
         return $query->where('service_order_id', $serviceOrderId);
+    }
+
+    /**
+     * Scope untuk filter rating berdasarkan jasa order item.
+     */
+    public function scopeForJasaOrderItem($query, int $jasaOrderItemId)
+    {
+        return $query->where('jasa_order_item_id', $jasaOrderItemId);
     }
 
     public function scopeForOrderItem($query, int $orderItemId)
@@ -172,6 +198,25 @@ class Rating extends Model
         return $this->user?->name ?? 'Pengguna';
     }
 
+    // ===== HELPER METHODS =====
+
+    /**
+     * Check if merchant has replied to this review.
+     */
+    public function hasMerchantReply(): bool
+    {
+        return !empty($this->merchant_reply);
+    }
+
+    /**
+     * Check if merchant can still reply to this review.
+     * Merchant can only reply once.
+     */
+    public function canMerchantReply(): bool
+    {
+        return empty($this->merchant_reply);
+    }
+
     // ===== SERIALIZATION =====
 
     /**
@@ -192,17 +237,32 @@ class Rating extends Model
         $array['can_update'] = $this->canUpdate();
         $array['is_update_exhausted'] = $this->isUpdateExhausted();
 
+        // Include merchant reply metadata
+        $array['merchant_reply'] = $this->merchant_reply;
+        $array['merchant_reply_at'] = $this->merchant_reply_at?->toIso8601String();
+        $array['has_merchant_reply'] = $this->hasMerchantReply();
+        $array['can_merchant_reply'] = $this->canMerchantReply();
+
         return $array;
     }
 
     // ===== HELPER METHODS =====
 
     /**
-     * Check if this review is for a service order
+     * Check if this review is for a service order.
+     * @deprecated Gunakan isForJasaOrderItem() sebagai gantinya.
      */
     public function isForServiceOrder(): bool
     {
         return $this->service_order_id !== null;
+    }
+
+    /**
+     * Check if this review is for a jasa order item.
+     */
+    public function isForJasaOrderItem(): bool
+    {
+        return $this->jasa_order_item_id !== null;
     }
 
     /**
@@ -237,5 +297,51 @@ class Rating extends Model
     public function getRemainingUpdateCount(): int
     {
         return max(0, 1 - ($this->update_count ?? 0));
+    }
+
+    /**
+     * Update review with history tracking.
+     *
+     * Saves old data to review_histories before updating.
+     * Also increments update_count.
+     *
+     * @param array $data New review data (rating, title, comment, is_anonymous)
+     * @param int $userId User making the update
+     * @param array|null $newMediaIds Array of new media IDs to attach
+     * @return Rating
+     */
+    public function updateWithHistory(array $data, int $userId, ?array $newMediaIds = null): Rating
+    {
+        // Save old data for history
+        $oldData = [
+            'rating' => $this->rating,
+            'title' => $this->title,
+            'comment' => $this->comment,
+            'media' => $this->media ? $this->media->toArray() : [],
+        ];
+
+        // Update the review
+        $this->fill($data);
+        $this->increment('update_count');
+        $this->review_updated_at = now();
+        $this->save();
+
+        // Save history record
+        $newMedia = $newMediaIds ? ReviewMedia::whereIn('id', $newMediaIds)->get()->toArray() : [];
+
+        ReviewHistory::create([
+            'rating_id' => $this->id,
+            'old_rating' => $oldData['rating'],
+            'old_title' => $oldData['title'],
+            'old_comment' => $oldData['comment'],
+            'old_media' => $oldData['media'],
+            'new_rating' => $this->rating,
+            'new_title' => $this->title,
+            'new_comment' => $this->comment,
+            'new_media' => $newMedia,
+            'updated_by' => $userId,
+        ]);
+
+        return $this;
     }
 }

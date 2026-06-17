@@ -71,8 +71,12 @@ class MerchantController extends Controller
             ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
             ->with([
                 'segmentation:id,name',
-                'primaryAddress:id,addressable_id,addressable_type,latitude,longitude,label',
-                'addresses:id,addressable_id,addressable_type,latitude,longitude,label',
+                'primaryAddress:id,addressable_id,addressable_type,detail,latitude,longitude,label',
+                'primaryAddress.province:id,name',
+                'primaryAddress.city:id,name',
+                'primaryAddress.district:id,name',
+                'primaryAddress.village:id,name',
+                'addresses:id,addressable_id,addressable_type,detail,latitude,longitude,label',
             ])
             ->get();
 
@@ -331,6 +335,22 @@ class MerchantController extends Controller
             'primaryAddress.district',
             'primaryAddress.village',
         ]);
+
+        // Load ratings/reviews with user, media, and histories for review section
+        $merchant->load([
+            'ratings' => function ($query) {
+                $query->with(['user', 'media', 'histories'])
+                    ->orderByDesc('created_at')
+                    ->limit(50);
+            },
+        ]);
+
+        // Add rating summary to merchant data
+        $ratings = \App\Models\Rating::where('merchant_id', $merchant->id)->get();
+        $merchant->rating_summary = [
+            'average_rating' => $ratings->count() > 0 ? round($ratings->avg('rating'), 1) : 0,
+            'total_reviews' => $ratings->count(),
+        ];
 
         // Fallback: beberapa data lama mungkin tidak memakai label 'utama'
         // sehingga relasi primaryAddress null. Untuk kebutuhan edit form,

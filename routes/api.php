@@ -41,6 +41,7 @@ use App\Http\Controllers\Public\PublicProfileController;
 use App\Http\Controllers\ServiceOrderController;
 use App\Http\Controllers\ServiceConsultationController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\JasaOrderController;
 use App\Http\Controllers\MerchantReportController;
 use App\Models\Conversation;
 
@@ -65,7 +66,10 @@ Route::prefix('public')->name('public.')->group(function () {
     // Jasa Ratings (public - view only) - MUST BE BEFORE ID/SLUG routes
     Route::get('/jasas/{jasaId}/ratings/summary', [RatingController::class, 'jasaSummary'])->name('jasas.ratings.summary');
     Route::get('/jasas/{jasaId}/ratings', [RatingController::class, 'indexForJasa'])->name('jasas.ratings');
-    
+
+    // Available slots for booking (public - must be BEFORE ID/SLUG routes)
+    Route::get('/jasas/{jasaId}/available-slots', [JasaController::class, 'getAvailableSlots'])->name('jasas.available-slots');
+
     // Jasa by ID (numeric only - must come FIRST so it matches before slug)
     Route::get('/jasas/{id}', [JasaController::class, 'publicShow'])
         ->whereNumber('id')
@@ -335,12 +339,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
-        // ===== PAYMENT ENDPOINTS (PRODUCT & JASA ORDERS) =====
-        // Xendit invoice creation for all orders
+        // ===== PAYMENT ENDPOINTS (ALL ORDERS) =====
+        // Xendit invoice creation for all orders (produk/kuliner AND jasa)
         // Called by frontend after order is created with PENDING/UNPAID status
-        // Supports both product and jasa orders via PaymentController
+        // PaymentController handles both product and jasa orders via Order + JasaOrderItem
         Route::prefix('payments')->name('payments.')->group(function () {
-            // Create Xendit invoice for existing order
+            // Create Xendit invoice for Order
             Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice'])
                 ->name('create-invoice')
                 ->where('orderId', '[0-9]+');
@@ -361,8 +365,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ->where('orderId', '[0-9]+');
         });
 
-        // ===== SERVICE ORDERS (CUSTOMER) =====
-        // Service Orders (Customer)
+        // ===== SERVICE ORDERS (CUSTOMER) - BACKWARD COMPATIBILITY =====
+        // NOTE: ServiceOrder is deprecated. New orders should use Order + JasaOrderItem.
+        // These routes are kept for backward compatibility with existing data.
         // Full lifecycle: create → merchant accept/reject → evidence → customer confirm → review
         Route::prefix('service-orders')->name('service-orders.')->group(function () {
             Route::post('/', [ServiceOrderController::class, 'create'])->name('create');
@@ -370,6 +375,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/{id}', [ServiceOrderController::class, 'getCustomerOrderDetail'])->name('show');
             Route::post('/{id}/confirm', [ServiceOrderController::class, 'confirmCompleted'])->name('confirm');
             Route::post('/{id}/review', [ServiceOrderController::class, 'submitReview'])->name('review');
+        });
+
+        // ===== JASA ORDERS (CUSTOMER) - BARU - Menggunakan Order + JasaOrderItem =====
+        // Endpoint baru untuk flow order jasa tanpa ServiceOrder
+        Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
+            Route::post('/', [JasaOrderController::class, 'create'])->name('create');
+            Route::get('/', [JasaOrderController::class, 'customerHistory'])->name('customer-history');
+            Route::get('/{orderId}', [JasaOrderController::class, 'customerShow'])->name('show');
+            Route::post('/{orderId}/confirm', [JasaOrderController::class, 'confirmCompleted'])->name('confirm');
+            Route::post('/{orderId}/review', [JasaOrderController::class, 'submitReview'])->name('review');
         });
 
         // Service Consultations (Customer)
@@ -444,6 +459,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 Route::get('/', [ServiceOrderController::class, 'getMerchantHistory'])->name('merchant-history');
                 Route::get('/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('show');
                 Route::match(['patch', 'post'], '/{id}/status', [ServiceOrderController::class, 'updateStatus'])->name('update-status');
+            });
+
+            // ===== JASA ORDERS (MERCHANT) - BARU - Menggunakan Order + JasaOrderItem =====
+            Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
+                Route::get('/', [JasaOrderController::class, 'merchantOrders'])->name('merchant-history');
+                Route::patch('/{orderId}/status', [JasaOrderController::class, 'updateStatus'])->name('update-status');
             });
 
             // ===== SERVICE CONSULTATIONS (MERCHANT) =====

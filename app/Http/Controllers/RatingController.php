@@ -10,6 +10,7 @@ use App\Models\Merchant;
 use App\Models\ReviewMedia;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use App\Helpers\ApiResponse;
 
@@ -32,7 +33,7 @@ class RatingController extends Controller
 
         $ratings = Rating::where('rateable_id', $product->id)
             ->where('rateable_type', Product::class)
-            ->with(['user', 'media'])
+            ->with(['user', 'media', 'histories'])
             ->latest()
             ->paginate(10);
 
@@ -56,7 +57,7 @@ class RatingController extends Controller
 
         $ratings = Rating::where('rateable_id', $jasa->id)
             ->where('rateable_type', Jasa::class)
-            ->with(['user', 'media'])
+            ->with(['user', 'media', 'histories'])
             ->latest()
             ->paginate(10);
 
@@ -110,8 +111,9 @@ class RatingController extends Controller
             ]);
         }
 
+        // Load reviews with histories for review updates tracking
         $ratings = Rating::where('merchant_id', $merchant->id)
-            ->with(['user', 'rateable', 'media'])
+            ->with(['user', 'rateable', 'media', 'histories'])
             ->latest()
             ->paginate(10);
 
@@ -530,5 +532,68 @@ class RatingController extends Controller
             ->firstOrFail();
 
         return response()->json($summary);
+    }
+
+    /**
+     * POST /api/merchant/{merchant}/reviews/{ratingId}/reply
+     * Merchant membalas tanggapan pelanggan (satu kali saja)
+     */
+    public function merchantReply(Request $request, Merchant $merchant, $ratingId)
+    {
+        // Validate merchant ownership
+        if ($merchant->user_id !== auth()->id()) {
+            return ApiResponse::error('Tidak memiliki akses ke ulasan ini', 403);
+        }
+
+        // Find the rating
+        $rating = Rating::with(['media', 'user', 'jasaOrderItem', 'jasaOrderItem.order', 'jasaOrderItem.jasa'])
+            ->find($ratingId);
+
+        if (!$rating) {
+            return ApiResponse::error('Ulasan tidak ditemukan', 404);
+        }
+
+        // Validate rating belongs to this merchant
+        if ($rating->merchant_id !== $merchant->id) {
+            return ApiResponse::error('Ulasan ini bukan untuk merchant Anda', 403);
+        }
+
+        // Validate rating is for a jasa order
+        if (!$rating->jasa_order_item_id && !$rating->service_order_id) {
+            return ApiResponse::error('Ulasan ini bukan untuk pesanan jasa', 400);
+        }
+
+        // Check if merchant already replied
+        if ($rating->hasMerchantReply()) {
+            return ApiResponse::error('Ulasan ini sudah ditanggapi. Ulasan hanya dapat ditanggapi satu kali.', 422);
+        }
+
+        // Validate request
+        $data = $request->validate([
+            'merchant_reply' => 'required|string|max:1000',
+        ]);
+
+        // Update rating with merchant reply
+        $rating->update([
+            'merchant_reply' => $data['merchant_reply'],
+            'merchant_reply_at' => now(),
+        ]);
+
+        // Reload with relations
+        $rating->load(['media', 'user']);
+
+        Log::info('[RatingController::merchantReply] Reply submitted', [
+            'rating_id' => $rating->id,
+            'merchant_id' => $merchant->id,
+            'reply_length' => strlen($data['merchant_reply']),
+        ]);
+
+        return ApiResponse::success([
+            'id' => $rating->id,
+            'rating' => $rating->rating,
+            'comment' => $rating->comment,
+            'merchant_reply' => $rating->merchant_reply,
+            'merchant_reply_at' => $rating->merchant_reply_at?->toIso8601String(),
+        ], 'Tanggapan ulasan berhasil dikirim');
     }
 }

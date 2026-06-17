@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\ServiceConsultation;
 use App\Models\ServiceConsultationNote;
-use App\Models\ServiceOrder;
 use App\Models\Order;
 use App\Models\JasaOrderItem;
 use App\Models\ConsultationMessage;
@@ -700,7 +699,7 @@ class ServiceConsultationController extends Controller
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
-            // order_method: consultation (PRIMARY)
+            // order_method: konsultasi (PRIMARY)
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $consultation->jasa_id,
@@ -710,64 +709,37 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $consultation->proposed_date,
                 'booking_time' => $consultation->proposed_time,
                 'service_type' => $serviceType,
-                'service_type_booking' => 'consultation', // Legacy - for backward compat
-                'order_method' => 'consultation', // PRIMARY
+                'order_method' => 'konsultasi', // PRIMARY
                 'note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
                 'booking_note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
                 'service_location_address' => $serviceLocationAddress,
             ]);
 
-            // ===== 3. Create service_orders for backward compatibility =====
-            $serviceOrder = ServiceOrder::create([
-                'customer_id' => $consultation->customer_id,
-                'merchant_id' => $consultation->merchant_id,
-                'jasa_id' => $consultation->jasa_id,
-                'consultation_id' => $consultation->id,
-                'service_name' => $consultation->service_name,
-                'service_type' => $serviceType,
-                'service_image' => $serviceImage,
-                'merchant_name' => $jasa->merchant?->name ?? 'UMKM',
-                'total_price' => $finalPrice,
-                'status' => ServiceOrder::STATUS_MENUNGGU_KONFIRMASI,
-                'booking_date' => $consultation->proposed_date,
-                'booking_time' => $consultation->proposed_time,
-                'booking_note' => $consultation->proposed_notes ?? $consultation->negotiation_notes,
-                // NOTE: mekanisme_pemesanan TIDAK disimpan - order_type adalah PRIMARY
-                'customer_name' => $consultation->customer?->name ?? 'Pelanggan',
-                'customer_phone' => $consultation->customer?->phone ?? null,
-                'payment_method' => $paymentMethod,
-                'payment_status' => ServiceOrder::PAYMENT_UNPAID,
-            ]);
-
-            // Link jasa_order_items to service_order
-            $jasaOrderItem->update([
-                'service_order_id' => $serviceOrder->id,
-            ]);
-
-            // ===== 4. Update consultation status =====
+            // ===== 3. Update consultation status =====
+            // NOTE: service_order_id digantikan dengan order_id
             $consultation->status = ServiceConsultation::STATUS_ACCEPTED;
-            $consultation->service_order_id = $serviceOrder->id;
+            $consultation->order_id = $order->id; // Link ke Order (bukan ServiceOrder)
             $consultation->save();
 
             DB::commit();
 
             Log::info('[MerchantAccept] Order created from consultation', [
                 'order_id' => $order->id,
-                'service_order_id' => $serviceOrder->id,
                 'jasa_order_item_id' => $jasaOrderItem->id,
                 'consultation_id' => $consultation->id,
                 'merchant_id' => $consultation->merchant_id,
                 'customer_id' => $consultation->customer_id,
             ]);
 
-            // Return service_order for backward compatibility
-            $serviceOrder->load(['merchant', 'jasa']);
+            // Load relasi untuk response
+            $order->load(['merchant', 'jasaItems.jasa']);
 
             return ApiResponse::success([
                 'order_id' => $order->id,
-                'service_order_id' => $serviceOrder->id,
                 'jasa_order_item_id' => $jasaOrderItem->id,
-                'service_order' => $serviceOrder,
+                'status' => $order->status,
+                'payment_method' => $paymentMethod,
+                'confirm_deadline' => $order->confirm_deadline?->toISOString(),
             ], 'Pesanan berhasil dibuat. Menunggu konfirmasi Anda.', 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -1160,10 +1132,40 @@ class ServiceConsultationController extends Controller
                 $serviceLocationAddress = 'Online';
             }
 
-            // Final price and booking data
-            $finalPrice = $consultation->negotiated_price ?? $consultation->merchant_offered_price ?? $consultation->original_price;
+            // ============================================================
+            // VALIDASI DOUBLE BOOKING
+            // Cek apakah sudah ada pesanan aktif pada tanggal & jam yang sama
+            // Berlaku untuk konsultasi yang memiliki jadwal (booking_date + booking_time)
+            // ============================================================
             $bookingDate = !empty($data['booking_date']) ? $data['booking_date'] : ($consultation->proposed_date ?? null);
             $bookingTime = !empty($data['booking_time']) ? $data['booking_time'] : ($consultation->proposed_time ?? null);
+
+            if ($bookingDate && $bookingTime) {
+                $activeStatuses = [
+                    'menunggu_konfirmasi_merchant',
+                    'diterima',
+                    'layanan_dikerjakan',
+                    'menunggu_konfirmasi_selesai',
+                ];
+
+                $existingBooking = JasaOrderItem::where('jasa_id', $consultation->jasa_id)
+                    ->where('booking_date', $bookingDate)
+                    ->where('booking_time', $bookingTime)
+                    ->whereIn('order_method', ['booking', 'scheduled', 'konsultasi'])
+                    ->whereHas('order', function ($query) use ($activeStatuses) {
+                        $query->whereIn('status', $activeStatuses);
+                    })
+                    ->first();
+
+                if ($existingBooking) {
+                    return response()->json([
+                        'message' => 'Jadwal sudah terisi, silakan pilih jam lain.',
+                    ], 409);
+                }
+            }
+
+            // Final price and booking data
+            $finalPrice = $consultation->negotiated_price ?? $consultation->merchant_offered_price ?? $consultation->original_price;
             $bookingNote = $data['booking_note'] ?? $consultation->proposed_notes ?? null;
             $paymentMethod = strtoupper($data['payment_method'] ?? 'COD');
             // order_method: consultation (PRIMARY) - konsultasi flow always uses consultation
@@ -1187,7 +1189,7 @@ class ServiceConsultationController extends Controller
             ]);
 
             // ===== 2. Create jasa_order_items (service-specific details) =====
-            // order_method: consultation (PRIMARY)
+            // order_method: konsultasi (PRIMARY)
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $consultation->jasa_id,
@@ -1197,8 +1199,7 @@ class ServiceConsultationController extends Controller
                 'booking_date' => $bookingDate,
                 'booking_time' => $bookingTime,
                 'service_type' => $serviceType,
-                'service_type_booking' => 'consultation', // Legacy - for backward compat
-                'order_method' => 'consultation', // PRIMARY
+                'order_method' => 'konsultasi', // PRIMARY
                 'note' => $bookingNote,
                 'booking_note' => $bookingNote,
                 'service_location_address' => $serviceLocationAddress,
@@ -1206,46 +1207,15 @@ class ServiceConsultationController extends Controller
                 'customer_longitude' => $customerLongitude,
             ]);
 
-            // ===== 3. Create service_orders for backward compatibility =====
-            $serviceOrder = ServiceOrder::create([
-                'customer_id' => $consultation->customer_id,
-                'merchant_id' => $consultation->merchant_id,
-                'jasa_id' => $consultation->jasa_id,
-                'consultation_id' => $consultation->id,
-                'service_name' => $consultation->service_name,
-                'service_type' => $serviceType,
-                'service_image' => $serviceImage,
-                'merchant_name' => $consultation->merchant?->name ?? 'UMKM',
-                'total_price' => $finalPrice,
-                'status' => ServiceOrder::STATUS_MENUNGGU_KONFIRMASI,
-                'booking_date' => $bookingDate,
-                'booking_time' => $bookingTime,
-                'booking_note' => $bookingNote,
-                // NOTE: mekanisme_pemesanan TIDAK disimpan - order_type adalah PRIMARY
-                'customer_name' => $customerName,
-                'customer_phone' => $customerPhone,
-                'customer_address' => $customerAddress,
-                'customer_latitude' => $customerLatitude,
-                'customer_longitude' => $customerLongitude,
-                'service_location_address' => $serviceLocationAddress,
-                'payment_method' => $paymentMethod,
-                'payment_status' => ServiceOrder::PAYMENT_UNPAID,
-            ]);
-
-            // Link jasa_order_items to service_order
-            $jasaOrderItem->update([
-                'service_order_id' => $serviceOrder->id,
-            ]);
-
-            // ===== 4. Link service_order to consultation =====
-            $consultation->service_order_id = $serviceOrder->id;
+            // ===== 3. Link consultation to order =====
+            // NOTE: service_order_id digantikan dengan order_id
+            $consultation->order_id = $order->id;
             $consultation->save();
 
             DB::commit();
 
             Log::info('[bookConsultation] Order created from consultation', [
                 'order_id' => $order->id,
-                'service_order_id' => $serviceOrder->id,
                 'jasa_order_item_id' => $jasaOrderItem->id,
                 'consultation_id' => $consultation->id,
                 'merchant_id' => $consultation->merchant_id,
@@ -1256,13 +1226,14 @@ class ServiceConsultationController extends Controller
             // Generate WhatsApp URL for booking notification
             $whatsappUrl = $this->generateBookingWhatsAppUrl($consultation);
 
-            $serviceOrder->load(['merchant', 'jasa']);
+            // Load relasi untuk response
+            $order->load(['merchant', 'jasaItems.jasa']);
 
             return ApiResponse::success([
                 'order_id' => $order->id,
-                'service_order_id' => $serviceOrder->id,
                 'jasa_order_item_id' => $jasaOrderItem->id,
-                'service_order' => $serviceOrder,
+                'status' => $order->status,
+                'payment_method' => $paymentMethod,
                 'whatsapp_url' => $whatsappUrl,
             ], 'Booking berhasil diajukan! Menunggu konfirmasi dari merchant.', 201);
         } catch (\Exception $e) {

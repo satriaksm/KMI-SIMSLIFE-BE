@@ -1011,6 +1011,60 @@ class JasaController extends Controller
     }
 
     /**
+     * GET /api/jasas/{id}/available-slots?date=YYYY-MM-DD
+     * Ambil slot waktu yang sudah terisi pada tanggal tertentu.
+     * Digunakan oleh halaman booking untuk men-disable jam yang sudah dipesan.
+     *
+     * Status yang dianggap "terisi":
+     *   menunggu_konfirmasi_merchant, diterima, layanan_dikerjakan,
+     *   menunggu_konfirmasi_selesai
+     *
+     * Status yang TIDAK dianggap terisi:
+     *   ditolak, dibatalkan, selesai
+     */
+    public function getAvailableSlots(Request $request, int $id)
+    {
+        $request->validate([
+            'date' => 'required|date_format:Y-m-d',
+        ]);
+
+        $jasa = Jasa::find($id);
+        if (!$jasa) {
+            return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
+        }
+
+        $date = $request->input('date');
+
+        // Status yang menunjukkan slot sedang aktif (belum selesai/ditolak)
+        $activeStatuses = [
+            'menunggu_konfirmasi_merchant',
+            'diterima',
+            'layanan_dikerjakan',
+            'menunggu_konfirmasi_selesai',
+        ];
+
+        // Ambil semua jam yang sudah terisi pada tanggal tersebut
+        $bookedSlots = JasaOrderItem::where('jasa_id', $id)
+            ->where('booking_date', $date)
+            ->whereIn('order_method', ['booking', 'scheduled'])
+            ->whereNotNull('booking_time')
+            ->whereHas('order', function ($query) use ($activeStatuses) {
+                $query->whereIn('status', $activeStatuses);
+            })
+            ->pluck('booking_time')
+            ->map(fn($t) => trim($t))
+            ->filter()
+            ->values()
+            ->toArray();
+
+        return response()->json([
+            'date' => $date,
+            'jasa_id' => $id,
+            'booked_slots' => $bookedSlots,
+        ]);
+    }
+
+    /**
      * DELETE /api/jasa/{id}
      * Hapus data jasa (admin)
      */
