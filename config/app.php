@@ -124,4 +124,20 @@ return [
 
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Order Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configuration for order processing deadlines and timeouts.
+    |
+    */
+
+    // Batas waktu (dalam menit) bagi merchant untuk merespon pesanan setelah pembayaran sukses
+    // Berlaku untuk semua tipe order (produk dan jasa)
+    'order_confirm_minutes' => (int) env('ORDER_CONFIRM_MINUTES', 60),
+
+    // Batas waktu (dalam jam) sebelum invoice Xendit expire secara default
+    'xendit_invoice_duration_hours' => (int) env('XENDIT_INVOICE_DURATION_HOURS', 24),
+
 ];

@@ -25,8 +25,7 @@ class JasaOrderItem extends Model
         'booking_date',
         'booking_time',
         'service_type',
-        'service_type_booking', // Legacy: keranjang/booking/konsultasi
-        'order_method', // NEW: direct/scheduled/consultation
+        'order_method', // PRIMARY: keranjang | booking | konsultasi
         'note',
         // Service-specific fields
         'booking_note',
@@ -39,6 +38,41 @@ class JasaOrderItem extends Model
         'customer_confirmed_at',
         'is_reviewed',
         'review_id',
+
+        // =================================================================
+        // NEW SNAPSHOT FIELDS FOR SERVICE TRANSACTIONS
+        // Captures service (jasa) data at time of purchase
+        // IMPORTANT: Always read from snapshot when displaying order history
+        // If merchant modifies jasa after order, historical data remains intact
+        // =================================================================
+
+        // Service snapshot (jasa info at time of purchase)
+        'jasa_title_snapshot',
+        'jasa_description_snapshot',
+        'jasa_image_snapshot',
+
+        // Price snapshot
+        'jasa_price_snapshot',
+        'original_price_snapshot',
+        'offered_price_snapshot',
+        'agreed_price_snapshot',
+
+        // Service type snapshot
+        'service_type_snapshot',
+        'booking_type_snapshot',
+
+        // Booking snapshot (from consultation proposal)
+        'booking_date_snapshot',
+        'booking_time_snapshot',
+        'customer_note_snapshot',
+
+        // Offer details snapshot (from consultation)
+        'offer_note_snapshot',
+        'agreed_at',
+
+        // Merchant snapshot
+        'merchant_name_snapshot',
+        'merchant_phone_snapshot',
     ];
 
     protected $casts = [
@@ -51,6 +85,16 @@ class JasaOrderItem extends Model
         'customer_confirmed' => 'boolean',
         'customer_confirmed_at' => 'datetime',
         'is_reviewed' => 'boolean',
+
+        // Price snapshots
+        'jasa_price_snapshot' => 'decimal:2',
+        'original_price_snapshot' => 'decimal:2',
+        'offered_price_snapshot' => 'decimal:2',
+        'agreed_price_snapshot' => 'decimal:2',
+
+        // Booking snapshots
+        'booking_date_snapshot' => 'date',
+        'agreed_at' => 'datetime',
     ];
 
     // Relationships
@@ -66,6 +110,8 @@ class JasaOrderItem extends Model
 
     public function serviceOrder(): BelongsTo
     {
+        // @deprecated Gunakan relasi order() sebagai pengganti utama
+        // service_order_id hanya untuk backward compatibility dengan data lama
         return $this->belongsTo(ServiceOrder::class, 'service_order_id');
     }
 
@@ -80,11 +126,12 @@ class JasaOrderItem extends Model
     }
 
     /**
-     * Completion evidences linked to this order item
+     * Completion evidences linked to this order item.
+     * Menggunakan jasa_order_item_id sebagai foreign key utama.
      */
     public function completionEvidences(): HasMany
     {
-        return $this->hasMany(ServiceCompletionEvidence::class, 'service_order_id', 'service_order_id');
+        return $this->hasMany(ServiceCompletionEvidence::class, 'jasa_order_item_id');
     }
 
     /**
@@ -95,7 +142,195 @@ class JasaOrderItem extends Model
         return $this->hasOne(Rating::class, 'jasa_order_item_id');
     }
 
-    // Accessors
+    // =================================================================
+    // SNAPSHOT ACCESSORS - IMPORTANT FOR ORDER HISTORY
+    // Always read from snapshot first, fall back to live data
+    // =================================================================
+
+    /**
+     * Get jasa title - prioritizes snapshot over live data
+     */
+    public function getJasaTitleAttribute(): ?string
+    {
+        return $this->jasa_title_snapshot
+            ?? $this->jasa?->title
+            ?? $this->jasa?->name
+            ?? null;
+    }
+
+    /**
+     * Get jasa description - prioritizes snapshot over live data
+     */
+    public function getJasaDescriptionAttribute(): ?string
+    {
+        return $this->jasa_description_snapshot
+            ?? $this->jasa?->description
+            ?? null;
+    }
+
+    /**
+     * Get jasa image URL - prioritizes snapshot over live data
+     */
+    public function getJasaImageUrlAttribute(): ?string
+    {
+        // Snapshot image path
+        if ($this->jasa_image_snapshot) {
+            if (str_starts_with($this->jasa_image_snapshot, 'http')) {
+                return $this->jasa_image_snapshot;
+            }
+            return asset('storage/' . $this->jasa_image_snapshot);
+        }
+
+        // Fall back to live jasa cover image
+        if ($this->jasa?->coverImage) {
+            return $this->jasa->coverImage->url;
+        }
+
+        // Fall back to jasa image_url accessor
+        if ($this->jasa?->image_url) {
+            return $this->jasa->image_url;
+        }
+
+        // Fall back to legacy image field
+        if ($this->jasa?->image) {
+            $image = $this->jasa->image;
+            if (str_starts_with($image, 'http')) {
+                return $image;
+            }
+            return asset('storage/' . $image);
+        }
+
+        return null;
+    }
+
+    /**
+     * Get jasa price - prioritizes snapshot over live data
+     */
+    public function getJasaPriceAttribute(): ?string
+    {
+        return $this->jasa_price_snapshot
+            ?? $this->jasa?->base_price
+            ?? $this->jasa?->price
+            ?? $this->jasa?->fixed_price
+            ?? null;
+    }
+
+    /**
+     * Get original price (from consultation) - prioritizes snapshot
+     */
+    public function getOriginalPriceAttribute(): ?string
+    {
+        return $this->original_price_snapshot
+            ?? $this->original_price
+            ?? null;
+    }
+
+    /**
+     * Get offered price (from merchant) - prioritizes snapshot
+     */
+    public function getOfferedPriceAttribute(): ?string
+    {
+        return $this->offered_price_snapshot
+            ?? $this->offered_price
+            ?? null;
+    }
+
+    /**
+     * Get agreed price - prioritizes snapshot
+     */
+    public function getAgreedPriceAttribute(): ?string
+    {
+        return $this->agreed_price_snapshot
+            ?? $this->agreed_price
+            ?? $this->price
+            ?? null;
+    }
+
+    /**
+     * Get service type - prioritizes snapshot over live data
+     */
+    public function getServiceTypeAttribute(): ?string
+    {
+        return $this->service_type_snapshot
+            ?? $this->service_type
+            ?? null;
+    }
+
+    /**
+     * Get booking type - prioritizes snapshot
+     */
+    public function getBookingTypeAttribute(): ?string
+    {
+        return $this->booking_type_snapshot
+            ?? $this->booking_type
+            ?? null;
+    }
+
+    /**
+     * Get booking date - prioritizes snapshot
+     */
+    public function getBookingDateAttribute(): ?string
+    {
+        return $this->booking_date_snapshot
+            ?? $this->booking_date
+            ?? null;
+    }
+
+    /**
+     * Get booking time - prioritizes snapshot
+     */
+    public function getBookingTimeAttribute(): ?string
+    {
+        return $this->booking_time_snapshot
+            ?? $this->booking_time
+            ?? null;
+    }
+
+    /**
+     * Get customer note - prioritizes snapshot
+     */
+    public function getCustomerNoteAttribute(): ?string
+    {
+        return $this->customer_note_snapshot
+            ?? $this->booking_note
+            ?? $this->note
+            ?? null;
+    }
+
+    /**
+     * Get offer note - prioritizes snapshot
+     */
+    public function getOfferNoteAttribute(): ?string
+    {
+        return $this->offer_note_snapshot
+            ?? $this->offer_note
+            ?? null;
+    }
+
+    /**
+     * Get merchant name - prioritizes snapshot
+     */
+    public function getMerchantNameAttribute(): ?string
+    {
+        return $this->merchant_name_snapshot
+            ?? $this->order?->merchant?->name
+            ?? null;
+    }
+
+    /**
+     * Get merchant phone - prioritizes snapshot
+     */
+    public function getMerchantPhoneAttribute(): ?string
+    {
+        return $this->merchant_phone_snapshot
+            ?? $this->order?->merchant?->phone
+            ?? null;
+    }
+
+    // =================================================================
+    // LEGACY ACCESSORS
+    // =================================================================
+
     public function getServiceTypeLabelAttribute(): string
     {
         return match ($this->service_type) {
@@ -108,22 +343,21 @@ class JasaOrderItem extends Model
 
     public function getBookingTypeLabelAttribute(): string
     {
-        // Use order_method first, then fallback to service_type_booking
-        return $this->order_method
-            ?? match ($this->service_type_booking) {
-                'keranjang' => 'Langsung Pesan',
-                'booking' => 'Terjadwal',
-                'konsultasi' => 'Konsultasi',
-                default => ucfirst($this->service_type_booking ?? '-'),
-            };
+        // order_method stores: keranjang | booking | konsultasi
+        return match ($this->order_method) {
+            'keranjang' => 'Langsung Pesan',
+            'booking' => 'Terjadwal',
+            'konsultasi' => 'Konsultasi',
+            default => ucfirst($this->order_method ?? '-'),
+        };
     }
 
     public function getOrderMethodLabelAttribute(): string
     {
         return match ($this->order_method) {
-            'direct' => 'Langsung Pesan',
-            'scheduled' => 'Terjadwal',
-            'consultation' => 'Konsultasi',
+            'keranjang' => 'Langsung Pesan',
+            'booking' => 'Terjadwal',
+            'konsultasi' => 'Konsultasi',
             default => ucfirst($this->order_method ?? '-'),
         };
     }
@@ -134,8 +368,9 @@ class JasaOrderItem extends Model
 
     /**
      * Map frontend order method to internal order_method format.
-     * Accepts: direct_checkout, keranjang, booking, konsultasi, consultation, scheduled, direct
-     * Returns: direct, scheduled, consultation
+     * Accepts: direct_checkout, keranjang, booking, konsultasi, consultation, scheduled, direct,
+     *         langsung_pesan, memerlukan_konsultasi
+     * Returns: keranjang, booking, konsultasi (frontend display format)
      */
     public static function mapToOrderMethod(?string $value): ?string
     {
@@ -144,9 +379,9 @@ class JasaOrderItem extends Model
         }
 
         return match (strtolower($value)) {
-            'direct_checkout', 'keranjang', 'langsung_pesan', 'direct' => 'direct',
-            'booking', 'scheduled' => 'scheduled',
-            'konsultasi', 'consultation' => 'consultation',
+            'direct_checkout', 'keranjang', 'langsung_pesan', 'direct' => 'keranjang',
+            'booking', 'scheduled' => 'booking',
+            'konsultasi', 'consultation', 'memerlukan_konsultasi' => 'konsultasi',
             default => strtolower($value),
         };
     }

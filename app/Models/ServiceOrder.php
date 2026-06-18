@@ -50,6 +50,11 @@ class ServiceOrder extends Model
         'customer_confirmed',
         'customer_confirmed_at',
         'order_number',
+        // Timestamps for service order lifecycle
+        'accepted_at',
+        'started_at',
+        'completed_at',
+        'delivered_at',
     ];
 
     protected $casts = [
@@ -63,6 +68,11 @@ class ServiceOrder extends Model
         'is_reviewed' => 'boolean',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
+        // Timestamps for service order lifecycle
+        'accepted_at' => 'datetime',
+        'started_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'delivered_at' => 'datetime',
     ];
 
     // ============================================================
@@ -337,8 +347,7 @@ class ServiceOrder extends Model
             $this->paid_at = now();
         }
 
-        // Use DB::update to avoid timestamp warnings from Laravel model events
-        // This bypasses the model's save() which triggers automatic timestamp updates
+        // Build update data with timestamps based on new status
         $updateData = ['status' => $this->status];
 
         if ($newStatus === self::STATUS_DITOLAK) {
@@ -349,6 +358,20 @@ class ServiceOrder extends Model
         if (($options['mark_paid'] ?? false) && $newStatus === self::STATUS_SELESAI) {
             $updateData['payment_status'] = self::PAYMENT_PAID;
             $updateData['paid_at'] = now();
+        }
+
+        // Set timestamps based on status transition
+        if ($newStatus === self::STATUS_DITERIMA) {
+            $updateData['accepted_at'] = now();
+        }
+
+        if ($newStatus === self::STATUS_DIKERJAKAN) {
+            $updateData['started_at'] = now();
+        }
+
+        if ($newStatus === self::STATUS_SELESAI) {
+            $updateData['completed_at'] = now();
+            $updateData['delivered_at'] = now();
         }
 
         // Update without touching updated_at to avoid MySQL warnings

@@ -150,6 +150,8 @@ Route::prefix('public')->name('public.')->group(function () {
             ->name('map-carousel-merchants');
         Route::get('statistics', [HomeController::class, 'statistics'])
             ->name('statistics');
+        Route::get('payment-fees', [HomeController::class, 'paymentFees'])
+            ->name('payment-fees');
     });
 
     // Public Profiles
@@ -365,26 +367,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ->where('orderId', '[0-9]+');
         });
 
-        // ===== SERVICE ORDERS (CUSTOMER) - BACKWARD COMPATIBILITY =====
-        // NOTE: ServiceOrder is deprecated. New orders should use Order + JasaOrderItem.
-        // These routes are kept for backward compatibility with existing data.
-        // Full lifecycle: create → merchant accept/reject → evidence → customer confirm → review
-        Route::prefix('service-orders')->name('service-orders.')->group(function () {
-            Route::post('/', [ServiceOrderController::class, 'create'])->name('create');
-            Route::get('/', [ServiceOrderController::class, 'getCustomerHistory'])->name('customer-history');
-            Route::get('/{id}', [ServiceOrderController::class, 'getCustomerOrderDetail'])->name('show');
-            Route::post('/{id}/confirm', [ServiceOrderController::class, 'confirmCompleted'])->name('confirm');
-            Route::post('/{id}/review', [ServiceOrderController::class, 'submitReview'])->name('review');
-        });
-
-        // ===== JASA ORDERS (CUSTOMER) - BARU - Menggunakan Order + JasaOrderItem =====
+        // ===== JASA ORDERS (CUSTOMER) - Menggunakan Order + JasaOrderItem =====
         // Endpoint baru untuk flow order jasa tanpa ServiceOrder
         Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
             Route::post('/', [JasaOrderController::class, 'create'])->name('create');
             Route::get('/', [JasaOrderController::class, 'customerHistory'])->name('customer-history');
             Route::get('/{orderId}', [JasaOrderController::class, 'customerShow'])->name('show');
             Route::post('/{orderId}/confirm', [JasaOrderController::class, 'confirmCompleted'])->name('confirm');
+            Route::post('/{orderId}/cancel', [JasaOrderController::class, 'cancelOrder'])->name('cancel');
             Route::post('/{orderId}/review', [JasaOrderController::class, 'submitReview'])->name('review');
+	            Route::put('/{orderId}/review', [JasaOrderController::class, 'updateReview'])->name('review.update');
         });
 
         // Service Consultations (Customer)
@@ -453,15 +445,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('orders/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('orders.show');
             Route::match(['patch', 'post'], 'orders/{id}/status', [ServiceOrderController::class, 'updateMerchantOrderStatus'])->name('orders.update-status');
 
-            // ===== SERVICE ORDERS (MERCHANT) =====
-            // Full lifecycle with status validation, evidence upload, rejection
-            Route::prefix('service-orders')->name('service-orders.')->group(function () {
-                Route::get('/', [ServiceOrderController::class, 'getMerchantHistory'])->name('merchant-history');
-                Route::get('/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('show');
-                Route::match(['patch', 'post'], '/{id}/status', [ServiceOrderController::class, 'updateStatus'])->name('update-status');
+            // ===== MERCHANT REVIEWS (RATINGS) - Merchant reply to customer reviews =====
+            Route::prefix('reviews/{ratingId}')->name('reviews.')->group(function () {
+                Route::post('/reply', [RatingController::class, 'merchantReply'])->name('merchant-reply');
             });
 
-            // ===== JASA ORDERS (MERCHANT) - BARU - Menggunakan Order + JasaOrderItem =====
+            // ===== SERVICE ORDERS (MERCHANT) =====
+            // REMOVED: Frontend now uses /api/merchant/{slug}/orders (ServiceOrderController::getMerchantOrders)
+            // No active routes here - service_orders no longer used as data source
+
+            // ===== JASA ORDERS (MERCHANT) =====
             Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
                 Route::get('/', [JasaOrderController::class, 'merchantOrders'])->name('merchant-history');
                 Route::patch('/{orderId}/status', [JasaOrderController::class, 'updateStatus'])->name('update-status');

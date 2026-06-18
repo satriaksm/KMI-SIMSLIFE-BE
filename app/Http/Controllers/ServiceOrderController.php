@@ -10,6 +10,7 @@ use App\Models\Order;
 use App\Models\JasaOrderItem;
 use App\Models\Rating;
 use App\Models\RatingSummary;
+use App\Models\ReviewHistory;
 use App\Models\ReviewMedia;
 use App\Helpers\ApiResponse;
 use Illuminate\Http\Request;
@@ -23,15 +24,22 @@ use Illuminate\Validation\Rules\Enum;
 /**
  * ServiceOrderController
  *
- * Full UMKM Jasa service order lifecycle:
- * - Create order (Order + JasaOrderItem - no ServiceOrder)
- * - Merchant accept/reject
- * - Work evidence upload
- * - Customer confirmation
- * - Review submission
+ * Service order lifecycle using NEW architecture:
+ * - orders = tabel utama pesanan (PRIMARY)
+ * - jasa_order_items = detail layanan jasa (PRIMARY)
+ * - service_orders = backward compatibility ONLY (legacy orders)
  *
- * NOTE: ServiceOrder table is deprecated. New orders use Order + JasaOrderItem only.
- * This controller maintains backward compatibility with existing ServiceOrder data.
+ * NEW ORDERS: No ServiceOrder is created. All data in orders + jasa_order_items.
+ * OLD ORDERS: Found via service_order_id in jasa_order_items (legacy).
+ *
+ * Status values: Uses service status values directly (no more generic: pending/proses/batal)
+ * - menunggu_konfirmasi_merchant
+ * - diterima
+ * - ditolak
+ * - layanan_dikerjakan
+ * - menunggu_konfirmasi_selesai
+ * - selesai
+ * - dibatalkan
  */
 class ServiceOrderController extends Controller
 {
@@ -40,9 +48,13 @@ class ServiceOrderController extends Controller
      * Creates order using Order + JasaOrderItem (NO ServiceOrder anymore)
      * Service-specific details are stored in jasa_order_items table
      *
-     * Flow:
-     * - COD: langsung masuk 'menunggu_konfirmasi_merchant' + set confirm_deadline
-     * - Xendit: masuk 'pending' (menunggu pembayaran), setelah bayar baru ke 'menunggu_konfirmasi_merchant'
+     * NEW ARCHITECTURE:
+     * - orders = PRIMARY table for all order data
+     * - jasa_order_items = PRIMARY table for service details
+     * - service_orders = NOT created for new orders (backward compat only)
+     *
+     * Initial status: menunggu_konfirmasi_merchant (for COD)
+     * Status values use service statuses directly (not generic: pending/proses/batal)
      */
     public function create(Request $request)
     {
@@ -78,6 +90,48 @@ class ServiceOrderController extends Controller
                 'Layanan ini memerlukan konsultasi terlebih dahulu. Silakan gunakan fitur Ajukan Konsultasi.',
                 400
             );
+        }
+
+        // order_method: mekanisme pemesanan (PRIMARY - FE format: keranjang, booking, konsultasi)
+        // Mapping dari berbagai input legacy:
+        // - order_method: keranjang, booking, konsultasi
+        // - cara_pemesanan: langsung_pesan, booking, memerlukan_konsultasi (DB format)
+        // - mekanisme_pemesanan: keranjang, booking, konsultasi
+        // Fallback: ambil dari jasa.cara_pemesanan (DB format)
+        $orderMethod = $request->order_method
+            ?? JasaOrderItem::mapToOrderMethod($request->cara_pemesanan)
+            ?? JasaOrderItem::mapToOrderMethod($request->mekanisme_pemesanan)
+            ?? JasaOrderItem::mapToOrderMethod($jasa->cara_pemesanan); // fallback dari DB
+        $orderMethod = $orderMethod ?: 'keranjang'; // Default FE format
+
+        // ============================================================
+        // VALIDASI DOUBLE BOOKING
+        // Cek apakah sudah ada pesanan aktif pada tanggal & jam yang sama
+        // Berlaku hanya untuk order_method = booking (dengan jadwal)
+        // ============================================================
+        if ($orderMethod === 'booking' && $request->booking_date && $request->booking_time) {
+            $activeStatuses = [
+                'menunggu_konfirmasi_merchant',
+                'diterima',
+                'layanan_dikerjakan',
+                'menunggu_konfirmasi_selesai',
+            ];
+
+            $existingBooking = JasaOrderItem::where('jasa_id', $jasa->id)
+                ->where('booking_date', $request->booking_date)
+                ->where('booking_time', $request->booking_time)
+                ->whereIn('order_method', ['booking', 'scheduled'])
+                ->whereHas('order', function ($query) use ($activeStatuses) {
+                    $query->whereIn('status', $activeStatuses);
+                })
+                ->first();
+
+            if ($existingBooking) {
+                return ApiResponse::error(
+                    'Jadwal sudah terisi, silakan pilih jam lain.',
+                    409
+                );
+            }
         }
 
         $customerId = Auth::id();
@@ -129,9 +183,10 @@ class ServiceOrderController extends Controller
 
         DB::beginTransaction();
         try {
-            // ===== 1. Create order in orders table (UNIFIED) =====
+            // ===== 1. Create order in orders table (PRIMARY) =====
             // NOTE: order_type = 'jasa' (jenis order utama: product/jasa)
             // order_method disimpan di jasa_order_items, BUKAN di orders
+            // Status uses service status values directly (NOT generic: pending/proses/batal)
             $customerName = $request->customer_name
                 ?? Auth::user()?->name
                 ?? Auth::user()?->nama
@@ -148,11 +203,35 @@ class ServiceOrderController extends Controller
                 'total_price' => $totalPrice,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
-                'status' => 'pending',
+                // NEW ARCHITECTURE: Use service status value directly
+                'status' => 'menunggu_konfirmasi_merchant',
+                // SNAPSHOT: Capture customer data at time of order
+                'customer_name_snapshot' => $customerName,
+                'customer_phone_snapshot' => $request->customer_phone ?? '',
+                'customer_address_snapshot' => $request->customer_address ?? '',
+                // SNAPSHOT: Capture merchant data at time of order
+                'merchant_name_snapshot' => $merchant->name,
+                'merchant_phone_snapshot' => $merchant->phone ?? '',
+                'merchant_address_snapshot' => $merchant->address ?? '',
+                // SNAPSHOT: Capture payment data at time of order
+                'payment_method_snapshot' => $paymentMethod,
+                'total_payment_snapshot' => $totalPrice,
             ]);
 
-            // ===== 2. Create jasa_order_items (service-specific details) =====
+            // ===== 2. Create jasa_order_items (service-specific details - PRIMARY) =====
             // order_method: mekanisme pemesanan (keranjang, booking, konsultasi)
+            // SNAPSHOT: Capture jasa data at time of order
+            $jasaImage = null;
+            if ($jasa->coverImage) {
+                $jasaImage = asset('storage/' . $jasa->coverImage->image_path);
+            } elseif ($jasa->image) {
+                $jasaImage = str_starts_with($jasa->image, 'http')
+                    ? $jasa->image
+                    : (str_starts_with($jasa->image, '/')
+                        ? $jasa->image
+                        : asset('storage/' . $jasa->image));
+            }
+
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $jasa->id,
@@ -168,49 +247,34 @@ class ServiceOrderController extends Controller
                 'service_location_address' => $serviceLocationAddress,
                 'customer_latitude' => $request->latitude,
                 'customer_longitude' => $request->longitude,
+                // SNAPSHOT: Capture jasa data at time of purchase
+                'jasa_title_snapshot' => $jasa->title,
+                'jasa_description_snapshot' => $jasa->description,
+                'jasa_image_snapshot' => $jasaImage,
+                'jasa_price_snapshot' => $totalPrice,
+                'original_price_snapshot' => $jasa->base_price ?? $jasa->price ?? 0,
+                'offered_price_snapshot' => $totalPrice,
+                'agreed_price_snapshot' => $totalPrice,
+                'service_type_snapshot' => $serviceType,
+                // SNAPSHOT: Capture merchant data
+                'merchant_name_snapshot' => $merchant->name,
+                'merchant_phone_snapshot' => $merchant->phone,
+                // NO service_order_id for new orders (backward compat only)
             ]);
 
-            // ===== 3. Create service_orders for backward compatibility =====
-            // NOTE: service_orders.mekanisme_pemesanan adalah LEGACY, JANGAN ditulis lagi
-            // order_type di orders adalah yang PRIMARY - jangan duplikasi ke service_orders
-            $serviceOrder = ServiceOrder::create([
-                'customer_id' => $customerId,
-                'merchant_id' => $merchantId,
-                'jasa_id' => $jasa->id,
-                'service_name' => $jasa->title,
-                'service_type' => $serviceType,
-                'service_image' => $serviceImage,
-                'merchant_name' => $jasa->merchant->name ?? 'UMKM',
-                'total_price' => $totalPrice,
-                'status' => ServiceOrder::STATUS_MENUNGGU_KONFIRMASI,
-                'booking_date' => $request->booking_date,
-                'booking_time' => $request->booking_time,
-                'booking_note' => $request->booking_note,
-                'customer_name' => $request->customer_name,
-                'customer_phone' => $request->customer_phone,
-                'customer_address' => ($serviceType === 'ke_rumah_pelanggan' || $serviceType === 'on_site')
-                    ? $request->customer_address
-                    : null,
-                'payment_method' => $paymentMethod,
-                'payment_status' => ServiceOrder::PAYMENT_UNPAID,
-                'customer_latitude' => $request->latitude,
-                'customer_longitude' => $request->longitude,
-            ]);
-
-            // Link jasa_order_items to service_order
-            $jasaOrderItem->update([
-                'service_order_id' => $serviceOrder->id,
-            ]);
+            // NOTE: NO ServiceOrder::create() for new orders
+            // ServiceOrders are only for backward compatibility with legacy data
 
             DB::commit();
 
-            Log::info('[ServiceOrder Create] Order created', [
+            Log::info('[ServiceOrder Create] Order created (NEW architecture)', [
                 'order_id' => $order->id,
-                'service_order_id' => $serviceOrder->id,
+                'jasa_order_item_id' => $jasaOrderItem->id,
                 'jasa_id' => $jasa->id,
                 'merchant_id' => $merchantId,
                 'payment_method' => $paymentMethod,
                 'is_cod' => $isCodPayment,
+                'status' => $order->status,
             ]);
 
             // Build response
@@ -220,7 +284,7 @@ class ServiceOrderController extends Controller
                 'success' => true,
                 'order_id' => $order->id,
                 'jasa_order_item_id' => $jasaOrderItem->id,
-                'service_order_id' => $serviceOrder->id,
+                'status' => $order->status,
                 'payment_method' => $paymentMethod,
                 'is_cod' => $isCodPayment,
                 // Frontend should call POST /api/payments/{order_id}/invoice for Xendit
@@ -256,179 +320,96 @@ class ServiceOrderController extends Controller
     }
 
     /**
-     * Get WhatsApp redirect URL for a service order
-     */
-    public function redirectWhatsapp(Request $request, int $id)
-    {
-        $customerId = Auth::id();
-        $order = ServiceOrder::where('id', $id)
-            ->where('customer_id', $customerId)
-            ->first();
-
-        if (!$order) {
-            return ApiResponse::error('Pesanan tidak ditemukan', 404);
-        }
-
-        $merchant = $order->merchant;
-        $phone = $merchant?->whatsapp ?? $merchant?->phone ?? null;
-
-        if (!$phone) {
-            return ApiResponse::error('Nomor WhatsApp merchant tidak tersedia', 400);
-        }
-
-        // Clean phone number
-        $phone = preg_replace('/[^0-9]/', '', $phone);
-        if (!str_starts_with($phone, '62')) {
-            $phone = '62' . ltrim($phone, '0');
-        }
-
-        $message = "Halo {$merchant->name}, saya telah mengajukan pesanan layanan #{$order->id}.\n";
-        $message .= "Mohon untuk dapat dikonfirmasi.\n\n";
-        $message .= "Terima kasih.";
-
-        $waUrl = "https://wa.me/{$phone}?text=" . urlencode($message);
-
-        return ApiResponse::success(['redirect_url' => $waUrl], 'success');
-    }
-
-    /**
      * Get customer service order history
      *
-     * Refactored: Uses orders as primary source, jasa_order_items for service details,
-     * service_orders for backward compatibility (status, review, evidences)
+     * NEW ARCHITECTURE: Uses orders as primary source, jasa_order_items for service details.
+     * NO service_orders dependency.
      */
     public function getCustomerHistory(Request $request)
     {
         $customerId = Auth::id();
-        // $status = $request->get('status'); // DISABLED - frontend handles filtering
-        $perPage = $request->get('per_page', 100); // Increase to 100 for client-side filtering
+        $perPage = $request->get('per_page', 100);
 
-        // PRIMARY: Query from orders table (jasa type)
-        // NOTE: Access jasas through jasaItems.jasa, NOT Order::jasa (relation doesn't exist)
+        // Query from orders table + jasa_order_items (NEW ARCHITECTURE)
+        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
+        // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
         $query = Order::with([
             'merchant:id,name,slug,logo_path,segmentation_id',
-            'jasaItems.jasa:id,title,image',
+            'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,customer_latitude,customer_longitude,is_reviewed,review_id,customer_confirmed,customer_confirmed_at',
             'jasaItems.review.media',
+            'jasaItems.review.histories',
             'jasaItems.completionEvidences',
             'jasaItems',
         ])
             ->where('user_id', $customerId)
-            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
+            ->whereHas('jasaItems')
             ->orderByDesc('created_at');
-
-        // Filter by status - DISABLED for now, frontend will handle filtering
-        // if ($status) {
-        //     $ordersStatus = $this->mapFrontendStatusToOrdersStatus($status);
-        //     if ($ordersStatus) {
-        //         $query->where('status', $ordersStatus);
-        //     } else {
-        //         $query->where('status', $status);
-        //     }
-        // }
 
         $orders = $query->paginate($perPage);
 
-        // Transform to array - merge with service_orders data for backward compatibility
-        $ordersArray = $orders->toArray();
         $transformedData = collect($orders->items())->map(function ($order) {
-            // Get jasa_order_item first (jasa_id ada di sini, bukan di orders)
             $jasaItem = $order->jasaItems->first();
-
-            // Get related service_order via jasa_order_items (backward compatibility)
-            $serviceOrder = $jasaItem?->serviceOrder;
 
             $orderArray = [];
 
-            // ============================================================
-            // PRIMARY IDs - Use these as main identifiers
-            // ============================================================
-            // id: alias for order_id (backward compatibility with frontend)
+            // IDs
             $orderArray['id'] = $order->id;
-            $orderArray['order_id'] = $order->id; // PRIMARY ID - Use this for updates
+            $orderArray['order_id'] = $order->id;
             $orderArray['jasa_order_item_id'] = $jasaItem?->id;
-            $orderArray['service_order_id'] = $serviceOrder?->id; // Only for backward compatibility
 
-            // ============================================================
             // Get jasa_order_item for additional data
-            // ============================================================
-            $jasaItem = $order->jasaItems->first();
             if ($jasaItem) {
-                $orderArray['jasa_order_item_id'] = $jasaItem->id;
                 $orderArray['service_type'] = $jasaItem->service_type;
                 $orderArray['service_type_label'] = $jasaItem->service_type_label;
                 $orderArray['booking_type'] = $jasaItem->order_method;
                 $orderArray['booking_date'] = $jasaItem->booking_date;
                 $orderArray['booking_time'] = $jasaItem->booking_time;
-                $orderArray['tanggal'] = $jasaItem->booking_date ?? $order->tanggal; // Backward compatibility
-                $orderArray['waktu'] = $jasaItem->booking_time ?? $order->waktu; // Backward compatibility
+                $orderArray['tanggal'] = $jasaItem->booking_date ?? $order->tanggal;
+                $orderArray['waktu'] = $jasaItem->booking_time ?? $order->waktu;
                 $orderArray['booking_note'] = $jasaItem->booking_note ?? $jasaItem->note;
                 $orderArray['service_location_address'] = $jasaItem->service_location_address;
             }
 
-            // ============================================================
-            // STATUS - Clear separation between orders and service_orders
-            // ============================================================
+            // STATUS - from orders table
             $orderArray['order_status'] = $order->status;
-            $orderArray['order_status_label'] = $this->getOrdersStatusLabel($order->status ?? 'pending');
-            $orderArray['service_status'] = $serviceOrder?->status;
-            $orderArray['service_status_label'] = $serviceOrder?->status_label;
-            $orderArray['status'] = $serviceOrder?->status ?? $order->status;
-            $orderArray['status_label'] = $serviceOrder?->status_label
-                ?? $this->getServiceStatusLabel($order->status);
+            $orderArray['order_status_label'] = $this->getServiceStatusLabel($order->status);
+            $orderArray['status'] = $order->status;
+            $orderArray['status_label'] = $this->getServiceStatusLabel($order->status);
 
-            // ============================================================
             // Order Number
-            // ============================================================
-            $orderArray['order_number'] = $serviceOrder?->order_number
-                ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
+            $orderArray['order_number'] = 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
 
-            // ============================================================
-            // Customer Info - dari service_order (backward compatibility)
-            // ============================================================
-            $orderArray['customer_name'] = $serviceOrder?->customer_name ?? $order->user?->name;
-            $orderArray['customer_phone'] = $serviceOrder?->customer_phone ?? $order->user?->phone;
-            $orderArray['customer_address'] = $serviceOrder?->customer_address ?? $jasaItem?->service_location_address;
+            // Customer Info - gunakan SNAPSHOT accessor
+            $orderArray['customer_name'] = $order->customer_name; // snapshot > user > nama
+            $orderArray['customer_phone'] = $order->customer_phone; // snapshot > user > tel
+            $orderArray['customer_address'] = $jasaItem?->service_location_address;
 
-            // ============================================================
-            // Payment Info - Use orders.payment_status as source of truth
-            // ============================================================
-            $orderArray['payment_status'] = $order->payment_status ?? $serviceOrder?->payment_status;
-            $orderArray['payment_method'] = $order->payment_method ?? $serviceOrder?->payment_method;
-            $orderArray['payment_channel'] = $order->payment_channel ?? $order->paid_channel ?? $serviceOrder?->payment_channel;
-            $orderArray['paid_channel'] = $order->paid_channel ?? $serviceOrder?->paid_channel;
+            // Payment Info
+            $orderArray['payment_status'] = $order->payment_status;
+            $orderArray['payment_method'] = $order->payment_method;
+            $orderArray['payment_channel'] = $order->payment_channel ?? $order->paid_channel;
+            $orderArray['paid_channel'] = $order->paid_channel;
             $orderArray['is_payment_completed'] = strtoupper($order->payment_status ?? '') === 'PAID' || strtoupper($order->payment_method ?? '') === 'COD';
 
-            // ============================================================
-            // Service Info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
-            // ============================================================
-            $orderArray['total_price'] = (float) ($serviceOrder?->total_price ?? $order->total_price);
-            $orderArray['service_name'] = $jasaItem?->jasa?->title;
-            $orderArray['service_image'] = $serviceOrder?->service_image
-                ?? ($jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null);
+            // Service Info - gunakan SNAPSHOT accessor (jasa_title, jasa_image_url)
+            $orderArray['total_price'] = (float) $order->total_price;
+            $orderArray['service_name'] = $jasaItem?->jasa_title; // snapshot > live data
+            $orderArray['service_image'] = $jasaItem?->jasa_image_url; // snapshot > live data
 
-            // ============================================================
-            // Order Method - mekanisme pemesanan (PRIMARY)
-            // ============================================================
+            // Order Method
             $orderArray['order_method'] = $jasaItem?->order_method;
             $orderArray['order_method_label'] = $jasaItem?->order_method_label;
-            // Legacy: order_type (backward compatibility)
-            $orderArray['order_type'] = $this->resolveOrderType($order, $jasaItem, $serviceOrder);
+            $orderArray['order_type'] = $order->order_type;
 
-            // ============================================================
             // Review Data
-            // ============================================================
-            $review = $serviceOrder?->review;
-            if (!$review && $jasaItem?->review) {
-                $review = $jasaItem->review;
-            }
-            $isReviewed = $serviceOrder?->review_id !== null || $jasaItem?->is_reviewed === true;
+            $review = $jasaItem?->review;
+            $isReviewed = $jasaItem?->is_reviewed === true;
 
             if ($review) {
                 $reviewMedia = [];
                 if ($review->media) {
                     $reviewMedia = $review->media->map(function ($media) {
                         $arr = $media->toArray();
-                        // Use media_url (full URL) or construct from file_path
                         $arr['file_url'] = $media->media_url ?? ($media->file_path ? asset('storage/' . $media->file_path) : null);
                         return $arr;
                     })->toArray();
@@ -439,105 +420,76 @@ class ServiceOrderController extends Controller
             }
             $orderArray['is_reviewed'] = $isReviewed;
 
-            // ============================================================
             // Completion Evidences
-            // ============================================================
-            if ($serviceOrder && $serviceOrder->completionEvidences && $serviceOrder->completionEvidences->count() > 0) {
-                $evidences = $serviceOrder->completionEvidences->map(function ($evidence) {
-                    $arr = $evidence->toArray();
-                    // Use media_url (full URL) or construct from file_path
-                    $arr['file_url'] = $evidence->media_url ?? ($evidence->file_path ? asset('storage/' . $evidence->file_path) : null);
-                    return $arr;
-                })->toArray();
-                $orderArray['completion_evidences'] = $evidences;
-            } else {
-                $orderArray['completion_evidences'] = [];
-            }
+            $completionEvidences = $jasaItem?->completionEvidences ?? collect();
+            $orderArray['completion_note'] = $jasaItem?->completion_note;
+            $orderArray['completion_evidences'] = $completionEvidences->map(function ($evidence) {
+                return [
+                    'id' => $evidence->id,
+                    'jasa_order_item_id' => $evidence->jasa_order_item_id,
+                    'file_path' => $evidence->file_path,
+                    'file_url' => $evidence->file_url,
+                    'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
+                    'note' => $evidence->note ?? null,
+                    'created_at' => $evidence->created_at?->toIso8601String(),
+                ];
+            })->toArray();
 
-            // ============================================================
-            // Merchant Info
-            // ============================================================
+            // Merchant Info - gunakan SNAPSHOT accessor
             $orderArray['merchant'] = [
                 'id' => $order->merchant_id,
-                'name' => $order->merchant?->name,
+                'name' => $order->merchant_name, // snapshot > live
                 'slug' => $order->merchant?->slug,
             ];
 
-            // ============================================================
-            // Jasa Info - ambil dari jasa_order_items, bukan dari orders
-            // ============================================================
+            // Jasa Info - gunakan SNAPSHOT accessor
             $orderArray['jasa'] = [
                 'id' => $jasaItem?->jasa_id,
-                'title' => $jasaItem?->jasa?->title,
-                'image' => $jasaItem?->jasa?->image,
+                'title' => $jasaItem?->jasa_title, // snapshot > live
+                'image' => $jasaItem?->jasa_image_snapshot, // snapshot raw
+                'image_url' => $jasaItem?->jasa_image_url, // snapshot with asset() helper
                 'slug' => $jasaItem?->jasa?->slug,
             ];
 
-            // ============================================================
             // Timestamps
-            // ============================================================
             $orderArray['created_at'] = $order->created_at?->toIso8601String();
             $orderArray['updated_at'] = $order->updated_at?->toIso8601String();
 
             return $orderArray;
         })->toArray();
 
-        $ordersArray['data'] = $transformedData;
-
-        return ApiResponse::success($ordersArray, 'success');
+        return ApiResponse::success(['data' => $transformedData], 'success');
     }
 
-    /**
-     * Get single service order detail (for customer)
-     *
-     * Refactored: Uses orders as primary source, jasa_order_items for service details,
-     * service_orders for backward compatibility (status, review, evidences)
-     */
     public function getCustomerOrderDetail(Request $request, int $id)
     {
         $customerId = Auth::id();
 
         try {
-            // Try to find order in orders table first
-            // NOTE: 'address' is NOT a DB column on merchants — it's a computed accessor.
-            // We must eager-load primaryAddress relationship instead.
-            // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
+            // Find order in orders table
+            // NOTE: 'address' is NOT a DB column on merchants.
+            // Must eager-load primaryAddress relationship.
+            // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
+            // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
             $order = Order::with([
                 'merchant:id,name,slug,logo_path,segmentation_id,phone',
                 'merchant.primaryAddress',
                 'payment',
-                'jasaItems.jasa:id,title,image,slug',
+                'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,customer_latitude,customer_longitude,is_reviewed,review_id,customer_confirmed,customer_confirmed_at',
                 'jasaItems.review.media',
+                'jasaItems.review.histories',
                 'jasaItems.completionEvidences',
             ])
                 ->where('user_id', $customerId)
-                ->whereHas('jasaItems') // Orders yang punya jasa_order_items
+                ->whereHas('jasaItems')
                 ->find($id);
 
             if (!$order) {
-                // Fallback: check if this is an old service_order without orders entry
-                $serviceOrder = ServiceOrder::with([
-                    'jasa',
-                    'merchant:id,name,slug,logo_path,segmentation_id,phone',
-                    'review.media',
-                    'completionEvidences',
-                    'jasa.ratingSummary',
-                ])
-                    ->where('customer_id', $customerId)
-                    ->find($id);
-
-                if (!$serviceOrder) {
-                    return ApiResponse::error('Pesanan tidak ditemukan', 404);
-                }
-
-                $transformedOrder = $this->transformServiceOrderForCustomer($serviceOrder);
-                return ApiResponse::success($transformedOrder, 'success');
+                return ApiResponse::error('Pesanan tidak ditemukan', 404);
             }
 
             $jasaItem = $order->jasaItems->first();
-            $serviceOrder = $jasaItem?->serviceOrder;
-
-            $transformedOrder = $this->transformOrderForCustomer($order, $serviceOrder, $jasaItem);
+            $transformedOrder = $this->transformOrderForCustomerOnly($order, $jasaItem);
 
             return ApiResponse::success($transformedOrder, 'success');
         } catch (\Exception $e) {
@@ -545,44 +497,41 @@ class ServiceOrderController extends Controller
                 'id' => $id,
                 'customer_id' => $customerId,
                 'error' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
             ]);
             return ApiResponse::error('Gagal memuat detail pesanan: ' . $e->getMessage(), 500);
         }
     }
 
     /**
-     * Transform order (from orders table) for customer-facing responses
+     * Transform order for customer-facing responses (NEW ARCHITECTURE)
      */
-    private function transformOrderForCustomer(Order $order, ?ServiceOrder $serviceOrder, ?JasaOrderItem $jasaItem): array
+    private function transformOrderForCustomerOnly(Order $order, ?JasaOrderItem $jasaItem): array
     {
         $orderArray = $order->toArray();
 
-        // Get merchant address — use primaryAddress (eager-loaded, NOT DB column 'address')
+        // Get merchant address
         $primaryAddress = $order->merchant?->primaryAddress;
         $merchantAddress = $primaryAddress?->detail ?? null;
 
         // Determine display address based on service type
-        $serviceType = $jasaItem?->service_type ?? $serviceOrder?->service_type ?? null;
+        $serviceType = $jasaItem?->service_type;
         $displayAddress = match ($serviceType) {
             'online' => 'Online',
             'di_tempat_umkm', 'at_location' => $merchantAddress ?? 'Lokasi UMKM',
             default => $order->alamat ?? $merchantAddress ?? '-',
         };
 
-        // Get status from service_order if available
-        $status = $serviceOrder?->status ?? $order->status;
-        $statusLabel = $serviceOrder?->status_label ?? ucfirst(str_replace('_', ' ', $order->status ?? 'unknown'));
+        // Status
+        $status = $order->status ?? 'menunggu_konfirmasi_merchant';
+        $statusLabel = $this->getServiceStatusLabel($status);
 
-        // Payment Info - Use orders.payment_status as source of truth
-        // Also read from Payment relation if available
-        $paymentStatus = $order->payment_status ?? $serviceOrder?->payment_status;
-        $paymentMethod = $order->payment_method ?? $serviceOrder?->payment_method;
-        $paymentChannel = $order->payment_channel ?? $order->paid_channel ?? $serviceOrder?->payment_channel;
-        $totalPrice = (float) ($serviceOrder?->total_price ?? $order->total_price);
+        // Payment Info
+        $paymentStatus = $order->payment_status;
+        $paymentMethod = $order->payment_method;
+        $paymentChannel = $order->payment_channel ?? $order->paid_channel;
+        $totalPrice = (float) $order->total_price;
 
-        // Read from Payment relation (Xendit channel is stored here after webhook)
+        // Payment relation (Xendit)
         $paymentRelation = $order->payment;
         if ($paymentRelation) {
             if ($paymentRelation->status === 'PAID') {
@@ -593,7 +542,6 @@ class ServiceOrderController extends Controller
             }
         }
 
-        // Payment method display mapping
         $paymentMethodLabels = [
             'cod' => 'Bayar di Tempat (COD)',
             'COD' => 'Bayar di Tempat (COD)',
@@ -610,10 +558,8 @@ class ServiceOrderController extends Controller
         ];
         $paymentMethodDisplay = $paymentMethodLabels[strtoupper($paymentMethod ?? '')]
             ?? $paymentMethodLabels[strtolower($paymentMethod ?? '')]
-            ?? $paymentMethod
-            ?? '-';
+            ?? $paymentMethod ?? '-';
 
-        // Payment status display mapping
         $paymentStatusLabels = [
             'UNPAID' => 'Belum Bayar',
             'PAID' => 'Lunas / Sudah Dibayar',
@@ -622,34 +568,43 @@ class ServiceOrderController extends Controller
         ];
         $paymentStatusDisplay = $paymentStatusLabels[strtoupper($paymentStatus ?? '')] ?? $paymentStatus ?? '-';
 
-        // Is payment completed
         $isPaymentCompleted = strtoupper($paymentMethod ?? '') === 'COD'
             || strtoupper($paymentStatus ?? '') === 'PAID';
 
-        // Get review data
-        $review = $serviceOrder?->review;
-        if (!$review && $jasaItem?->review) {
-            $review = $jasaItem->review;
-        }
+        // Review
+        $review = $jasaItem?->review;
+        $isReviewed = $jasaItem?->is_reviewed === true;
 
-        // Check if order is reviewed
-        $isReviewed = $serviceOrder?->review_id !== null || $jasaItem?->is_reviewed === true;
+        // Completion Evidences
+        $completionEvidences = $jasaItem?->completionEvidences ?? collect();
 
-        // Get completion evidences
-        $completionEvidences = $serviceOrder?->completionEvidences ?? collect();
-        if ($completionEvidences->isEmpty() && $jasaItem) {
-            $completionEvidences = $jasaItem->completionEvidences ?? collect();
-        }
+        // Service type label
+        $serviceTypeMap = [
+            'online' => 'Online',
+            'di_tempat_umkm' => 'Di Tempat UMKM',
+            'at_location' => 'Di Tempat UMKM',
+            'ke_rumah_pelanggan' => 'Ke Rumah Pelanggan',
+            'on_site' => 'Ke Rumah Pelanggan',
+        ];
+        $serviceTypeLabel = $serviceTypeMap[$serviceType] ?? ucfirst($serviceType ?? '-');
+
+        // Order method label
+        $orderMethodMap = [
+            'booking' => 'Booking (Pilih Tanggal & Jam)',
+            'keranjang' => 'Tanpa Jadwal',
+            'walk_in' => 'Walk-in',
+            'konsultasi' => 'Konsultasi',
+        ];
+        $orderMethodLabel = $orderMethodMap[$jasaItem?->order_method] ?? $jasaItem?->order_method ?? '';
 
         return [
             'id' => $order->id,
-            'service_order_id' => $serviceOrder?->id,
             'jasa_order_item_id' => $jasaItem?->id,
-            'order_number' => $serviceOrder?->order_number ?? 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-            // Customer info - dari service_order (backward compatibility)
-            'customer_name' => $serviceOrder?->customer_name ?? $order->user?->name,
-            'customer_phone' => $serviceOrder?->customer_phone ?? $order->user?->phone,
-            'customer_address' => $serviceOrder?->customer_address ?? $jasaItem?->service_location_address,
+            'order_number' => 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            // Customer Info - gunakan SNAPSHOT accessor
+            'customer_name' => $order->customer_name,
+            'customer_phone' => $order->customer_phone,
+            'customer_address' => $jasaItem?->service_location_address,
             'booking_date' => $jasaItem?->booking_date,
             'booking_time' => $jasaItem?->booking_time,
             'payment_method' => $paymentMethod,
@@ -657,9 +612,8 @@ class ServiceOrderController extends Controller
             'payment_status' => $paymentStatus,
             'payment_status_display' => $paymentStatusDisplay,
             'payment_channel' => $paymentChannel,
-            'paid_channel' => $order->paid_channel ?? $serviceOrder?->paid_channel,
+            'paid_channel' => $order->paid_channel,
             'is_payment_completed' => $isPaymentCompleted,
-            // Payment relation data (from payments table)
             'payment' => $paymentRelation ? [
                 'id' => $paymentRelation->id,
                 'status' => $paymentRelation->status,
@@ -670,36 +624,34 @@ class ServiceOrderController extends Controller
             ] : null,
             'total_price' => $totalPrice,
             'service_type' => $serviceType,
-            // Service info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
-            'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
-            'service_image' => $serviceOrder?->service_image
-                ?? ($jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null),
-            // order_method: mekanisme pemesanan (PRIMARY) - gunakan jasa_order_items.order_method
+            'service_type_label' => $serviceTypeLabel,
+            // Service Info - gunakan SNAPSHOT accessor
+            'service_name' => $jasaItem?->jasa_title,
+            'service_image' => $jasaItem?->jasa_image_url,
             'order_method' => $jasaItem?->order_method,
-            'order_method_label' => $jasaItem?->order_method_label,
-            // Legacy: order_type, mekanisme_pemesanan (backward compatibility - akan dihapus nanti)
-            'order_type' => $this->resolveOrderType($order, $jasaItem, $serviceOrder),
+            'order_method_label' => $orderMethodLabel,
+            'order_type' => $order->order_type,
             'mekanisme_pemesanan' => $jasaItem?->order_method,
+            'order_status' => $order->status,
             'status' => $status,
             'status_label' => $statusLabel,
             'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
             'created_at' => $order->created_at?->toIso8601String(),
             'updated_at' => $order->updated_at?->toIso8601String(),
-            // Merchant info
+            // Merchant Info - gunakan SNAPSHOT accessor
             'merchant' => [
                 'id' => $orderArray['merchant']['id'] ?? null,
-                'name' => $orderArray['merchant']['name'] ?? null,
+                'name' => $order->merchant_name, // snapshot > live
                 'slug' => $orderArray['merchant']['slug'] ?? null,
                 'address' => $merchantAddress,
             ],
-            // Jasa info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
+            // Jasa Info - gunakan SNAPSHOT accessor
             'jasa' => [
                 'id' => $jasaItem?->jasa_id,
-                'title' => $jasaItem?->jasa?->title ?? null,
-                'image' => $jasaItem?->jasa?->image ?? null,
-                'cover_image' => $jasaItem?->jasa?->image ?? null,
+                'title' => $jasaItem?->jasa_title, // snapshot > live
+                'image' => $jasaItem?->jasa_image_snapshot, // snapshot raw
+                'image_url' => $jasaItem?->jasa_image_url, // snapshot with asset()
             ],
-            // Review data (backward compatibility)
             'review' => $review ? array_merge($review->toArray(), [
                 'media' => $review->media->map(function ($media) {
                     $arr = $media->toArray();
@@ -710,15 +662,18 @@ class ServiceOrderController extends Controller
                 })->toArray()
             ]) : null,
             'is_reviewed' => $isReviewed,
-            // Completion evidences (backward compatibility)
+            'completion_note' => $jasaItem?->completion_note,
             'completion_evidences' => $completionEvidences->map(function ($evidence) {
-                $arr = $evidence->toArray();
-                if (!isset($arr['file_url']) || empty($arr['file_url'])) {
-                    $arr['file_url'] = $evidence->file_url;
-                }
-                return $arr;
+                return [
+                    'id' => $evidence->id,
+                    'jasa_order_item_id' => $evidence->jasa_order_item_id,
+                    'file_path' => $evidence->file_path,
+                    'file_url' => $evidence->file_url,
+                    'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
+                    'note' => $evidence->note ?? null,
+                    'created_at' => $evidence->created_at?->toIso8601String(),
+                ];
             })->toArray(),
-            // Display helpers
             'display_address' => $displayAddress,
             'address_label' => match ($serviceType) {
                 'online' => 'Lokasi',
@@ -729,215 +684,68 @@ class ServiceOrderController extends Controller
     }
 
     /**
-     * Transform service order for customer-facing responses
-     */
-    private function transformServiceOrderForCustomer(ServiceOrder $order): array
-    {
-        $orderArray = $order->toArray();
-
-        // Get merchant address — use primaryAddress (eager-loaded, NOT DB column 'address')
-        $primaryAddress = $order->merchant?->primaryAddress;
-        $merchantAddress = $primaryAddress?->detail ?? null;
-
-        // Determine display address based on service type
-        $displayAddress = match ($order->service_type) {
-            'online' => 'Online',
-            'di_tempat_umkm', 'at_location' => $merchantAddress ?? 'Lokasi UMKM',
-            default => $order->customer_address ?? $merchantAddress ?? '-',
-        };
-
-        // Payment method display mapping
-        $paymentMethodLabels = [
-            'cod' => 'Bayar di Tempat (COD)',
-            'COD' => 'Bayar di Tempat (COD)',
-            'ONLINE_XENDIT' => 'Online (Xendit)',
-            'QRIS' => 'QRIS',
-            'BCA_VA' => 'BCA Virtual Account',
-            'BNI_VA' => 'BNI Virtual Account',
-            'BRI_VA' => 'BRI Virtual Account',
-            'MANDIRI_VA' => 'Mandiri Virtual Account',
-            'OVO' => 'OVO',
-            'DANA' => 'DANA',
-            'SHOPEEPAY' => 'ShopeePay',
-            'ALFAMART' => 'Alfamart / Alfamidi',
-        ];
-        $paymentMethodDisplay = $paymentMethodLabels[strtoupper($order->payment_method ?? '')]
-            ?? $paymentMethodLabels[strtolower($order->payment_method ?? '')]
-            ?? $order->payment_method
-            ?? '-';
-
-        // Payment status display mapping
-        $paymentStatusLabels = [
-            'UNPAID' => 'Belum Bayar',
-            'PAID' => 'Lunas / Sudah Dibayar',
-            'WAITING_CONFIRMATION' => 'Menunggu Konfirmasi',
-            'PENDING' => 'Menunggu Pembayaran',
-        ];
-        $paymentStatusDisplay = $paymentStatusLabels[strtoupper($order->payment_status ?? '')] ?? $order->payment_status ?? '-';
-
-        // Is payment completed
-        $isPaymentCompleted = strtoupper($order->payment_method ?? '') === 'COD'
-            || strtoupper($order->payment_status ?? '') === 'PAID';
-
-        // Check if order is reviewed (for old service_orders without order entry)
-        $isReviewed = $order->review_id !== null;
-
-        // Resolve order_type: Check if there's a related orders entry
-        // 1. First, try to get order_type from related orders via jasa_order_items
-        $jasaItem = $order->jasaOrderItems->first();
-        $relatedOrder = $jasaItem?->order;
-        $resolvedOrderType = $relatedOrder?->order_type
-            ?? $this->mapMekanismeToOrderType($order->mekanisme_pemesanan);
-
-        return [
-            'id' => $order->id,
-            'order_number' => $order->formatted_order_number,
-            'jasa_order_item_id' => $jasaItem?->id,
-            'customer_name' => $order->customer_name,
-            'customer_phone' => $order->customer_phone,
-            'customer_address' => $order->customer_address,
-            'booking_date' => $order->booking_date,
-            'booking_time' => $order->booking_time,
-            'payment_method' => $order->payment_method,
-            'payment_method_display' => $paymentMethodDisplay,
-            'payment_status' => $order->payment_status,
-            'payment_status_display' => $paymentStatusDisplay,
-            'payment_channel' => $order->payment_channel,
-            'paid_channel' => $order->paid_channel,
-            'is_payment_completed' => $isPaymentCompleted,
-            'total_price' => (float) $order->total_price,
-            'service_type' => $order->service_type,
-            'service_name' => $order->service_name,
-            'service_image' => $order->service_image,
-            // order_type: from orders.order_type (PRIMARY), fallback to mekanisme_pemesanan mapping
-            'order_type' => $resolvedOrderType,
-            // Legacy: mekanisme_pemesanan (backward compatibility)
-            'mekanisme_pemesanan' => $order->mekanisme_pemesanan,
-            'status' => $order->status,
-            'status_label' => $order->status_label,
-            'booking_note' => $order->booking_note,
-            'created_at' => $order->created_at?->toIso8601String(),
-            'updated_at' => $order->updated_at?->toIso8601String(),
-            // Merchant info
-            'merchant' => [
-                'id' => $orderArray['merchant']['id'] ?? null,
-                'name' => $orderArray['merchant']['name'] ?? null,
-                'slug' => $orderArray['merchant']['slug'] ?? null,
-                'address' => $merchantAddress,
-            ],
-            // Jasa info
-            'jasa' => [
-                'id' => $orderArray['jasa']['id'] ?? null,
-                'title' => $orderArray['jasa']['title'] ?? null,
-                'image' => $orderArray['jasa']['image'] ?? null,
-                'cover_image' => $orderArray['jasa']['image'] ?? null, // Alias for backward compatibility
-            ],
-            // Review data
-            'review' => $order->review ? array_merge($order->review->toArray(), [
-                'media' => $order->review->media->map(function ($media) {
-                    $arr = $media->toArray();
-                    if (!isset($arr['file_url']) || $arr['file_url'] === '') {
-                        $arr['file_url'] = $media->file_url;
-                    }
-                    return $arr;
-                })->toArray()
-            ]) : null,
-            'is_reviewed' => $isReviewed,
-            // Display helpers
-            'display_address' => $displayAddress,
-            'address_label' => match ($order->service_type) {
-                'online' => 'Lokasi',
-                'di_tempat_umkm', 'at_location' => 'Lokasi UMKM',
-                default => 'Alamat',
-            },
-        ];
-    }
-
-    /**
-     * Customer confirms that work is completed (after seeing evidence).
+     * Customer confirms service completion (NEW ARCHITECTURE)
      *
-     * Refactored: Sync confirmation between orders and service_orders tables
+     * Flow:
+     * 1. Find Order by user_id and id
+     * 2. Validate status is menunggu_konfirmasi_selesai
+     * 3. Validate at least one completion evidence exists
+     * 4. Update orders.status = selesai
+     * 5. Update jasa_order_items: customer_confirmed = true
+     * 6. Return order with fresh evidences
      */
     public function confirmCompleted(Request $request, int $id)
     {
         $customerId = Auth::id();
 
-        // Try to find order in orders table first
-        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan lama
-        $order = Order::where('user_id', $customerId)
-            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
+        // Find order in orders table (PRIMARY)
+        $order = Order::with(['jasaItems.completionEvidences'])
+            ->where('user_id', $customerId)
+            ->whereHas('jasaItems')
             ->find($id);
 
-        $serviceOrder = null;
-        if ($order) {
-            // Get related service_order
-            $jasaItem = $order->jasaItems->first();
-            if ($jasaItem && $jasaItem->service_order_id) {
-                $serviceOrder = ServiceOrder::find($jasaItem->service_order_id);
-            }
-        } else {
-            // Fallback: find directly in service_orders
-            $serviceOrder = ServiceOrder::where('customer_id', $customerId)
-                ->where('id', $id)
-                ->first();
-
-            if (!$serviceOrder) {
-                return ApiResponse::error('Pesanan tidak ditemukan', 404);
-            }
+        if (!$order) {
+            return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
+        $jasaItem = $order->jasaItems->first();
+
         // Check if order is in correct status
-        $currentStatus = $serviceOrder?->status ?? $order?->status;
-        if ($currentStatus !== ServiceOrder::STATUS_MENUNGGU_SELESAI) {
+        $currentStatus = $order->status;
+        if ($currentStatus !== 'menunggu_konfirmasi_selesai') {
+            $statusLabel = $this->getServiceStatusLabel($currentStatus);
             return ApiResponse::error(
-                'Pesanan tidak dapat dikonfirmasi. Status saat ini: ' . ($serviceOrder?->statusLabel ?? 'unknown'),
+                "Pesanan tidak dapat dikonfirmasi. Status saat ini: {$statusLabel}",
                 400
             );
         }
 
         // Check that there is at least one completion evidence
-        $hasEvidence = $serviceOrder && $serviceOrder->completionEvidences()->count() > 0;
-        if (!$hasEvidence) {
-            // Check if evidence is in jasa_order_items
-            if ($order) {
-                $jasaItem = $order->jasaItems->first();
-                $hasEvidence = $jasaItem && $jasaItem->completionEvidences()->count() > 0;
-            }
-        }
-
-        if (!$hasEvidence) {
+        $evidenceCount = $jasaItem ? $jasaItem->completionEvidences()->count() : 0;
+        if ($evidenceCount === 0) {
             return ApiResponse::error('Bukti pengerjaan belum tersedia', 400);
         }
 
         DB::beginTransaction();
         try {
-            // Confirm in service_orders
-            if ($serviceOrder) {
-                $serviceOrder->confirmCompleted();
-            }
+            // Update orders table (PRIMARY)
+            $order->update(['status' => 'selesai']);
 
-            // Also update orders table
-            if ($order) {
-                $order->update(['status' => 'selesai']);
-
-                // Update jasa_order_items
-                $jasaItem = $order->jasaItems->first();
-                if ($jasaItem) {
-                    $jasaItem->update([
-                        'customer_confirmed' => true,
-                        'customer_confirmed_at' => now(),
-                    ]);
-                }
+            // Update jasa_order_items
+            if ($jasaItem) {
+                $jasaItem->update([
+                    'customer_confirmed' => true,
+                    'customer_confirmed_at' => now(),
+                ]);
             }
 
             DB::commit();
 
-            // Return updated data
-            if ($serviceOrder) {
-                return ApiResponse::success($serviceOrder->fresh(['completionEvidences']), 'Pesanan berhasil dikonfirmasi selesai. Terima kasih!');
-            }
-
-            return ApiResponse::success($order->fresh(['jasaItems.completionEvidences']), 'Pesanan berhasil dikonfirmasi selesai. Terima kasih!');
+            // Return updated data with fresh relations
+            return ApiResponse::success(
+                $order->fresh(['jasaItems.completionEvidences']),
+                'Pesanan berhasil dikonfirmasi selesai. Terima kasih!'
+            );
         } catch (\Exception $e) {
             DB::rollBack();
             return ApiResponse::error('Gagal mengkonfirmasi pesanan: ' . $e->getMessage(), 500);
@@ -946,35 +754,46 @@ class ServiceOrderController extends Controller
 
     /**
      * Get human-readable status label for orders.status
-     * orders.status ENUM: pending, proses, selesai, batal
+     * NEW ARCHITECTURE: Uses service status values directly (no more generic: pending/proses/batal)
+     * - menunggu_konfirmasi_merchant
+     * - diterima
+     * - ditolak
+     * - layanan_dikerjakan
+     * - menunggu_konfirmasi_selesai
+     * - selesai
+     * - dibatalkan
      */
-    private function getOrdersStatusLabel(string $status): string
+    private function getServiceStatusLabel(string $status): string
     {
         $labels = [
+            'menunggu_konfirmasi_merchant' => 'Menunggu Konfirmasi',
             'pending' => 'Menunggu Konfirmasi',
-            'proses' => 'Sedang Diproses',
+            'diterima' => 'Diterima',
+            'ditolak' => 'Ditolak',
+            'layanan_dikerjakan' => 'Sedang Dikerjakan',
+            'dikerjakan' => 'Sedang Dikerjakan',
+            'processing' => 'Sedang Dikerjakan',
+            'menunggu_konfirmasi_selesai' => 'Menunggu Konfirmasi Selesai',
+            'menunggu_selesai' => 'Menunggu Konfirmasi Selesai',
             'selesai' => 'Selesai',
+            'completed' => 'Selesai',
+            'dibatalkan' => 'Dibatalkan',
+            'cancelled' => 'Dibatalkan',
             'batal' => 'Dibatalkan',
+            // Legacy generic statuses (for backward compat with old orders)
+            'proses' => 'Sedang Diproses',
         ];
 
         return $labels[$status] ?? ucfirst(str_replace('_', ' ', $status));
     }
 
     /**
-     * Get service-style status label for orders.status
-     * Used when service_orders doesn't exist but we need display label
-     * Maps orders.status to service_orders style labels
+     * Get orders status label (DEPRECATED - use getServiceStatusLabel instead)
+     * Kept for backward compatibility only
      */
-    private function getServiceStatusLabel(string $ordersStatus): string
+    private function getOrdersStatusLabel(string $status): string
     {
-        $mapping = [
-            'pending' => 'Menunggu Konfirmasi Merchant',
-            'proses' => 'Sedang Diproses',
-            'selesai' => 'Selesai',
-            'batal' => 'Dibatalkan',
-        ];
-
-        return $mapping[$ordersStatus] ?? ucfirst(str_replace('_', ' ', $ordersStatus));
+        return $this->getServiceStatusLabel($status);
     }
 
     /**
@@ -1041,9 +860,8 @@ class ServiceOrderController extends Controller
      * Priority:
      * 1. jasa_order_items.order_method (PRIMARY - mechanism)
      * 2. orders.order_type (legacy - but for jasa should be 'jasa')
-     * 3. service_orders.mekanisme_pemesanan (legacy fallback)
      */
-    private function resolveOrderType(?Order $order, ?JasaOrderItem $jasaItem, ?ServiceOrder $serviceOrder): ?string
+    private function resolveOrderType(?Order $order, ?JasaOrderItem $jasaItem): ?string
     {
         // 1. Check jasa_order_items.order_method (PRIMARY)
         if ($jasaItem && !empty($jasaItem->order_method)) {
@@ -1060,257 +878,8 @@ class ServiceOrderController extends Controller
             }
         }
 
-        // 3. Check service_orders.mekanisme_pemesanan (LEGACY fallback)
-        if ($serviceOrder && !empty($serviceOrder->mekanisme_pemesanan)) {
-            return $this->mapMekanismeToOrderMethod($serviceOrder->mekanisme_pemesanan);
-        }
-
-        // 4. Fallback to 'keranjang' (FE format)
+        // 3. Fallback to 'keranjang' (FE format)
         return 'keranjang';
-    }
-
-    /**
-     * Get merchant service order history
-     *
-     * Refactored: Uses orders as primary source, jasa_order_items for service details,
-     * service_orders for backward compatibility (status, review, evidences)
-     */
-    public function getMerchantHistory(Request $request, Merchant $merchant)
-    {
-        // Authorize: current user must own this merchant
-        if ($merchant->user_id !== Auth::id()) {
-            return ApiResponse::error('Tidak memiliki akses ke merchant ini', 403);
-        }
-
-        // VALIDATION: Only UMKM Jasa can have service orders
-        if ($merchant->segmentation_id !== 3) {
-            return ApiResponse::error('Merchant ini tidak memiliki layanan jasa', 400);
-        }
-
-        // $status = $request->get('status'); // DISABLED - frontend handles filtering
-        $perPage = $request->get('per_page', 100); // Increase to 100 for client-side filtering
-
-        // PRIMARY: Query from orders table (jasa type)
-        // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
-        $query = Order::with([
-            'user:id,name,phone',
-            'jasaItems.jasa:id,title,image,slug',
-            'jasaItems.review.media',
-            'jasaItems.completionEvidences',
-            'jasaItems.serviceOrder',
-        ])
-            ->where('merchant_id', $merchant->id)
-            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
-            ->orderByDesc('created_at');
-
-        // Filter by status - DISABLED for now, frontend will handle filtering
-        // TODO: Re-enable with proper status mapping when frontend filter is stable
-        // if ($status) {
-        //     $ordersStatus = $this->mapFrontendStatusToOrdersStatus($status);
-        //     if ($ordersStatus) {
-        //         $query->where('status', $ordersStatus);
-        //     } else {
-        //         $query->where('status', $status);
-        //     }
-        // }
-
-        $orders = $query->paginate($perPage);
-
-        // Transform orders - merge with service_orders data for backward compatibility
-        $ordersArray = $orders->toArray();
-        $transformedData = collect($orders->items())->map(function ($order) {
-            // Get jasa_order_item first (jasa_id ada di sini, bukan di orders)
-            $jasaItem = $order->jasaItems->first();
-
-            // Get related service_order via jasa_order_items (backward compatibility)
-            $serviceOrder = $jasaItem?->serviceOrder;
-
-            $orderArray = [];
-
-            // ============================================================
-            // PRIMARY IDs - Use these as main identifiers
-            // ============================================================
-            // id: alias for order_id (backward compatibility with frontend)
-            $orderArray['id'] = $order->id;
-            $orderArray['order_id'] = $order->id; // PRIMARY ID - Use this for updates
-            $orderArray['jasa_order_item_id'] = null;
-            $orderArray['service_order_id'] = $serviceOrder?->id; // Only for backward compatibility
-
-            // ============================================================
-            // Get jasa_order_item for additional data
-            // ============================================================
-            $jasaItem = $order->jasaItems->first();
-            if ($jasaItem) {
-                $orderArray['jasa_order_item_id'] = $jasaItem->id;
-                $orderArray['service_type'] = $jasaItem->service_type;
-                $orderArray['service_type_label'] = $jasaItem->service_type_label;
-                $orderArray['booking_type'] = $jasaItem->order_method;
-                $orderArray['booking_date'] = $jasaItem->booking_date;
-                $orderArray['booking_time'] = $jasaItem->booking_time;
-                $orderArray['booking_note'] = $jasaItem->booking_note ?? $jasaItem->note;
-                $orderArray['service_location_address'] = $jasaItem->service_location_address;
-                $orderArray['customer_latitude'] = $jasaItem->customer_latitude ?? null;
-                $orderArray['customer_longitude'] = $jasaItem->customer_longitude ?? null;
-            }
-
-            // ============================================================
-            // STATUS - Use orders table as primary source
-            // ============================================================
-            // order_status is from orders table (primary source for filtering)
-            $orderArray['order_status'] = $order->status;
-            $orderArray['order_status_label'] = $this->getOrdersStatusLabel($order->status ?? 'pending');
-
-            // display_status uses orders status as primary, with service_orders as fallback
-            $orderArray['status'] = $order->status;
-            $orderArray['status_label'] = $this->getServiceStatusLabel($order->status);
-            // Keep service_status for backward compatibility
-            $orderArray['service_status'] = $serviceOrder?->status;
-            $orderArray['service_status_label'] = $serviceOrder?->status_label;
-
-            // ============================================================
-            // Order Number
-            // ============================================================
-            $orderArray['order_number'] = $serviceOrder?->order_number
-                ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
-
-            // ============================================================
-            // Customer Info - dari service_order (backward compatibility)
-            // ============================================================
-            $orderArray['customer_name'] = $serviceOrder?->customer_name ?? $order->user?->name;
-            $orderArray['customer_phone'] = $serviceOrder?->customer_phone ?? $order->user?->phone;
-            $orderArray['customer_address'] = $serviceOrder?->customer_address ?? $jasaItem?->service_location_address;
-            $orderArray['customer_latitude'] = $jasaItem?->customer_latitude ?? null;
-            $orderArray['customer_longitude'] = $jasaItem?->customer_longitude ?? null;
-
-            // ============================================================
-            // Payment Info - Use orders.payment_status as primary source
-            // ============================================================
-            $orderArray['payment_status'] = $order->payment_status;
-            $orderArray['payment_method'] = $order->payment_method;
-            $orderArray['payment_channel'] = $order->payment_channel ?? $order->paid_channel;
-            $orderArray['paid_channel'] = $order->paid_channel;
-
-            // ============================================================
-            // Service Info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
-            // ============================================================
-            $orderArray['total_price'] = (float) $order->total_price;
-            $orderArray['service_name'] = $jasaItem?->jasa?->title;
-            $orderArray['service_image'] = $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null;
-            // order_type: mekanisme pemesanan (PRIMARY)
-            $orderArray['order_type'] = $this->resolveOrderType($order, $jasaItem, $serviceOrder);
-            $orderArray['completion_note'] = $jasaItem?->completion_note ?? $serviceOrder?->completion_note;
-            $orderArray['rejection_reason'] = $jasaItem?->rejection_reason ?? $serviceOrder?->rejection_reason;
-
-            // ============================================================
-            // Completion Evidences - Use jasa_order_items as primary
-            // ============================================================
-            $completionEvidences = $jasaItem?->completionEvidences ?? collect();
-            if ($completionEvidences->isEmpty() && $serviceOrder) {
-                $completionEvidences = $serviceOrder->completionEvidences ?? collect();
-            }
-
-            // ============================================================
-            // Review Data - Use jasa_order_items as primary
-            // ============================================================
-            $review = $jasaItem?->review;
-            if (!$review) {
-                $review = $serviceOrder?->review;
-            }
-            $isReviewed = $jasaItem?->is_reviewed === true || $serviceOrder?->review_id !== null;
-
-            if ($review) {
-                $reviewMedia = [];
-                if ($review->media) {
-                    $reviewMedia = $review->media->map(function ($media) {
-                        $arr = $media->toArray();
-                        // Use media_url (full URL) or construct from file_path
-                        $arr['file_url'] = $media->media_url ?? ($media->file_path ? asset('storage/' . $media->file_path) : null);
-                        return $arr;
-                    })->toArray();
-                }
-                $orderArray['review'] = array_merge($review->toArray(), ['media' => $reviewMedia]);
-            } else {
-                $orderArray['review'] = null;
-            }
-            $orderArray['is_reviewed'] = $isReviewed;
-
-            // ============================================================
-            // Completion Evidences - Transform with proper URLs
-            // ============================================================
-            $orderArray['completion_evidences'] = $completionEvidences->map(function ($evidence) {
-                $arr = $evidence->toArray();
-                // Use media_url (full URL) or construct from file_path
-                $arr['file_url'] = $evidence->media_url ?? ($evidence->file_path ? asset('storage/' . $evidence->file_path) : null);
-                return $arr;
-            })->toArray();
-
-            // ============================================================
-            // Debug logging
-            // ============================================================
-            Log::info('[Merchant History Mapping]', [
-                'order_id' => $order->id,
-                'jasa_order_item_id' => $jasaItem?->id,
-                'review_exists' => !is_null($review),
-                'review_from' => $review ? ($jasaItem?->review ? 'jasa_item' : 'service_order') : null,
-                'evidence_count' => count($completionEvidences ?? []),
-                'evidence_from' => $jasaItem && $jasaItem->completionEvidences?->isNotEmpty() ? 'jasa_item' : ($serviceOrder && $serviceOrder->completionEvidences?->isNotEmpty() ? 'service_order' : null),
-            ]);
-
-            // ============================================================
-            // Merchant Info
-            // ============================================================
-            $orderArray['merchant'] = [
-                'id' => $order->merchant_id,
-                'name' => $order->merchant?->name,
-            ];
-
-            // ============================================================
-            // Jasa Info - ambil dari jasa_order_items, bukan dari orders
-            // ============================================================
-            $orderArray['jasa'] = [
-                'id' => $jasaItem?->jasa_id,
-                'title' => $jasaItem?->jasa?->title,
-                'image' => $jasaItem?->jasa?->image,
-            ];
-
-            // ============================================================
-            // Customer User Info
-            // ============================================================
-            $orderArray['customer'] = [
-                'id' => $order->user_id,
-                'name' => $order->user?->name,
-                'phone' => $order->user?->phone,
-            ];
-
-            // ============================================================
-            // Timestamps
-            // ============================================================
-            $orderArray['created_at'] = $order->created_at?->toIso8601String();
-            $orderArray['updated_at'] = $order->updated_at?->toIso8601String();
-
-            return $orderArray;
-        })->toArray();
-
-        $ordersArray['data'] = $transformedData;
-
-        return ApiResponse::success($ordersArray, 'success');
-    }
-
-    /**
-     * Map orders.status to service_orders.status format
-     * orders.status: pending, proses, selesai, batal
-     * service_orders.status: menunggu_konfirmasi_merchant, diterima, ditolak, layanan_dikerjakan, menunggu_konfirmasi_selesai, selesai
-     */
-    private function mapOrdersStatusToServiceStatus(string $ordersStatus): string
-    {
-        $mapping = [
-            'pending' => 'menunggu_konfirmasi_merchant',
-            'proses' => 'diterima', // In process = accepted
-            'selesai' => 'selesai',
-            'batal' => 'ditolak',
-        ];
-
-        return $mapping[$ordersStatus] ?? 'menunggu_konfirmasi_merchant';
     }
 
     /**
@@ -1337,10 +906,14 @@ class ServiceOrderController extends Controller
 
         // Build query from orders table
         // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
+        // Include serviceOrder for backward compatibility with legacy evidences
+        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
+        // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
         $query = Order::with([
             'user:id,name,phone',
-            'jasaItems.jasa:id,title,image,slug',
+            'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,is_reviewed,review_id,customer_latitude,customer_longitude',
             'jasaItems.review.media',
+            'jasaItems.review.histories',
             'jasaItems.completionEvidences',
             'jasaItems.serviceOrder',
         ])
@@ -1394,41 +967,39 @@ class ServiceOrderController extends Controller
         // Transform orders to API response format
         $transformedData = collect($orders->items())->map(function ($order) {
             $jasaItem = $order->jasaItems->first();
-            $serviceOrder = $jasaItem?->serviceOrder;
 
-            // Use service_orders.status if available, otherwise map from orders.status
-            $mappedServiceStatus = $serviceOrder?->status
-                ?? $this->mapOrdersStatusToServiceStatus($order->status);
+            // Completion Evidences - dari jasa_order_items (PRIMARY)
+            $completionEvidences = $jasaItem?->completionEvidences ?? collect();
+
+            // Debug logging
+            Log::info('[getMerchantOrders] Evidence debug', [
+                'order_id' => $order->id,
+                'jasa_order_item_id' => $jasaItem?->id,
+                'evidence_count' => $completionEvidences->count(),
+            ]);
 
             return [
                 // IDs
                 'id' => $order->id,
                 'order_id' => $order->id,
                 'jasa_order_item_id' => $jasaItem?->id,
-                'service_order_id' => $serviceOrder?->id,
-
-                // Order Number
-                'order_number' => $serviceOrder?->order_number ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-                'formatted_order_number' => $serviceOrder?->formatted_order_number ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                'formatted_order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
 
                 // Status (from orders table as primary)
                 'order_status' => $order->status,
-                'order_status_label' => $this->getOrdersStatusLabel($order->status ?? 'pending'),
-                'status' => $order->status, // Original orders table status
-                'status_label' => $this->getServiceStatusLabel($order->status),
-                // Mapped service status for frontend filter (always populated)
-                'service_status' => $mappedServiceStatus,
-                'service_status_label' => ServiceOrder::getStatusLabelStatic($mappedServiceStatus),
-                'service_status_label' => $serviceOrder?->status_label,
+                'order_status_label' => $this->getServiceStatusLabel($order->status),
+                'status' => $order->status, // PRIMARY: direct from orders.status
+                'status_label' => $this->getServiceStatusLabel($order->status), // PRIMARY: direct label
 
-                // Customer Info
-                'customer_name' => $serviceOrder?->customer_name ?? $order->user?->name,
-                'customer_phone' => $serviceOrder?->customer_phone ?? $order->user?->phone,
-                'customer_address' => $serviceOrder?->customer_address ?? $jasaItem?->service_location_address,
+                // Customer Info - gunakan SNAPSHOT accessor
+                'customer_name' => $order->customer_name, // snapshot > user > nama
+                'customer_phone' => $order->customer_phone, // snapshot > user > tel
+                'customer_address' => $jasaItem?->service_location_address,
                 'customer' => [
                     'id' => $order->user_id,
-                    'name' => $order->user?->name,
-                    'phone' => $order->user?->phone,
+                    'name' => $order->customer_name, // snapshot > user > nama
+                    'phone' => $order->customer_phone, // snapshot > user > tel
                 ],
 
                 // Payment Info
@@ -1436,10 +1007,10 @@ class ServiceOrderController extends Controller
                 'payment_status' => $order->payment_status,
                 'payment_channel' => $order->payment_channel ?? $order->paid_channel,
 
-                // Service/Jasa Info
-                'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
-                'service_image' => $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null,
-                'service_type' => $jasaItem?->service_type ?? $serviceOrder?->service_type,
+                // Service/Jasa Info - gunakan SNAPSHOT accessor
+                'service_name' => $jasaItem?->jasa_title, // snapshot > live
+                'service_image' => $jasaItem?->jasa_image_url, // snapshot > live
+                'service_type' => $jasaItem?->service_type,
                 'order_type' => $order->order_type, // Legacy: mechanism (jasa/product)
                 'booking_type' => $jasaItem?->order_method,
 
@@ -1450,13 +1021,13 @@ class ServiceOrderController extends Controller
                 'service_location_address' => $jasaItem?->service_location_address,
 
                 // Pricing
-                'total_price' => (float) ($order->total_price ?? $serviceOrder?->total_price ?? 0),
+                'total_price' => (float) $order->total_price,
 
                 // Completion
-                'completion_note' => $jasaItem?->completion_note ?? $serviceOrder?->completion_note,
-                'rejection_reason' => $jasaItem?->rejection_reason ?? $serviceOrder?->rejection_reason,
+                'completion_note' => $jasaItem?->completion_note,
+                'rejection_reason' => $order->rejection_reason,
 
-                // Review (from jasa_order_items as primary)
+                // Review (from jasa_order_items)
                 'review' => $jasaItem?->review ? array_merge($jasaItem->review->toArray(), [
                     'media' => $jasaItem->review->media->map(function ($media) {
                         $arr = $media->toArray();
@@ -1464,30 +1035,49 @@ class ServiceOrderController extends Controller
                         return $arr;
                     })->toArray()
                 ]) : null,
-                'is_reviewed' => $jasaItem?->is_reviewed === true || $serviceOrder?->review_id !== null,
+                'is_reviewed' => $jasaItem?->is_reviewed === true,
 
-                // Completion Evidences
-                'completion_evidences' => $jasaItem?->completionEvidences->map(function ($evidence) {
-                    $arr = $evidence->toArray();
-                    $arr['file_url'] = $evidence->media_url ?? ($evidence->file_path ? asset('storage/' . $evidence->file_path) : null);
-                    return $arr;
-                })->toArray() ?? [],
+                // Completion Evidences (from jasa_order_items only - NEW ARCHITECTURE)
+                'completion_evidences' => $completionEvidences->map(function ($evidence) {
+                    return [
+                        'id' => $evidence->id,
+                        'jasa_order_item_id' => $evidence->jasa_order_item_id,
+                        'file_path' => $evidence->file_path,
+                        'file_url' => $evidence->file_url,
+                        'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
+                        'note' => $evidence->note ?? null,
+                        'created_at' => $evidence->created_at?->toIso8601String(),
+                    ];
+                })->toArray(),
 
                 // Timestamps
                 'created_at' => $order->created_at?->toIso8601String(),
                 'updated_at' => $order->updated_at?->toIso8601String(),
+                // SLA timestamps
+                'merchant_response_deadline' => $order->merchant_response_deadline?->toIso8601String(),
+                'merchant_responded_at' => $order->merchant_responded_at?->toIso8601String(),
+                'completion_submitted_at' => $order->completion_submitted_at?->toIso8601String(),
+                'completed_at' => $order->completed_at?->toIso8601String(),
+                'completed_by' => $order->completed_by,
+                'auto_completed_at' => $order->auto_completed_at?->toIso8601String(),
+                'cancelled_by' => $order->cancelled_by,
+                'rejected_by' => $order->rejected_by,
+                'expired_at' => $order->expired_at?->toIso8601String(),
+                // Completion note
+                'completion_note' => $jasaItem?->completion_note ?? null,
 
-                // Merchant Info (for reference)
+                // Merchant Info - gunakan SNAPSHOT accessor
                 'merchant' => [
                     'id' => $order->merchant_id,
-                    'name' => $order->merchant?->name,
+                    'name' => $order->merchant_name, // snapshot > live
                 ],
 
-                // Jasa Info
+                // Jasa Info - gunakan SNAPSHOT accessor
                 'jasa' => [
                     'id' => $jasaItem?->jasa_id,
-                    'title' => $jasaItem?->jasa?->title,
-                    'image' => $jasaItem?->jasa?->image,
+                    'title' => $jasaItem?->jasa_title, // snapshot > live
+                    'image' => $jasaItem?->jasa_image_snapshot, // snapshot raw
+                    'image_url' => $jasaItem?->jasa_image_url, // snapshot with asset()
                 ],
             ];
         })->toArray();
@@ -1542,188 +1132,154 @@ class ServiceOrderController extends Controller
             return ApiResponse::error('Tidak memiliki akses', 403);
         }
 
-        // Try to find order in orders table first
-        // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
+        // Find order in orders table
+        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
+            // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
         $order = Order::with([
             'user:id,name,phone',
-            'jasaItems.jasa:id,title,image,slug',
+            'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,customer_latitude,customer_longitude,is_reviewed,review_id',
             'jasaItems.review.media',
+            'jasaItems.review.histories',
             'jasaItems.completionEvidences',
-            'jasaItems.serviceOrder',
         ])
             ->where('merchant_id', $merchant->id)
-            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
+            ->whereHas('jasaItems')
             ->find($id);
 
         if (!$order) {
-            // Fallback: check if this is an old service_order without orders entry
-            $serviceOrder = ServiceOrder::with([
-                'jasa',
-                'customer:id,name,phone',
-                'review.media',
-                'completionEvidences',
-            ])
-                ->where('merchant_id', $merchant->id)
-                ->where('id', $id)
-                ->first();
-
-            if (!$serviceOrder) {
-                return ApiResponse::error('Pesanan tidak ditemukan', 404);
-            }
-
-            return ApiResponse::success($serviceOrder, 'success');
+            return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
-        // Get related service_order for backward compatibility
         $jasaItem = $order->jasaItems->first();
-        $serviceOrder = $jasaItem?->serviceOrder;
-
-        // Transform order data for merchant view
-        $transformedOrder = $this->transformOrderForMerchant($order, $serviceOrder, $jasaItem);
-
-        // Debug logging
-        Log::info('[Merchant Order Detail Mapping]', [
-            'order_id' => $order->id,
-            'jasa_order_item_id' => $jasaItem?->id,
-            'review_exists' => !is_null($transformedOrder['review']),
-            'evidence_count' => count($transformedOrder['completion_evidences'] ?? []),
-        ]);
+        $transformedOrder = $this->transformMerchantOrderOnly($order, $jasaItem);
 
         return ApiResponse::success($transformedOrder, 'success');
     }
 
     /**
-     * Transform order (from orders table) for merchant-facing responses
+     * Transform order for merchant-facing responses (NEW ARCHITECTURE)
      */
-    private function transformOrderForMerchant(Order $order, ?ServiceOrder $serviceOrder, ?JasaOrderItem $jasaItem): array
+    private function transformMerchantOrderOnly(Order $order, ?JasaOrderItem $jasaItem): array
     {
         $orderArray = $order->toArray();
 
-        // STATUS - Use orders table as primary source
+        // STATUS
         $status = $order->status;
         $statusLabel = $this->getServiceStatusLabel($order->status);
 
-        // PAYMENT - Use orders table as primary source
+        // PAYMENT
         $paymentStatus = $order->payment_status;
         $paymentMethod = $order->payment_method;
         $totalPrice = (float) $order->total_price;
 
-        // COMPLETION EVIDENCES - Use jasa_order_items as primary
+        // COMPLETION EVIDENCES
         $completionEvidences = $jasaItem?->completionEvidences ?? collect();
-        if ($completionEvidences->isEmpty() && $serviceOrder) {
-            $completionEvidences = $serviceOrder->completionEvidences ?? collect();
-        }
 
-        // REVIEW - Use jasa_order_items as primary
+        // REVIEW
         $review = $jasaItem?->review;
-        if (!$review) {
-            $review = $serviceOrder?->review;
-        }
-        $isReviewed = $jasaItem?->is_reviewed === true || $serviceOrder?->review_id !== null;
+        $isReviewed = $jasaItem?->is_reviewed === true;
 
         return [
             'id' => $order->id,
-            'service_order_id' => $serviceOrder?->id, // Only for backward compatibility
             'jasa_order_item_id' => $jasaItem?->id,
-            'order_number' => $serviceOrder?->order_number ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-            // Customer Info - dari service_order (backward compatibility)
-            'customer_name' => $serviceOrder?->customer_name ?? $order->user?->name,
-            'customer_phone' => $serviceOrder?->customer_phone ?? $order->user?->phone,
-            'customer_address' => $serviceOrder?->customer_address ?? $jasaItem?->service_location_address,
+            'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            // Customer Info - gunakan SNAPSHOT accessor
+            'customer_name' => $order->customer_name, // snapshot > user > nama
+            'customer_phone' => $order->customer_phone, // snapshot > user > tel
+            'customer_address' => $jasaItem?->service_location_address,
             'customer_latitude' => $jasaItem?->customer_latitude ?? null,
             'customer_longitude' => $jasaItem?->customer_longitude ?? null,
-            // Booking Info - from jasa_order_items
             'booking_date' => $jasaItem?->booking_date,
             'booking_time' => $jasaItem?->booking_time,
             'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
-            // Payment Info - from orders table as primary
             'payment_method' => $paymentMethod,
             'payment_channel' => $order->payment_channel ?? $order->paid_channel,
             'payment_status' => $paymentStatus,
             'total_price' => $totalPrice,
-            // Service Info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
-            'service_type' => $jasaItem?->service_type ?? $serviceOrder?->service_type,
-            'service_name' => $jasaItem?->jasa?->title ?? $serviceOrder?->service_name,
-            'service_image' => $jasaItem?->jasa?->image ? asset('storage/' . $jasaItem->jasa->image) : null,
-            // order_type: mekanisme pemesanan (PRIMARY)
-            'order_type' => $this->resolveOrderType($order, $jasaItem, $serviceOrder),
-            // Legacy: mekanisme_pemesanan (backward compatibility)
+            'service_type' => $jasaItem?->service_type,
+            // Service Info - gunakan SNAPSHOT accessor
+            'service_name' => $jasaItem?->jasa_title, // snapshot > live
+            'service_image' => $jasaItem?->jasa_image_url, // snapshot > live
+            'order_type' => $order->order_type,
             'mekanisme_pemesanan' => $jasaItem?->order_method,
-            // Status - from orders table as primary
             'status' => $status,
             'status_label' => $statusLabel,
-            // Notes - from jasa_order_items as primary
-            'completion_note' => $jasaItem?->completion_note ?? $serviceOrder?->completion_note,
-            'rejection_reason' => $jasaItem?->rejection_reason ?? $serviceOrder?->rejection_reason,
-            // Timestamps
+            'completion_note' => $jasaItem?->completion_note,
+            'rejection_reason' => $order->rejection_reason,
+            // SLA timestamps
+            'merchant_response_deadline' => $order->merchant_response_deadline?->toIso8601String(),
+            'merchant_responded_at' => $order->merchant_responded_at?->toIso8601String(),
+            'completion_submitted_at' => $order->completion_submitted_at?->toIso8601String(),
+            'completed_at' => $order->completed_at?->toIso8601String(),
+            'completed_by' => $order->completed_by,
+            'auto_completed_at' => $order->auto_completed_at?->toIso8601String(),
+            'cancelled_by' => $order->cancelled_by,
+            'rejected_by' => $order->rejected_by,
+            'expired_at' => $order->expired_at?->toIso8601String(),
+            // Completion note from merchant's evidence upload
+            'completion_note' => $jasaItem?->completion_note ?? null,
             'created_at' => $order->created_at?->toIso8601String(),
             'updated_at' => $order->updated_at?->toIso8601String(),
-            // Customer user info
+            // Customer detail - gunakan SNAPSHOT accessor
             'customer' => [
                 'id' => $orderArray['user']['id'] ?? null,
-                'name' => $orderArray['user']['name'] ?? null,
-                'phone' => $orderArray['user']['phone'] ?? null,
+                'name' => $order->customer_name, // snapshot > user > nama
+                'phone' => $order->customer_phone, // snapshot > user > tel
             ],
-            // Jasa info - dari jasa_order_items.jasa, BUKAN dari orders.jasa
-            'jasa' => $jasaItem?->jasa ? [
-                'id' => $jasaItem->jasa->id,
-                'title' => $jasaItem->jasa->title,
-                'image' => $jasaItem->jasa->image,
-            ] : null,
-            // Review - from jasa_order_items as primary
+            // Merchant Info - gunakan SNAPSHOT accessor
+            'merchant' => [
+                'id' => $order->merchant_id,
+                'name' => $order->merchant_name, // snapshot > live
+                'phone' => $order->merchant_phone, // snapshot > live
+                'address' => $order->merchant_address, // snapshot > live
+            ],
+            // Jasa Info - gunakan SNAPSHOT accessor
+            'jasa' => [
+                'id' => $jasaItem?->jasa_id,
+                'title' => $jasaItem?->jasa_title, // snapshot > live
+                'image' => $jasaItem?->jasa_image_snapshot, // snapshot raw
+                'image_url' => $jasaItem?->jasa_image_url, // snapshot with asset()
+            ],
             'review' => $review ? array_merge($review->toArray(), [
                 'media' => $review->media->map(function ($media) {
                     $arr = $media->toArray();
-                    // Use media_url (full URL) or construct from file_path
                     $arr['file_url'] = $media->media_url ?? ($media->file_path ? asset('storage/' . $media->file_path) : null);
                     return $arr;
                 })->toArray()
             ]) : null,
             'is_reviewed' => $isReviewed,
-            // Completion evidences - from jasa_order_items as primary
             'completion_evidences' => $completionEvidences->map(function ($evidence) {
-                $arr = $evidence->toArray();
-                // Use media_url (full URL) or construct from file_path
-                $arr['file_url'] = $evidence->media_url ?? ($evidence->file_path ? asset('storage/' . $evidence->file_path) : null);
-                return $arr;
+                return [
+                    'id' => $evidence->id,
+                    'jasa_order_item_id' => $evidence->jasa_order_item_id,
+                    'file_path' => $evidence->file_path,
+                    'file_url' => $evidence->file_url,
+                    'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
+                    'note' => $evidence->note ?? null,
+                    'created_at' => $evidence->created_at?->toIso8601String(),
+                ];
             })->toArray(),
         ];
     }
 
     /**
-     * Mapping from service_orders.status to orders.status
-     * orders.status ENUM: 'pending', 'proses', 'selesai', 'batal'
-     * service_orders.status ENUM: 'menunggu_konfirmasi_merchant', 'diterima', 'ditolak', 'layanan_dikerjakan', 'menunggu_konfirmasi_selesai', 'selesai'
+     * Map service order status to orders table status.
      */
     private function mapServiceOrderStatusToOrdersStatus(string $serviceOrderStatus): string
     {
-        $mapping = [
-            'menunggu_konfirmasi_merchant' => 'pending',
-            'diterima' => 'proses',           // Diterima = masuk proses
-            'ditolak' => 'batal',             // Ditolak = dibatalkan
-            'layanan_dikerjakan' => 'proses', // Sedang dikerjakan = masih proses
-            'menunggu_konfirmasi_selesai' => 'proses', // Menunggu konfirmasi selesai = proses
-            'selesai' => 'selesai',           // Selesai = selesai
-        ];
-
-        return $mapping[$serviceOrderStatus] ?? 'pending';
+        return $serviceOrderStatus;
     }
 
     /**
      * Update service order status (merchant actions)
      *
-     * PRIMARY ID: orders.id
-     * Fallback: service_orders.id (legacy)
-     *
-     * Struktur:
-     * - orders.id = ID utama pesanan (semua jenis order)
-     * - orders -> jasa_order_items = detail item jasa
-     * - orders -> service_orders = backward compatibility
+     * PRIMARY: orders.id + jasa_order_items
+     * NO service_orders dependency for new orders.
      *
      * Flow:
      * 1. Receive {id} from route as orders.id
-     * 2. Find Order with relations (jasa_order_items, service_orders)
-     * 3. Update orders.status and service_orders.status
+     * 2. Find Order with relations (jasa_order_items)
+     * 3. Update orders.status and jasa_order_items fields
      */
     public function updateStatus(Request $request, Merchant $merchant, $id)
     {
@@ -1775,66 +1331,14 @@ class ServiceOrderController extends Controller
         $newStatus = $data['status'];
 
         // ============================================================
-        // FIND DATA - Primary: orders.id
+        // FIND DATA - orders.id + jasa_order_items (NO service_orders)
         // ============================================================
-
-        // Try to find as orders.id first (PRIMARY)
-        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan
-        $order = Order::with(['jasaItems.serviceOrder'])
+        $order = Order::with(['jasaItems'])
             ->where('merchant_id', $merchant->id)
-            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
+            ->whereHas('jasaItems')
             ->find($id);
 
-        $serviceOrder = null;
-        $jasaOrderItem = null;
-        $foundVia = null;
-
-        if ($order) {
-            $foundVia = 'orders';
-            Log::info('[ServiceOrder UpdateStatus] Found via orders table', [
-                'received_id' => $id,
-                'orders_id' => $order->id,
-                'order_status' => $order->status,
-            ]);
-
-            // Get related jasa_order_items and service_order
-            $jasaOrderItem = $order->jasaItems->first();
-            if ($jasaOrderItem && $jasaOrderItem->service_order_id) {
-                $serviceOrder = ServiceOrder::find($jasaOrderItem->service_order_id);
-                Log::info('[ServiceOrder UpdateStatus] Found related service_order', [
-                    'service_orders_id' => $serviceOrder->id,
-                    'service_order_status' => $serviceOrder->status,
-                ]);
-            }
-        }
-
-        // Final fallback: try service_orders.id (legacy)
         if (!$order) {
-            $serviceOrder = ServiceOrder::with('jasaOrderItems')
-                ->where('merchant_id', $merchant->id)
-                ->find($id);
-
-            if ($serviceOrder) {
-                $foundVia = 'service_orders';
-                Log::info('[ServiceOrder UpdateStatus] Found via service_orders table (legacy)', [
-                    'received_id' => $id,
-                    'service_orders_id' => $serviceOrder->id,
-                    'service_order_status' => $serviceOrder->status,
-                ]);
-
-                // Try to find related orders via jasa_order_items
-                $jasaOrderItem = $serviceOrder->jasaOrderItems->first();
-                if ($jasaOrderItem && $jasaOrderItem->order_id) {
-                    $order = Order::find($jasaOrderItem->order_id);
-                    Log::info('[ServiceOrder UpdateStatus] Found related orders', [
-                        'orders_id' => $order->id,
-                    ]);
-                }
-            }
-        }
-
-        // If still not found, return 404
-        if (!$order && !$serviceOrder) {
             Log::warning('[ServiceOrder UpdateStatus] Order not found', [
                 'received_id' => $id,
                 'merchant_id' => $merchant->id,
@@ -1842,14 +1346,21 @@ class ServiceOrderController extends Controller
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
-        // Check if order is in terminal state
-        $currentStatus = $serviceOrder?->status ?? $order?->status;
+        Log::info('[ServiceOrder UpdateStatus] Found order', [
+            'received_id' => $id,
+            'orders_id' => $order->id,
+            'order_status' => $order->status,
+        ]);
+
+        $jasaOrderItem = $order->jasaItems->first();
+
+        // Check terminal status
         $terminalStatuses = [ServiceOrder::STATUS_SELESAI, ServiceOrder::STATUS_DITOLAK];
-        if (in_array($currentStatus, $terminalStatuses)) {
-            $statusLabel = ServiceOrder::getStatusLabelStatic($currentStatus);
+        if (in_array($order->status, $terminalStatuses)) {
+            $statusLabel = ServiceOrder::getStatusLabelStatic($order->status);
             Log::warning('[ServiceOrder UpdateStatus] Order in terminal state', [
                 'received_id' => $id,
-                'current_status' => $currentStatus,
+                'current_status' => $order->status,
                 'requested_status' => $newStatus,
             ]);
             return ApiResponse::error(
@@ -1858,112 +1369,58 @@ class ServiceOrderController extends Controller
             );
         }
 
-        // Validate status transition using service_order if available
-        if ($serviceOrder && !$serviceOrder->canTransitionTo($newStatus)) {
-            $currentLabel = ServiceOrder::getStatusLabelStatic($serviceOrder->status);
-            $newLabel = ServiceOrder::getStatusLabelStatic($newStatus);
-            Log::warning('[ServiceOrder UpdateStatus] Invalid transition', [
-                'received_id' => $id,
-                'current_status' => $serviceOrder->status,
-                'requested_status' => $newStatus,
-            ]);
-            return ApiResponse::error(
-                "Tidak dapat mengubah status dari '{$currentLabel}' ke '{$newLabel}'",
-                422
-            );
-        }
-
         try {
             DB::beginTransaction();
 
             // ============================================================
-            // UPDATE STATUS
+            // UPDATE STATUS - orders + jasa_order_items ONLY
             // ============================================================
+            $orderTimestampData = [];
 
             // Handle DITOLAK (rejection)
             if ($newStatus === ServiceOrder::STATUS_DITOLAK) {
                 $rejectionReason = $data['rejection_reason'] ?? 'Merchant menolak pesanan';
-
-                if ($serviceOrder) {
-                    $serviceOrder->updateStatus($newStatus, [
-                        'rejection_reason' => $rejectionReason,
-                    ]);
-                }
-
-                if ($order) {
-                    $order->update(['status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus)]);
-                }
+                $orderTimestampData['status'] = $newStatus;
+                $orderTimestampData['rejected_at'] = now();
+                $orderTimestampData['rejection_reason'] = $rejectionReason;
+                $order->update($orderTimestampData);
 
                 Log::info('[ServiceOrder UpdateStatus] Order rejected', [
                     'received_id' => $id,
-                    'orders_id' => $order?->id,
-                    'service_orders_id' => $serviceOrder?->id,
-                    'new_service_status' => $newStatus,
-                    'new_order_status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus),
+                    'orders_id' => $order->id,
+                    'new_status' => $newStatus,
                     'rejection_reason' => $rejectionReason,
                 ]);
             }
-            // Handle MENUNGGU_SELESAI (upload evidence)
-            elseif ($newStatus === ServiceOrder::STATUS_MENUNGGU_SELESAI) {
-                $files = $request->file('evidences', []);
-                $uploadedCount = 0;
+            // Handle DITERIMA (accepted)
+            elseif ($newStatus === ServiceOrder::STATUS_DITERIMA) {
+                $orderTimestampData['status'] = $newStatus;
+                $orderTimestampData['accepted_at'] = now();
+                $orderTimestampData['responsed_at'] = now();
+                $order->update($orderTimestampData);
 
-                foreach ($files as $index => $file) {
-                    $error = ServiceCompletionEvidence::validateFile($file);
-                    if ($error) {
-                        throw new \Exception("File {$file->getClientOriginalName()}: {$error}");
-                    }
-
-                    $type = ServiceCompletionEvidence::getFileType($file->getMimeType());
-                    $path = ServiceCompletionEvidence::generatePath(
-                        $file->getClientOriginalName(),
-                        $type === 'image' ? 'images' : 'videos'
-                    );
-
-                    Storage::disk('public')->put($path, file_get_contents($file));
-
-                    if ($serviceOrder) {
-                        ServiceCompletionEvidence::create([
-                            'jasa_order_item_id' => $jasaOrderItem?->id,
-                            'service_order_id' => $serviceOrder->id,
-                            'file_name' => $file->getClientOriginalName(),
-                            'file_path' => $path,
-                            'file_url' => Storage::url($path),
-                            'file_type' => $type,
-                            'mime_type' => $file->getMimeType(),
-                            'file_size' => $file->getSize(),
-                            'display_order' => $index,
-                        ]);
-                    }
-
-                    $uploadedCount++;
-                }
-
-                if (!empty($data['completion_note'])) {
-                    if ($serviceOrder) {
-                        $serviceOrder->update(['completion_note' => $data['completion_note']]);
-                    }
-                }
-
-                if ($serviceOrder) {
-                    $serviceOrder->updateStatus($newStatus);
-                }
-                if ($order) {
-                    $order->update(['status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus)]);
-                }
-
-                Log::info('[ServiceOrder UpdateStatus] Evidence uploaded, status updated', [
+                Log::info('[ServiceOrder UpdateStatus] Order accepted', [
                     'received_id' => $id,
-                    'orders_id' => $order?->id,
-                    'service_orders_id' => $serviceOrder?->id,
-                    'new_service_status' => $newStatus,
-                    'new_order_status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus),
-                    'files_uploaded' => $uploadedCount,
+                    'orders_id' => $order->id,
+                    'new_status' => $newStatus,
+                ]);
+            }
+            // Handle DIKERJAKAN (started working)
+            elseif ($newStatus === ServiceOrder::STATUS_DIKERJAKAN) {
+                $orderTimestampData['status'] = $newStatus;
+                $orderTimestampData['started_at'] = now();
+                $order->update($orderTimestampData);
+
+                Log::info('[ServiceOrder UpdateStatus] Order started working', [
+                    'received_id' => $id,
+                    'orders_id' => $order->id,
+                    'new_status' => $newStatus,
                 ]);
             }
             // Handle SELESAI (completion)
             elseif ($newStatus === ServiceOrder::STATUS_SELESAI) {
                 $files = $request->file('evidences', []);
+                $uploadedEvidences = [];
 
                 foreach ($files as $index => $file) {
                     $error = ServiceCompletionEvidence::validateFile($file);
@@ -1979,79 +1436,96 @@ class ServiceOrderController extends Controller
 
                     Storage::disk('public')->put($path, file_get_contents($file));
 
-                    if ($serviceOrder) {
-                        ServiceCompletionEvidence::create([
-                            'jasa_order_item_id' => $jasaOrderItem?->id,
-                            'service_order_id' => $serviceOrder->id,
-                            'file_name' => $file->getClientOriginalName(),
-                            'file_path' => $path,
-                            'file_url' => Storage::url($path),
-                            'file_type' => $type,
-                            'mime_type' => $file->getMimeType(),
-                            'file_size' => $file->getSize(),
-                            'display_order' => $index,
-                        ]);
-                    }
+                    // Store evidence with jasa_order_item_id ONLY (no service_order_id)
+                    // file_url generated by accessor from file_path
+                    $evidence = ServiceCompletionEvidence::create([
+                        'jasa_order_item_id' => $jasaOrderItem?->id,
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_path' => $path,
+                        'file_type' => $type,
+                        'mime_type' => $file->getMimeType(),
+                        'file_size' => $file->getSize(),
+                        'display_order' => $index,
+                    ]);
+                    $uploadedEvidences[] = $evidence;
+
+                    Log::info('[ServiceOrder UpdateStatus] Evidence uploaded', [
+                        'evidence_id' => $evidence->id,
+                        'jasa_order_item_id' => $jasaOrderItem?->id,
+                        'file_name' => $file->getClientOriginalName(),
+                    ]);
                 }
 
-                if (!empty($data['completion_note'])) {
-                    if ($serviceOrder) {
-                        $serviceOrder->update(['completion_note' => $data['completion_note']]);
-                    }
+                // Update completion_note on jasa_order_items
+                if (!empty($data['completion_note']) && $jasaOrderItem) {
+                    $jasaOrderItem->update(['completion_note' => $data['completion_note']]);
                 }
 
-                if ($serviceOrder) {
-                    $serviceOrder->updateStatus($newStatus);
-                }
-                if ($order) {
-                    $order->update(['status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus)]);
-                }
+                // Update orders table
+                $orderTimestampData = ['status' => $newStatus];
+                $orderTimestampData['completed_at'] = now();
+                $orderTimestampData['delivered_at'] = now();
+                $order->update($orderTimestampData);
 
                 Log::info('[ServiceOrder UpdateStatus] Order completed', [
                     'received_id' => $id,
-                    'orders_id' => $order?->id,
-                    'service_orders_id' => $serviceOrder?->id,
-                    'new_service_status' => $newStatus,
-                    'new_order_status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus),
+                    'orders_id' => $order->id,
+                    'jasa_order_item_id' => $jasaOrderItem?->id,
+                    'new_status' => $newStatus,
+                    'files_uploaded' => count($uploadedEvidences),
                 ]);
             }
-            // Handle DITERIMA or DIKERJAKAN (regular transitions)
+            // No other cases
             else {
-                if ($serviceOrder) {
-                    $serviceOrder->updateStatus($newStatus);
-                }
-                if ($order) {
-                    $order->update(['status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus)]);
-                }
+                $order->update(['status' => $newStatus]);
 
                 Log::info('[ServiceOrder UpdateStatus] Status updated', [
                     'received_id' => $id,
-                    'orders_id' => $order?->id,
-                    'service_orders_id' => $serviceOrder?->id,
-                    'new_service_status' => $newStatus,
-                    'new_order_status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus),
+                    'orders_id' => $order->id,
+                    'new_status' => $newStatus,
                 ]);
             }
 
             DB::commit();
 
             // Reload data for response
-            $responseData = null;
-            if ($serviceOrder) {
-                $serviceOrder->load(['completionEvidences', 'customer']);
-                $responseData = $serviceOrder;
-            } elseif ($order) {
-                $order->load(['jasaItems.completionEvidences', 'user']);
-                $responseData = $order;
-            }
+            $freshOrder = $order->fresh(['jasaItems.completionEvidences', 'user']);
+            $freshJasaItem = $freshOrder?->jasaItems->first();
+            $freshEvidences = $freshJasaItem?->completionEvidences ?? collect();
 
-            Log::info('[ServiceOrder UpdateStatus] Success', [
-                'received_id' => $id,
-                'orders_id' => $order?->id,
-                'service_orders_id' => $serviceOrder?->id,
-                'new_service_status' => $newStatus,
-                'new_order_status' => $this->mapServiceOrderStatusToOrdersStatus($newStatus),
-                'response_type' => $responseData ? get_class($responseData) : null,
+            // Transform evidences for response
+            $transformedEvidences = $freshEvidences->map(function ($evidence) {
+                return [
+                    'id' => $evidence->id,
+                    'jasa_order_item_id' => $evidence->jasa_order_item_id,
+                    'file_name' => $evidence->file_name,
+                    'file_path' => $evidence->file_path,
+                    'file_url' => $evidence->media_url ?? ($evidence->file_path ? asset('storage/' . $evidence->file_path) : null),
+                    'file_type' => $evidence->file_type,
+                    'mime_type' => $evidence->mime_type,
+                    'file_size' => $evidence->file_size,
+                    'display_order' => $evidence->display_order,
+                    'created_at' => $evidence->created_at?->toIso8601String(),
+                ];
+            })->toArray();
+
+            // Build response - NO service_order_id
+            $responseData = [
+                'id' => $freshOrder->id,
+                'order_id' => $freshOrder->id,
+                'jasa_order_item_id' => $freshJasaItem?->id,
+                'order_status' => $freshOrder->status,
+                'order_status_label' => $this->getServiceStatusLabel($freshOrder->status),
+                'status' => $freshOrder->status,
+                'status_label' => $this->getServiceStatusLabel($freshOrder->status),
+                'completion_note' => $freshJasaItem?->completion_note,
+                'completion_evidences' => $transformedEvidences,
+            ];
+
+            Log::info('[ServiceOrder UpdateStatus] Updated order', [
+                'order_id' => $freshOrder->id,
+                'orders_status' => $freshOrder->status,
+                'evidence_count' => count($transformedEvidences),
             ]);
 
             return ApiResponse::success($responseData, 'Status berhasil diperbarui');
@@ -2059,28 +1533,23 @@ class ServiceOrderController extends Controller
             DB::rollBack();
             Log::error('[ServiceOrder UpdateStatus] Validation error', [
                 'received_id' => $id,
-                'orders_id' => $order?->id,
-                'service_orders_id' => $serviceOrder?->id,
+                'orders_id' => $order->id,
                 'error' => $e->getMessage(),
             ]);
             return ApiResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             DB::rollBack();
 
-            // Log the FULL error for debugging
             Log::error('[ServiceOrder UpdateStatus] Exception', [
                 'received_id' => $id,
-                'orders_id' => $order?->id,
-                'service_orders_id' => $serviceOrder?->id,
+                'orders_id' => $order->id,
                 'new_status' => $newStatus,
                 'error' => $e->getMessage(),
                 'error_class' => get_class($e),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
-            // Return the ACTUAL error message for debugging
             return ApiResponse::error('Gagal memperbarui status: ' . $e->getMessage(), 500);
         }
     }
@@ -2088,78 +1557,62 @@ class ServiceOrderController extends Controller
     /**
      * Submit service order review (customer action)
      *
-     * Refactored: Sync review between orders and service_orders tables
+     * NEW ARCHITECTURE: Uses orders as primary source
+     *
+     * Flow:
+     * 1. Find Order by user_id and id
+     * 2. Validate status is selesai
+     * 3. Check no existing review for this order
+     * 4. Create Rating with jasa_order_item_id
+     * 5. Update jasa_order_items: is_reviewed = true, review_id
+     * 6. Update rating summaries
      */
     public function submitReview(Request $request, int $id)
     {
-        // Validate only required fields first — media is handled separately by $request->file()
-        // is_anonymous sent as string '0'/'1' from FormData, not boolean
-        // title is optional (nullable); comment is required; rating is required
+        // Validate required fields
         $data = $request->validate([
             'rating' => 'required|integer|min:1|max:5',
             'title' => 'nullable|string|max:80',
             'comment' => 'required|string|min:10|max:500',
             'is_anonymous' => 'nullable',
-            // media: nullable, single file or array; normalized in controller
             'media' => 'nullable',
             'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,avi,mov,mkv|max:10240',
         ]);
 
-        // Try to find order in orders table first
-        // NOTE: order_type BUKAN 'jasa' - itu mekanisme pemesanan
-        $order = Order::with(['merchant', 'jasaItems.jasa'])
+        // Find order in orders table (PRIMARY)
+        // NOTE: jasa relation not needed (uses jasa_id from item)
+        $order = Order::with(['merchant', 'jasaItems'])
             ->where('user_id', Auth::id())
-            ->whereHas('jasaItems') // Orders yang punya jasa_order_items
+            ->whereHas('jasaItems')
             ->find($id);
 
-        $serviceOrder = null;
-        $jasaId = null;
-        $merchantId = null;
-        $jasaItem = null;
-
-        if ($order) {
-            $jasaItem = $order->jasaItems->first();
-            // jasa_id ada di jasa_order_items, BUKAN di orders
-            $jasaId = $jasaItem?->jasa_id;
-            $merchantId = $order->merchant_id;
-            if ($jasaItem && $jasaItem->service_order_id) {
-                $serviceOrder = ServiceOrder::find($jasaItem->service_order_id);
-            }
-        } else {
-            // Fallback: find directly in service_orders
-            $serviceOrder = ServiceOrder::with(['merchant'])->findOrFail($id);
-
-            // Verify customer owns this order
-            if ($serviceOrder->customer_id !== Auth::id()) {
-                return ApiResponse::error('Tidak memiliki akses ke pesanan ini', 403);
-            }
-
-            $jasaId = $serviceOrder->jasa_id;
-            $merchantId = $serviceOrder->merchant_id;
+        if (!$order) {
+            return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
+        $jasaItem = $order->jasaItems->first();
+        $jasaId = $jasaItem?->jasa_id;
+        $merchantId = $order->merchant_id;
+
         // VALIDATION: Order must be completed
-        $currentStatus = $serviceOrder?->status ?? $order?->status;
-        if ($currentStatus !== ServiceOrder::STATUS_SELESAI) {
+        $currentStatus = $order->status;
+        if ($currentStatus !== 'selesai') {
+            $statusLabel = $this->getServiceStatusLabel($currentStatus);
             return ApiResponse::error(
-                'Pesanan harus selesai terlebih dahulu sebelum memberikan review',
+                "Pesanan harus selesai terlebih dahulu sebelum memberikan review. Status saat ini: {$statusLabel}",
                 400
             );
         }
 
         // VALIDATION: Not already reviewed
-        $existingReview = Rating::where('service_order_id', $serviceOrder?->id)
-            ->where('user_id', Auth::id())
-            ->first();
-
-        if (!$existingReview && $jasaItem) {
+        if ($jasaItem) {
             $existingReview = Rating::where('jasa_order_item_id', $jasaItem->id)
                 ->where('user_id', Auth::id())
                 ->first();
-        }
 
-        if ($existingReview) {
-            return ApiResponse::error('Anda sudah memberikan review untuk pesanan ini', 409);
+            if ($existingReview) {
+                return ApiResponse::error('Anda sudah memberikan review untuk pesanan ini', 409);
+            }
         }
 
         try {
@@ -2178,15 +1631,10 @@ class ServiceOrderController extends Controller
                 }
             }
 
-            // Determine the jasa for the review
-            // NOTE: Order doesn't have 'jasa' relation - use jasaItems.jasa instead
-            $jasa = $jasaItem?->jasa ?? $serviceOrder?->jasa ?? Jasa::find($jasaId);
-
-            // Create rating for the service (jasa) with order reference
+            // Create rating for the service (jasa)
             $ratingData = [
                 'user_id' => Auth::id(),
                 'merchant_id' => $merchantId,
-                'service_order_id' => $serviceOrder?->id,
                 'rateable_id' => $jasaId,
                 'rateable_type' => Jasa::class,
                 'rating' => (int) $data['rating'],
@@ -2195,7 +1643,7 @@ class ServiceOrderController extends Controller
                 'is_anonymous' => $isAnonymous,
             ];
 
-            // Add jasa_order_item_id if available
+            // Add jasa_order_item_id
             if ($jasaItem) {
                 $ratingData['jasa_order_item_id'] = $jasaItem->id;
             }
@@ -2206,7 +1654,7 @@ class ServiceOrderController extends Controller
 
             Log::info('[submitReview] Rating created:', ['id' => $review->id]);
 
-            // Handle media uploads ONLY if files are present
+            // Handle media uploads
             if ($request->hasFile('media')) {
                 $mediaFiles = $request->file('media');
 
@@ -2263,20 +1711,12 @@ class ServiceOrderController extends Controller
                 Log::info('[submitReview] No media files uploaded');
             }
 
-            // Mark order as reviewed in service_orders
-            if ($serviceOrder) {
-                $serviceOrder->markAsReviewed($review->id);
-            }
-
-            // Also mark as reviewed in jasa_order_items
-            if ($order) {
-                $jasaItem = $order->jasaItems->first();
-                if ($jasaItem) {
-                    $jasaItem->update([
-                        'is_reviewed' => true,
-                        'review_id' => $review->id,
-                    ]);
-                }
+            // Update jasa_order_items: mark as reviewed
+            if ($jasaItem) {
+                $jasaItem->update([
+                    'is_reviewed' => true,
+                    'review_id' => $review->id,
+                ]);
             }
 
             // Update rating summaries
@@ -2284,14 +1724,14 @@ class ServiceOrderController extends Controller
 
             DB::commit();
 
-            // Load relationships for response
-            $review->load(['user', 'media']);
+            // Load relationships for response (include histories for frontend convenience)
+            $review->load(['user', 'media', 'histories']);
 
             Log::info('[submitReview] Success:', ['review_id' => $review->id]);
 
             return ApiResponse::success([
                 'review' => $review,
-                'order' => $serviceOrder ?? $order,
+                'order' => $order,
             ], 'Review berhasil dikirim. Terima kasih atas ulasan Anda!');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -2300,6 +1740,182 @@ class ServiceOrderController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
             return ApiResponse::error('Gagal mengirim review: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Update service order review (customer action)
+     *
+     * Saves history of review changes.
+     * Customer can only update review once.
+     *
+     * Flow:
+     * 1. Find existing review by order and user
+     * 2. Check if update is allowed (update_count < 1)
+     * 3. Save old data to review_histories
+     * 4. Update review with new data
+     * 5. Return updated review with history
+     */
+    public function updateReview(Request $request, int $id)
+    {
+        // Validate required fields
+        $data = $request->validate([
+            'rating' => 'required|integer|min:1|max:5',
+            'title' => 'nullable|string|max:80',
+            'comment' => 'required|string|min:10|max:500',
+            'is_anonymous' => 'nullable',
+            'media' => 'nullable',
+            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,avi,mov,mkv|max:10240',
+        ]);
+
+        // Find order in orders table (PRIMARY)
+        // NOTE: jasa relation not needed (uses jasa_id from item)
+        $order = Order::with(['merchant', 'jasaItems'])
+            ->where('user_id', Auth::id())
+            ->whereHas('jasaItems')
+            ->find($id);
+
+        if (!$order) {
+            return ApiResponse::error('Pesanan tidak ditemukan', 404);
+        }
+
+        $jasaItem = $order->jasaItems->first();
+
+        // Find existing review
+        $review = Rating::where('jasa_order_item_id', $jasaItem->id)
+            ->where('user_id', Auth::id())
+            ->first();
+
+        if (!$review) {
+            return ApiResponse::error('Review tidak ditemukan', 404);
+        }
+
+        // Check if update is allowed (customer can only update once)
+        if ($review->update_count >= 1) {
+            return ApiResponse::error('Anda sudah pernah memperbarui ulasan ini', 400);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Save old media for history
+            $oldMedia = $review->media ? $review->media->toArray() : [];
+
+            // Handle is_anonymous from FormData (string '0'/'1' or boolean)
+            $isAnonymous = false;
+            if (isset($data['is_anonymous'])) {
+                $val = $data['is_anonymous'];
+                if (is_bool($val)) {
+                    $isAnonymous = $val;
+                } elseif (is_string($val)) {
+                    $isAnonymous = in_array(strtolower($val), ['1', 'true', 'yes']);
+                } else {
+                    $isAnonymous = (bool) $val;
+                }
+            }
+
+            // Create history record BEFORE updating
+            $historyData = [
+                'rating_id' => $review->id,
+                'old_rating' => $review->rating,
+                'old_title' => $review->title,
+                'old_comment' => $review->comment,
+                'old_media' => $oldMedia,
+                'new_rating' => (int) $data['rating'],
+                'new_title' => $data['title'] ?? null,
+                'new_comment' => $data['comment'],
+                'new_media' => [], // Will update after media upload
+                'updated_by' => Auth::id(),
+            ];
+
+            $history = ReviewHistory::create($historyData);
+
+            // Update review
+            $review->rating = (int) $data['rating'];
+            $review->title = $data['title'] ?? null;
+            $review->comment = $data['comment'];
+            $review->is_anonymous = $isAnonymous;
+            $review->increment('update_count');
+            $review->review_updated_at = now();
+            $review->save();
+
+            // Handle new media uploads
+            $newMediaArray = [];
+            if ($request->hasFile('media')) {
+                $mediaFiles = $request->file('media');
+
+                if (!is_array($mediaFiles) && $mediaFiles instanceof \Illuminate\Http\UploadedFile) {
+                    $mediaFiles = [$mediaFiles];
+                }
+
+                Log::info('[updateReview] Processing media files:', [
+                    'count' => count($mediaFiles),
+                ]);
+
+                $basePath = 'reviews';
+                if (!Storage::disk('public')->exists($basePath)) {
+                    Storage::disk('public')->makeDirectory($basePath);
+                }
+
+                foreach ($mediaFiles as $index => $file) {
+                    try {
+                        $extension = $file->getClientOriginalExtension();
+                        $mimeType = $file->getMimeType();
+                        $isImage = str_starts_with($mimeType, 'image/');
+                        $type = $isImage ? 'images' : 'videos';
+                        $dateFolder = now()->format('Y/m/d');
+                        $newFileName = uniqid() . '_' . time() . '_' . $index . '.' . $extension;
+
+                        $file->storeAs("{$basePath}/{$type}/{$dateFolder}", $newFileName, ['disk' => 'public']);
+
+                        $storedPath = "{$basePath}/{$type}/{$dateFolder}/{$newFileName}";
+
+                        $media = ReviewMedia::create([
+                            'review_id' => $review->id,
+                            'file_path' => $storedPath,
+                            'file_url' => Storage::url($storedPath),
+                            'file_type' => $isImage ? 'image' : 'video',
+                            'mime_type' => $mimeType,
+                            'original_name' => $file->getClientOriginalName(),
+                            'file_size' => $file->getSize(),
+                            'display_order' => $index,
+                        ]);
+
+                        $newMediaArray[] = $media->toArray();
+
+                        Log::info('[updateReview] Media saved:', ['index' => $index, 'path' => $storedPath]);
+                    } catch (\Exception $mediaException) {
+                        Log::error('[updateReview] Media save failed:', [
+                            'index' => $index,
+                            'error' => $mediaException->getMessage(),
+                        ]);
+                    }
+                }
+            }
+
+            // Update history with new media
+            if (!empty($newMediaArray)) {
+                $history->update(['new_media' => $newMediaArray]);
+            }
+
+            DB::commit();
+
+            // Load relationships for response
+            $review->load(['user', 'media', 'histories']);
+
+            Log::info('[updateReview] Success:', ['review_id' => $review->id]);
+
+            return ApiResponse::success([
+                'review' => $review,
+                'order' => $order,
+            ], 'Ulasan berhasil diperbarui!');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('[updateReview] Error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return ApiResponse::error('Gagal memperbarui ulasan: ' . $e->getMessage(), 500);
         }
     }
 

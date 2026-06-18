@@ -26,6 +26,7 @@ class ServiceCompletionEvidence extends Model
         'mime_type',
         'file_size',
         'display_order',
+        'note',
     ];
 
     protected $casts = [
@@ -72,13 +73,19 @@ class ServiceCompletionEvidence extends Model
 
     public function getFileUrlAttribute($value): ?string
     {
-        if ($value) {
-            return $value;
-        }
-
         if ($this->file_path) {
-            // Use asset() to generate full URL (not Storage::url() which returns relative path)
-            return asset('storage/' . ltrim($this->file_path, '/'));
+            $path = $this->file_path;
+
+            // Jika file_path terlanjur berupa URL penuh (ngrok/domain lama), ambil path setelah /storage/
+            if (str_contains($path, '/storage/')) {
+                $path = explode('/storage/', $path)[1];
+            }
+
+            $path = ltrim($path, '/');
+            $path = preg_replace('#^public/#', '', $path);
+            $path = preg_replace('#^storage/#', '', $path);
+
+            return url('storage/' . $path);
         }
 
         return null;

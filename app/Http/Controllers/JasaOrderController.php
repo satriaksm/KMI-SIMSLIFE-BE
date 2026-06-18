@@ -144,9 +144,8 @@ class JasaOrderController extends Controller
         DB::beginTransaction();
         try {
             // Tentukan initial status berdasarkan payment method
-            // COD: langsung tunggu konfirmasi merchant
-            // Xendit: tunggu pembayaran dulu
-            $initialStatus = $isCodPayment ? 'menunggu_konfirmasi_merchant' : 'pending';
+            // SLA: all jasa orders start as menunggu_konfirmasi, merchant has 24h to respond
+            $initialStatus = 'menunggu_konfirmasi';
 
             // Create order
             $customerName = $request->customer_name
@@ -167,11 +166,36 @@ class JasaOrderController extends Controller
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
                 'status' => $initialStatus,
+                // SLA: merchant wajib merespon dalam 1x24 jam
+                'merchant_response_deadline' => now()->addHours(24),
                 // COD: langsung set confirm_deadline
                 'confirm_deadline' => $isCodPayment ? now()->addMinutes($confirmMinutes) : null,
+                // SNAPSHOT: Capture customer data at time of order
+                'customer_name_snapshot' => $customerName,
+                'customer_phone_snapshot' => $request->customer_phone ?? '',
+                'customer_address_snapshot' => $request->customer_address ?? '',
+                // SNAPSHOT: Capture merchant data at time of order
+                'merchant_name_snapshot' => $jasa->merchant->name,
+                'merchant_phone_snapshot' => $jasa->merchant->phone ?? '',
+                'merchant_address_snapshot' => $jasa->merchant->address ?? '',
+                // SNAPSHOT: Capture payment data at time of order
+                'payment_method_snapshot' => $paymentMethod,
+                'total_payment_snapshot' => $totalPrice,
             ]);
 
-            // Create jasa_order_items
+            // SNAPSHOT: Get jasa image URL
+            $jasaImage = null;
+            if ($jasa->coverImage) {
+                $jasaImage = asset('storage/' . $jasa->coverImage->image_path);
+            } elseif ($jasa->image) {
+                $jasaImage = str_starts_with($jasa->image, 'http')
+                    ? $jasa->image
+                    : (str_starts_with($jasa->image, '/')
+                        ? $jasa->image
+                        : asset('storage/' . $jasa->image));
+            }
+
+            // Create jasa_order_items with SNAPSHOT data
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $jasa->id,
@@ -187,6 +211,18 @@ class JasaOrderController extends Controller
                 'service_location_address' => $serviceLocationAddress,
                 'customer_latitude' => $request->latitude,
                 'customer_longitude' => $request->longitude,
+                // SNAPSHOT: Capture jasa data at time of purchase
+                'jasa_title_snapshot' => $jasa->title,
+                'jasa_description_snapshot' => $jasa->description,
+                'jasa_image_snapshot' => $jasaImage,
+                'jasa_price_snapshot' => $totalPrice,
+                'original_price_snapshot' => $jasa->base_price ?? $jasa->price ?? 0,
+                'offered_price_snapshot' => $totalPrice,
+                'agreed_price_snapshot' => $totalPrice,
+                'service_type_snapshot' => $serviceType,
+                // SNAPSHOT: Capture merchant data
+                'merchant_name_snapshot' => $jasa->merchant->name,
+                'merchant_phone_snapshot' => $jasa->merchant->phone,
             ]);
 
             DB::commit();
@@ -207,6 +243,7 @@ class JasaOrderController extends Controller
                 'payment_method' => $paymentMethod,
                 'is_cod' => $isCodPayment,
                 'status' => $order->status,
+                'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
                 'confirm_deadline' => $order->confirm_deadline?->toISOString(),
             ];
 
@@ -244,7 +281,7 @@ class JasaOrderController extends Controller
             'jasaItems.jasa:id,title,image',
             'jasaItems.review',
             'jasaItems.completionEvidences',
-            'payments',
+            'payment',
         ])
             ->where('user_id', $customerId)
             ->where('order_type', 'jasa')
@@ -253,20 +290,35 @@ class JasaOrderController extends Controller
 
         $data = $orders->map(function ($order) {
             $jasaItem = $order->jasaItems->first();
-            $payment = $order->payments->first(); // Get first pending payment
+            $payment = $order->payment;
 
+            // Use snapshot data (prioritize snapshot over live data)
+            $merchantName = $order->merchant_name_snapshot ?? $order->merchant?->name ?? 'Merchant';
+            $serviceTitle = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa?->title ?? $jasaItem?->jasa?->name ?? 'Layanan';
+            $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa?->image_url ?? null;
+            $totalPrice = $order->total_payment_snapshot ?? $order->total_price ?? 0;
+            $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
+
+            // Build response - use BOTH id and order_id for FE compatibility
+            // id: used by ServiceOrderCard/key binding; order_id: canonical name
             return [
+                'id' => $order->id,
                 'order_id' => $order->id,
                 'jasa_order_item_id' => $jasaItem?->id,
                 'status' => $order->status,
+                'order_status' => $order->status,
+                'status_label' => $this->getServiceStatusLabel($order->status),
                 'payment_status' => $order->payment_status,
-                'payment_method' => $order->payment_method,
-                'total_price' => $order->total_price,
-                'merchant' => $order->merchant ? [
-                    'id' => $order->merchant->id,
-                    'name' => $order->merchant->name,
-                    'slug' => $order->merchant->slug,
-                ] : null,
+                'payment_method' => $paymentMethod,
+                'total_price' => $totalPrice,
+                'merchant' => [
+                    'id' => $order->merchant?->id,
+                    'name' => $merchantName,
+                    'slug' => $order->merchant?->slug,
+                ],
+                // Snapshot service data
+                'service_title' => $serviceTitle,
+                'service_image' => $serviceImage,
                 // Payment info for "continue payment" button
                 'payment' => $payment ? [
                     'id' => $payment->id,
@@ -274,13 +326,32 @@ class JasaOrderController extends Controller
                     'invoice_url' => $payment->invoice_url,
                     'expired_at' => $payment->expired_at?->toISOString(),
                 ] : null,
-                'jasa' => $jasaItem?->jasa ? [
-                    'id' => $jasaItem->jasa->id,
-                    'title' => $jasaItem->jasa->title,
-                ] : null,
-                'booking_date' => $jasaItem?->booking_date,
-                'booking_time' => $jasaItem?->booking_time,
+                'booking_date' => $jasaItem?->booking_date_snapshot ?? $jasaItem?->booking_date,
+                'booking_time' => $jasaItem?->booking_time_snapshot ?? $jasaItem?->booking_time,
                 'confirm_deadline' => $order->confirm_deadline?->toISOString(),
+                // SLA timestamps
+                'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
+                'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
+                'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
+                'completed_at' => $order->completed_at?->toISOString(),
+                'completed_by' => $order->completed_by,
+                'auto_completed_at' => $order->auto_completed_at?->toISOString(),
+                'cancelled_by' => $order->cancelled_by,
+                'rejected_by' => $order->rejected_by,
+                'expired_at' => $order->expired_at?->toISOString(),
+                // Completion evidences — from jasaItems.completionEvidences
+                'completion_evidences' => $jasaItem?->completionEvidences?->map(function ($ev) {
+                    return [
+                        'id' => $ev->id,
+                        'jasa_order_item_id' => $ev->jasa_order_item_id,
+                        'file_path' => $ev->file_path,
+                        'file_url' => $ev->file_url,
+                        'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
+                        'note' => $ev->note ?? null,
+                        'created_at' => $ev->created_at?->toISOString(),
+                    ];
+                })?->toArray() ?? [],
+                'completion_note' => $jasaItem?->completion_note ?? null,
                 'created_at' => $order->created_at->toISOString(),
             ];
         });
@@ -304,6 +375,10 @@ class JasaOrderController extends Controller
      */
     public function customerShow(Request $request, int $orderId)
     {
+        if (!$orderId || $orderId === 0) {
+            return ApiResponse::error('ID pesanan tidak valid', 400);
+        }
+
         $customerId = Auth::id();
 
         $order = Order::with([
@@ -324,31 +399,92 @@ class JasaOrderController extends Controller
 
         $jasaItem = $order->jasaItems->first();
 
+        // Use snapshot data (prioritize snapshot over live data)
+        $merchantName = $order->merchant_name_snapshot ?? $order->merchant?->name ?? 'Merchant';
+        $merchantPhone = $order->merchant_phone_snapshot ?? $order->merchant?->phone ?? null;
+        $merchantAddress = $order->merchant_address_snapshot ?? $order->merchant?->address ?? null;
+        $serviceTitle = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa?->title ?? $jasaItem?->jasa?->name ?? null;
+        $serviceDescription = $jasaItem?->jasa_description_snapshot ?? $jasaItem?->jasa?->description ?? null;
+        $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa?->image_url ?? null;
+        $totalPrice = $order->total_payment_snapshot ?? $order->total_price ?? 0;
+        $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
+        $paymentChannel = $order->payment_channel_snapshot ?? $order->payment_channel ?? null;
+        $bookingDate = $jasaItem?->booking_date_snapshot ?? $jasaItem?->booking_date ?? null;
+        $bookingTime = $jasaItem?->booking_time_snapshot ?? $jasaItem?->booking_time ?? null;
+        $customerNote = $jasaItem?->customer_note_snapshot ?? $jasaItem?->booking_note ?? null;
+        $offerNote = $jasaItem?->offer_note_snapshot ?? null;
+        $agreedAt = $jasaItem?->agreed_at?->toISOString() ?? null;
+        $serviceType = $jasaItem?->service_type_snapshot ?? $jasaItem?->service_type ?? null;
         // Get payment info
         $payment = Payment::where('order_id', $orderId)->first();
 
+        // Transform completion evidences from jasa_order_items relation
+        $completionEvidences = collect();
+        if ($jasaItem) {
+            $jasaItem->load('completionEvidences');
+            $completionEvidences = $jasaItem->completionEvidences->map(function ($ev) {
+                return [
+                    'id' => $ev->id,
+                    'jasa_order_item_id' => $ev->jasa_order_item_id,
+                    'file_path' => $ev->file_path,
+                    'file_url' => $ev->file_url,
+                    'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
+                    'note' => $ev->note ?? null,
+                    'created_at' => $ev->created_at?->toISOString(),
+                ];
+            });
+        }
+
         return ApiResponse::success([
+            'id' => $order->id, // PRIMARY ID - used by FE for routing and display
             'order_id' => $order->id,
             'jasa_order_item_id' => $jasaItem?->id,
             'status' => $order->status,
+            'order_status' => $order->status,
+            'status_label' => $this->getServiceStatusLabel($order->status),
+            'cancelled_by' => $order->cancelled_by,
+            'rejected_by' => $order->rejected_by,
+            'rejection_reason' => $order->rejection_reason,
             'payment_status' => $order->payment_status,
-            'payment_method' => $order->payment_method,
-            'payment_channel' => $order->payment_channel,
-            'total_price' => $order->total_price,
+            'payment_method' => $paymentMethod,
+            'payment_channel' => $paymentChannel,
+            'total_price' => $totalPrice,
             'paid_at' => $order->paid_at?->toISOString(),
             'confirm_deadline' => $order->confirm_deadline?->toISOString(),
             'cancelled_at' => $order->cancelled_at?->toISOString(),
-            'merchant' => $order->merchant,
-            'jasa' => $jasaItem?->jasa,
+            // SLA timestamps
+            'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
+            'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
+            'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
+            'completed_at' => $order->completed_at?->toISOString(),
+            'completed_by' => $order->completed_by,
+            'auto_completed_at' => $order->auto_completed_at?->toISOString(),
+            'expired_at' => $order->expired_at?->toISOString(),
+            // Completion evidences — flat top-level for easy FE access
+            'completion_evidences' => $completionEvidences->toArray(),
+            'completion_note' => $jasaItem?->completion_note ?? null,
+            'merchant' => [
+                'id' => $order->merchant?->id,
+                'name' => $merchantName,
+                'phone' => $merchantPhone,
+                'address' => $merchantAddress,
+                'slug' => $order->merchant?->slug,
+            ],
+            'service_title' => $serviceTitle,
+            'service_description' => $serviceDescription,
+            'service_image' => $serviceImage,
             'jasa_order_item' => [
                 'id' => $jasaItem?->id,
-                'service_type' => $jasaItem?->service_type,
-                'booking_date' => $jasaItem?->booking_date,
-                'booking_time' => $jasaItem?->booking_time,
-                'booking_note' => $jasaItem?->booking_note,
+                'service_type' => $serviceType,
+                'booking_date' => $bookingDate,
+                'booking_time' => $bookingTime,
+                'booking_note' => $customerNote,
+                'offer_note' => $offerNote,
+                'agreed_at' => $agreedAt,
                 'service_location_address' => $jasaItem?->service_location_address,
                 'customer_confirmed' => $jasaItem?->customer_confirmed,
                 'is_reviewed' => $jasaItem?->is_reviewed,
+                'completion_evidences' => $completionEvidences->toArray(),
             ],
             'payment' => $payment ? [
                 'id' => $payment->id,
@@ -403,6 +539,8 @@ class JasaOrderController extends Controller
 
             $order->update([
                 'status' => 'selesai',
+                'completed_at' => now(),
+                'completed_by' => 'customer',
             ]);
         });
 
@@ -413,9 +551,112 @@ class JasaOrderController extends Controller
         ]);
 
         return ApiResponse::success([
+            'id' => $order->id,
             'order_id' => $order->id,
             'status' => 'selesai',
         ], 'Pesanan berhasil diselesaikan');
+    }
+
+    /**
+     * Customer cancel jasa order
+     *
+     * Only allows cancellation when order is in waiting/pending state
+     * (menunggu_konfirmasi_merchant).
+     *
+     * @param Request $request
+     * @param int $orderId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function cancelOrder(Request $request, int $orderId)
+    {
+        if (!$orderId || $orderId === 0) {
+            return ApiResponse::error('ID pesanan tidak valid', 400);
+        }
+
+        $customerId = Auth::id();
+
+        $order = Order::with('jasaItems')
+            ->where('id', $orderId)
+            ->where('user_id', $customerId)
+            ->where('order_type', 'jasa')
+            ->first();
+
+        if (!$order) {
+            return ApiResponse::error('Pesanan tidak ditemukan', 404);
+        }
+
+        // Only allow cancel from cancellable statuses
+        $cancellableStatuses = ['pending', 'menunggu_konfirmasi_merchant'];
+        if (!in_array($order->status, $cancellableStatuses)) {
+            return ApiResponse::error(
+                "Pesanan dengan status '{$order->status}' tidak dapat dibatalkan.",
+                422
+            );
+        }
+
+        // Cancel any pending payment
+        $payment = Payment::where('order_id', $orderId)
+            ->whereIn('status', ['PENDING', 'UNPAID'])
+            ->first();
+        if ($payment) {
+            $payment->update(['status' => 'EXPIRED']);
+            event(new \App\Events\PaymentStatusUpdated($payment));
+        }
+
+        // Update order status to dibatalkan
+        $order->update([
+            'status' => 'dibatalkan',
+            'cancelled_at' => now(),
+            'cancelled_by' => 'customer',
+        ]);
+
+        // Update jasa_order_items status if exists
+        $jasaItem = $order->jasaItems->first();
+        if ($jasaItem) {
+            $jasaItem->update(['status' => 'dibatalkan']);
+        }
+
+        Log::info('[JasaOrderController] Order cancelled', [
+            'order_id' => $order->id,
+            'previous_status' => $order->getOriginal('status'),
+            'cancelled_by' => $customerId,
+        ]);
+
+        return ApiResponse::success([
+            'id' => $order->id,
+            'order_id' => $order->id,
+            'status' => 'dibatalkan',
+            'order_status' => 'dibatalkan',
+            'status_label' => 'Dibatalkan',
+            'cancelled_at' => $order->cancelled_at?->toISOString(),
+        ], 'Pesanan berhasil dibatalkan.');
+    }
+
+    /**
+     * Get human-readable label for service order status.
+     */
+    private function getServiceStatusLabel(string $status): string
+    {
+        $labels = [
+            'menunggu_konfirmasi' => 'Menunggu Konfirmasi',
+            'menunggu_konfirmasi_merchant' => 'Menunggu Konfirmasi',
+            'pending' => 'Menunggu Konfirmasi',
+            'diterima' => 'Diterima',
+            'ditolak' => 'Ditolak Merchant',
+            'layanan_dikerjakan' => 'Sedang Dikerjakan',
+            'dikerjakan' => 'Sedang Dikerjakan',
+            'processing' => 'Sedang Dikerjakan',
+            'menunggu_konfirmasi_selesai' => 'Menunggu Konfirmasi Selesai',
+            'menunggu_selesai' => 'Menunggu Konfirmasi Selesai',
+            'selesai' => 'Selesai',
+            'completed' => 'Selesai',
+            'dibatalkan' => 'Dibatalkan',
+            'cancelled' => 'Dibatalkan',
+            'batal' => 'Dibatalkan',
+            'expired' => 'Kadaluarsa',
+        ];
+
+        return $labels[$status] ?? ucfirst(str_replace('_', ' ', $status));
     }
 
     /**
@@ -440,10 +681,9 @@ class JasaOrderController extends Controller
         $perPage = $request->get('per_page', 20);
         $status = $request->get('status');
 
-        $query = Order::with([
-            'jasaItems.jasa:id,title',
-            'jasaItems.completionEvidences',
-        ])
+        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
+        // Use snapshot accessors instead: $jasaItem->jasa_title
+        $query = Order::with(['jasaItems:id,order_id,jasa_id,jasa_title_snapshot'])
             ->where('merchant_id', $merchant->id)
             ->where('order_type', 'jasa');
 
@@ -456,24 +696,45 @@ class JasaOrderController extends Controller
         $data = $orders->map(function ($order) {
             $jasaItem = $order->jasaItems->first();
 
+            // Use snapshot accessors: jasa_title (snapshot > live)
+            // Use customer_name (snapshot > user > nama)
             return [
+                'id' => $order->id,
                 'order_id' => $order->id,
                 'jasa_order_item_id' => $jasaItem?->id,
                 'status' => $order->status,
+                'order_status' => $order->status,
+                'status_label' => $this->getServiceStatusLabel($order->status),
+                'cancelled_by' => $order->cancelled_by,
+                'rejected_by' => $order->rejected_by,
+                'rejection_reason' => $order->rejection_reason,
                 'payment_status' => $order->payment_status,
                 'payment_method' => $order->payment_method,
                 'total_price' => $order->total_price,
-                'customer_name' => $order->nama,
-                'customer_phone' => $order->tel,
-                'jasa' => $jasaItem?->jasa ? [
-                    'id' => $jasaItem->jasa->id,
-                    'title' => $jasaItem->jasa->title,
-                ] : null,
-                'booking_date' => $jasaItem?->booking_date,
-                'booking_time' => $jasaItem?->booking_time,
+                // Customer info dari SNAPSHOT
+                'customer_name' => $order->customer_name,
+                'customer_phone' => $order->customer_phone,
+                // Jasa info dari SNAPSHOT (jasa_title accessor: snapshot > live)
+                'jasa' => [
+                    'id' => $jasaItem?->jasa_id,
+                    'title' => $jasaItem?->jasa_title,
+                    'image' => $jasaItem?->jasa_image_snapshot,
+                    'image_url' => $jasaItem?->jasa_image_url,
+                ],
+                // Booking info dari SNAPSHOT accessors
+                'booking_date' => $jasaItem?->booking_date_snapshot ?? $jasaItem?->booking_date,
+                'booking_time' => $jasaItem?->booking_time_snapshot ?? $jasaItem?->booking_time,
                 'confirm_deadline' => $order->confirm_deadline?->toISOString(),
-                'has_evidence' => $jasaItem?->completionEvidences?->isNotEmpty() ?? false,
-                'created_at' => $order->created_at->toISOString(),
+                // SLA timestamps
+                'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
+                'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
+                'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
+                'completed_at' => $order->completed_at?->toISOString(),
+                'completed_by' => $order->completed_by,
+                'auto_completed_at' => $order->auto_completed_at?->toISOString(),
+                'expired_at' => $order->expired_at?->toISOString(),
+                'has_evidence' => false, // completionEvidences not loaded
+                'created_at' => $order->created_at?->toISOString(),
             ];
         });
 
@@ -501,6 +762,8 @@ class JasaOrderController extends Controller
             'status' => 'required|in:diterima,ditolak,layanan_dikerjakan,menunggu_konfirmasi_selesai',
             'rejection_reason' => 'nullable|string|max:500',
             'completion_note' => 'nullable|string|max:1000',
+            'evidences' => 'nullable|array|max:5',
+            'evidences.*' => 'file|max:51200|mimetypes:image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm',
         ]);
 
         $user = Auth::user();
@@ -530,14 +793,69 @@ class JasaOrderController extends Controller
             return ApiResponse::error('Transisi status tidak valid', 422);
         }
 
+        // SLA check: prevent accepting if deadline has passed
+        if (in_array($newStatus, ['diterima']) && $order->merchant_response_deadline && $order->merchant_response_deadline->isPast()) {
+            return ApiResponse::error('Batas waktu respons merchant sudah habis. Pesanan tidak dapat diterima.', 422);
+        }
+
         DB::transaction(function () use ($order, $newStatus, $request) {
-            $order->update(['status' => $newStatus]);
+            $orderUpdate = ['status' => $newStatus];
+
+            // Merchant responds (accept/reject) — set responded_at
+            if (in_array($newStatus, ['diterima', 'ditolak'])) {
+                $orderUpdate['merchant_responded_at'] = now();
+            }
+
+            // Store rejection reason in orders table
+            if ($newStatus === 'ditolak') {
+                $orderUpdate['rejected_at'] = now();
+                $orderUpdate['rejected_by'] = 'merchant';
+                $orderUpdate['rejection_reason'] = $request->rejection_reason;
+            }
+
+            $order->update($orderUpdate);
 
             $jasaItem = $order->jasaItems->first();
             if ($jasaItem && $newStatus === 'ditolak') {
                 $jasaItem->update([
-                    'completion_note' => $request->rejection_reason,
+                    'completion_note' => $request->rejection_reason ?? 'Pesanan ditolak',
                 ]);
+            }
+
+            // Handle completion evidence uploads when marking as menunggu_konfirmasi_selesai
+            if ($newStatus === 'menunggu_konfirmasi_selesai' && $jasaItem) {
+                $order->update(['completion_submitted_at' => now()]);
+                $files = $request->file('evidences', []);
+                foreach ($files as $index => $file) {
+                    $error = \App\Models\ServiceCompletionEvidence::validateFile($file);
+                    if ($error) {
+                        throw new \Exception("File {$file->getClientOriginalName()}: {$error}");
+                    }
+
+                    $type = \App\Models\ServiceCompletionEvidence::getFileType($file->getMimeType());
+                    $path = \App\Models\ServiceCompletionEvidence::generatePath(
+                        $file->getClientOriginalName(),
+                        $type === 'image' ? 'images' : 'videos'
+                    );
+
+                    \Illuminate\Support\Facades\Storage::disk('public')->put($path, file_get_contents($file));
+
+                    \App\Models\ServiceCompletionEvidence::create([
+                        'jasa_order_item_id' => $jasaItem->id,
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_path' => $path,
+                        // file_url generated by accessor from file_path
+                        'file_type' => $type,
+                        'mime_type' => $file->getMimeType(),
+                        'file_size' => $file->getSize(),
+                        'display_order' => $index,
+                        'note' => $request->completion_note ?? null,
+                    ]);
+                }
+
+                if ($request->filled('completion_note')) {
+                    $jasaItem->update(['completion_note' => $request->completion_note]);
+                }
             }
         });
 
@@ -549,6 +867,7 @@ class JasaOrderController extends Controller
         ]);
 
         return ApiResponse::success([
+            'id' => $order->id,
             'order_id' => $order->id,
             'status' => $newStatus,
         ], 'Status pesanan berhasil diupdate');
@@ -718,6 +1037,7 @@ class JasaOrderController extends Controller
 
             // Build FE-compatible response
             $responseData = [
+                'id' => $order->id, // PRIMARY ID
                 'order_id' => $order->id,
                 'jasa_order_item_id' => $jasaItem->id,
                 'rating' => $review->rating,
@@ -743,7 +1063,8 @@ class JasaOrderController extends Controller
     private function getValidTransitions(string $currentStatus): array
     {
         return match ($currentStatus) {
-            'menunggu_konfirmasi_merchant' => ['diterima', 'ditolak'],
+            'menunggu_konfirmasi' => ['diterima', 'ditolak'],
+            'menunggu_konfirmasi_merchant' => ['diterima', 'ditolak'], // backward compat
             'diterima' => ['layanan_dikerjakan'],
             'layanan_dikerjakan' => ['menunggu_konfirmasi_selesai', 'selesai'],
             'menunggu_konfirmasi_selesai' => ['selesai'],

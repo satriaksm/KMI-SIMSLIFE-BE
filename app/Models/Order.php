@@ -73,14 +73,45 @@ class Order extends Model
         'latitude_snapshot',
         'longitude_snapshot',
 
+        // =================================================================
+        // NEW SNAPSHOT FIELDS FOR SERVICE TRANSACTIONS (CONSULTATION)
+        // Captures customer and merchant data at time of purchase
+        // IMPORTANT: Always read from snapshot when displaying order history
+        // =================================================================
+        'customer_name_snapshot',
+        'customer_phone_snapshot',
+        'customer_address_snapshot',
+        'merchant_name_snapshot',
+        'merchant_phone_snapshot',
+        'merchant_address_snapshot',
+        'payment_method_snapshot',
+        'payment_channel_snapshot',
+        'subtotal_snapshot',
+        'admin_fee_snapshot',
+        'platform_fee_snapshot',
+        'total_payment_snapshot',
+
         // Timestamps from staging-ta
         'responsed_at',
         'accepted_at',
         'rejected_at',
+        'rejected_by',
+        'rejection_reason', // Rejection reason for cancelled/rejected orders
         'delivered_at',
         'completed_at',
         'cancelled_at',
+        'cancelled_by',
         'confirm_deadline',
+
+        // Service order timestamps (for service orders linked to this order)
+        'started_at',
+
+        // SLA timestamps
+        'merchant_response_deadline',
+        'merchant_responded_at',
+        'completion_submitted_at',
+        'auto_completed_at',
+        'completed_by',
 
         // =================================================================
         // CRITICAL: jasa_id is NO LONGER accepted via mass assignment
@@ -98,6 +129,21 @@ class Order extends Model
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'confirm_deadline' => 'datetime',
+        // Service order timestamps
+        'started_at' => 'datetime',
+
+        // SLA timestamps
+        'merchant_response_deadline' => 'datetime',
+        'merchant_responded_at' => 'datetime',
+        'completion_submitted_at' => 'datetime',
+        'auto_completed_at' => 'datetime',
+        'expired_at' => 'datetime',
+
+        // Price snapshots
+        'subtotal_snapshot' => 'decimal:2',
+        'admin_fee_snapshot' => 'decimal:2',
+        'platform_fee_snapshot' => 'decimal:2',
+        'total_payment_snapshot' => 'decimal:2',
     ];
 
     protected $appends = [
@@ -251,7 +297,9 @@ class Order extends Model
         // Check jasa items
         $jasaNames = $this->jasaItems
             ? $this->jasaItems->map(function ($item) {
-                return $item->jasa?->title
+                // PRIORITY: Use snapshot title if available
+                return $item->jasa_title_snapshot
+                    ?? $item->jasa?->title
                     ?? $item->jasa?->name
                     ?? $item->note
                     ?? 'Layanan Jasa';
@@ -281,5 +329,109 @@ class Order extends Model
     public function getItemsAttribute(): string
     {
         return $this->getItemsTextAttribute();
+    }
+
+    // =================================================================
+    // SNAPSHOT ACCESSORS FOR SERVICE TRANSACTIONS
+    // IMPORTANT: Use these when displaying order history
+    // =================================================================
+
+    /**
+     * Get customer name - prioritizes snapshot over live data
+     */
+    public function getCustomerNameAttribute(): ?string
+    {
+        return $this->customer_name_snapshot
+            ?? $this->user_name_snapshot
+            ?? $this->user?->name
+            ?? $this->nama
+            ?? null;
+    }
+
+    /**
+     * Get customer phone - prioritizes snapshot over live data
+     */
+    public function getCustomerPhoneAttribute(): ?string
+    {
+        return $this->customer_phone_snapshot
+            ?? $this->user_phone_snapshot
+            ?? $this->user?->phone
+            ?? $this->tel
+            ?? null;
+    }
+
+    /**
+     * Get customer address - prioritizes snapshot over live data
+     */
+    public function getCustomerAddressAttribute(): ?string
+    {
+        return $this->customer_address_snapshot
+            ?? $this->address_detail_snapshot
+            ?? $this->alamat
+            ?? null;
+    }
+
+    /**
+     * Get merchant name - prioritizes snapshot over live data
+     */
+    public function getMerchantNameAttribute(): ?string
+    {
+        return $this->merchant_name_snapshot
+            ?? $this->merchant?->name
+            ?? null;
+    }
+
+    /**
+     * Get merchant phone - prioritizes snapshot over live data
+     */
+    public function getMerchantPhoneAttribute(): ?string
+    {
+        return $this->merchant_phone_snapshot
+            ?? $this->merchant?->phone
+            ?? null;
+    }
+
+    /**
+     * Get merchant address - prioritizes snapshot over live data
+     */
+    public function getMerchantAddressAttribute(): ?string
+    {
+        return $this->merchant_address_snapshot
+            ?? $this->merchant?->address
+            ?? $this->merchant?->alamat
+            ?? null;
+    }
+
+    /**
+     * Get payment method - prioritizes snapshot over live data
+     */
+    public function getPaymentMethodDisplayAttribute(): ?string
+    {
+        return $this->payment_method_snapshot
+            ?? $this->payment_method
+            ?? $this->metode_pembayaran
+            ?? null;
+    }
+
+    /**
+     * Get subtotal - prioritizes snapshot over live data
+     */
+    public function getSubtotalDisplayAttribute(): ?string
+    {
+        return $this->subtotal_snapshot
+            ?? $this->subtotal
+            ?? null;
+    }
+
+    /**
+     * Get total payment - prioritizes snapshot over live data
+     */
+    public function getTotalPaymentDisplayAttribute(): ?string
+    {
+        return $this->total_payment_snapshot
+            ?? $this->total_payment
+            ?? $this->total_price
+            ?? $this->total
+            ?? null;
     }
 }
