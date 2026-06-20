@@ -76,7 +76,7 @@ class ServiceOrderController extends Controller
             'payment_method' => 'nullable|string|max:50',
         ]);
 
-        $jasa = Jasa::with(['merchant', 'images'])->findOrFail($request->jasa_id);
+        $jasa = Jasa::with(['merchant.primaryAddress', 'images'])->findOrFail($request->jasa_id);
 
         // VALIDATION: Only allow orders for UMKM Jasa
         if (!$jasa->merchant || $jasa->merchant->segmentation_id !== 3) {
@@ -797,6 +797,104 @@ class ServiceOrderController extends Controller
     }
 
     /**
+     * Get service type label for API response
+     */
+    private function getServiceTypeLabel(?string $serviceType): string
+    {
+        return match ($serviceType) {
+            'online' => 'Online',
+            'di_tempat_umkm', 'ditempat_umkm', 'at_location', 'at_merchant' => 'Di Tempat UMKM',
+            'ke_rumah_pelanggan', 'ke_tempat_pelanggan', 'on_site', 'customer_location' => 'Ke Tempat Pelanggan',
+            default => ucfirst($serviceType ?? '-'),
+        };
+    }
+
+    /**
+     * Get order method (cara pemesanan) label for API response
+     */
+    private function getOrderMethodLabel(?string $orderMethod): string
+    {
+        return match ($orderMethod) {
+            'keranjang', 'direct_checkout', 'checkout', 'langsung_pesan', 'direct' => 'Checkout Tanpa Jadwal',
+            'booking', 'booking_schedule', 'scheduled' => 'Booking Jadwal',
+            'konsultasi', 'consultation', 'memerlukan_konsultasi' => 'Hasil Konsultasi',
+            default => ucfirst($orderMethod ?? '-'),
+        };
+    }
+
+    /**
+     * Get service_location_address based on service_type
+     *
+     * Rules:
+     * - di_tempat_umkm  → merchant address (from orders snapshot)
+     * - ke_rumah_pelanggan → customer address (from orders snapshot, NOT profile)
+     * - online          → "Online"
+     */
+    private function getServiceLocationAddress(?string $serviceType, Order $order, ?JasaOrderItem $jasaItem): ?string
+    {
+        $type = $serviceType ?? '';
+
+        if ($type === 'online') {
+            return 'Online';
+        }
+
+        if (in_array($type, ['di_tempat_umkm', 'ditempat_umkm', 'at_location', 'at_merchant'])) {
+            // Merchant address — prioritize snapshot, fallback to live merchant primaryAddress with full geographic detail
+            if (!empty($order->merchant_address_snapshot)) {
+                return $order->merchant_address_snapshot;
+            }
+            $addr = $order->merchant?->primaryAddress;
+            return $addr?->full_address;
+        }
+
+        if (in_array($type, ['ke_rumah_pelanggan', 'ke_tempat_pelanggan', 'on_site', 'customer_location'])) {
+            // Customer address from order snapshot — NOT from user profile
+            return $order->customer_address_snapshot
+                ?? $order->alamat
+                ?? $jasaItem?->service_location_address
+                ?? null;
+        }
+
+        // Fallback for unknown type: return merchant address
+        if (!empty($order->merchant_address_snapshot)) {
+            return $order->merchant_address_snapshot;
+        }
+        $addr = $order->merchant?->primaryAddress;
+        return $addr?->full_address;
+    }
+
+    /**
+     * Get customer address for API response (snapshot, NOT profile)
+     */
+    private function getCustomerAddress(Order $order, ?JasaOrderItem $jasaItem): ?string
+    {
+        return $jasaItem?->service_location_address
+            ?? $order->customer_address_snapshot
+            ?? $order->alamat
+            ?? null;
+    }
+
+    /**
+     * Get merchant full address from primaryAddress + province/city/district/village.
+     * Uses snapshot address_snapshot as primary, falls back to live merchant primaryAddress.
+     */
+    private function getMerchantFullAddress(Order $order): ?string
+    {
+        // Prioritize snapshot
+        if (!empty($order->merchant_address_snapshot)) {
+            return $order->merchant_address_snapshot;
+        }
+
+        // Fall back to live merchant primaryAddress (with geographic relations loaded)
+        $addr = $order->merchant?->primaryAddress;
+        if ($addr) {
+            return $addr->full_address;
+        }
+
+        return null;
+    }
+
+    /**
      * Mapping from frontend status to orders.status for filtering
      * Frontend might send: pending, diterima, ditolak, dikerjakan, selesai, dibatalkan
      * Orders ENUM: pending, proses, selesai, batal
@@ -907,11 +1005,18 @@ class ServiceOrderController extends Controller
         // Build query from orders table
         // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
         // Include serviceOrder for backward compatibility with legacy evidences
-        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
-        // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
+        // NOTE: Load jasaItems jasa with only needed columns for performance.
+        // Use snapshot accessors as primary source, fallback to live jasa.service_type.
         $query = Order::with([
             'user:id,name,phone',
+            'merchant.primaryAddress',
+            'merchant.primaryAddress.province',
+            'merchant.primaryAddress.city',
+            'merchant.primaryAddress.district',
+            'merchant.primaryAddress.village',
             'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,is_reviewed,review_id,customer_latitude,customer_longitude',
+            'jasaItems.jasa:id,service_type',
+            'jasaItems.jasa.categories',
             'jasaItems.review.media',
             'jasaItems.review.histories',
             'jasaItems.completionEvidences',
@@ -1007,10 +1112,12 @@ class ServiceOrderController extends Controller
                 'payment_status' => $order->payment_status,
                 'payment_channel' => $order->payment_channel ?? $order->paid_channel,
 
-                // Service/Jasa Info - gunakan SNAPSHOT accessor
+                // Service/Jasa Info - gunakan SNAPSHOT accessor, fallback ke live jasas.service_type
                 'service_name' => $jasaItem?->jasa_title, // snapshot > live
                 'service_image' => $jasaItem?->jasa_image_url, // snapshot > live
-                'service_type' => $jasaItem?->service_type,
+                'service_type' => $jasaItem?->service_type ?? $jasaItem?->jasa?->service_type,
+                'service_type_label' => $this->getServiceTypeLabel($jasaItem?->service_type ?? $jasaItem?->jasa?->service_type),
+                'category_name' => $jasaItem?->jasa?->categories?->first()?->name,
                 'order_type' => $order->order_type, // Legacy: mechanism (jasa/product)
                 'booking_type' => $jasaItem?->order_method,
 
@@ -1018,7 +1125,19 @@ class ServiceOrderController extends Controller
                 'booking_date' => $jasaItem?->booking_date,
                 'booking_time' => $jasaItem?->booking_time,
                 'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
-                'service_location_address' => $jasaItem?->service_location_address,
+
+                // Order method / cara pemesanan
+                'cara_pemesanan' => $jasaItem?->order_method,
+                'cara_pemesanan_label' => $this->getOrderMethodLabel($jasaItem?->order_method),
+
+                // Addresses — use helper based on service_type
+                'service_location_address' => $this->getServiceLocationAddress(
+                    $jasaItem?->service_type ?? $jasaItem?->jasa?->service_type,
+                    $order,
+                    $jasaItem
+                ),
+                'customer_address' => $this->getCustomerAddress($order, $jasaItem),
+                'merchant_address' => $this->getMerchantFullAddress($order),
 
                 // Pricing
                 'total_price' => (float) $order->total_price,
@@ -1057,6 +1176,7 @@ class ServiceOrderController extends Controller
                 'merchant_response_deadline' => $order->merchant_response_deadline?->toIso8601String(),
                 'merchant_responded_at' => $order->merchant_responded_at?->toIso8601String(),
                 'completion_submitted_at' => $order->completion_submitted_at?->toIso8601String(),
+                'completion_deadline_at' => $order->completion_deadline_at?->toIso8601String(),
                 'completed_at' => $order->completed_at?->toIso8601String(),
                 'completed_by' => $order->completed_by,
                 'auto_completed_at' => $order->auto_completed_at?->toIso8601String(),
@@ -1066,10 +1186,11 @@ class ServiceOrderController extends Controller
                 // Completion note
                 'completion_note' => $jasaItem?->completion_note ?? null,
 
-                // Merchant Info - gunakan SNAPSHOT accessor
+                // Merchant Info - gunakan SNAPSHOT accessor, fallback ke live primaryAddress + province/city/district/village
                 'merchant' => [
                     'id' => $order->merchant_id,
                     'name' => $order->merchant_name, // snapshot > live
+                    'address' => $this->getMerchantFullAddress($order), // snapshot > live primaryAddress
                 ],
 
                 // Jasa Info - gunakan SNAPSHOT accessor
@@ -1133,11 +1254,17 @@ class ServiceOrderController extends Controller
         }
 
         // Find order in orders table
-        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
-            // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
+        // Use snapshot accessors as primary source, fallback to live jasa.service_type.
         $order = Order::with([
             'user:id,name,phone',
+            'merchant.primaryAddress',
+            'merchant.primaryAddress.province',
+            'merchant.primaryAddress.city',
+            'merchant.primaryAddress.district',
+            'merchant.primaryAddress.village',
             'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,customer_latitude,customer_longitude,is_reviewed,review_id',
+            'jasaItems.jasa:id,service_type',
+            'jasaItems.jasa.categories',
             'jasaItems.review.media',
             'jasaItems.review.histories',
             'jasaItems.completionEvidences',
@@ -1186,7 +1313,7 @@ class ServiceOrderController extends Controller
             // Customer Info - gunakan SNAPSHOT accessor
             'customer_name' => $order->customer_name, // snapshot > user > nama
             'customer_phone' => $order->customer_phone, // snapshot > user > tel
-            'customer_address' => $jasaItem?->service_location_address,
+            'customer_address' => $this->getCustomerAddress($order, $jasaItem),
             'customer_latitude' => $jasaItem?->customer_latitude ?? null,
             'customer_longitude' => $jasaItem?->customer_longitude ?? null,
             'booking_date' => $jasaItem?->booking_date,
@@ -1196,20 +1323,32 @@ class ServiceOrderController extends Controller
             'payment_channel' => $order->payment_channel ?? $order->paid_channel,
             'payment_status' => $paymentStatus,
             'total_price' => $totalPrice,
-            'service_type' => $jasaItem?->service_type,
+            'service_type' => $jasaItem?->service_type ?? $jasaItem?->jasa?->service_type,
+            'service_type_label' => $this->getServiceTypeLabel($jasaItem?->service_type ?? $jasaItem?->jasa?->service_type),
+            'category_name' => $jasaItem?->jasa?->categories?->first()?->name,
             // Service Info - gunakan SNAPSHOT accessor
             'service_name' => $jasaItem?->jasa_title, // snapshot > live
             'service_image' => $jasaItem?->jasa_image_url, // snapshot > live
             'order_type' => $order->order_type,
             'mekanisme_pemesanan' => $jasaItem?->order_method,
+            'cara_pemesanan' => $jasaItem?->order_method,
+            'cara_pemesanan_label' => $this->getOrderMethodLabel($jasaItem?->order_method),
             'status' => $status,
             'status_label' => $statusLabel,
             'completion_note' => $jasaItem?->completion_note,
             'rejection_reason' => $order->rejection_reason,
+            // Address snapshots
+            'merchant_address' => $this->getMerchantFullAddress($order),
+            'service_location_address' => $this->getServiceLocationAddress(
+                $jasaItem?->service_type ?? $jasaItem?->jasa?->service_type,
+                $order,
+                $jasaItem
+            ),
             // SLA timestamps
             'merchant_response_deadline' => $order->merchant_response_deadline?->toIso8601String(),
             'merchant_responded_at' => $order->merchant_responded_at?->toIso8601String(),
             'completion_submitted_at' => $order->completion_submitted_at?->toIso8601String(),
+            'completion_deadline_at' => $order->completion_deadline_at?->toIso8601String(),
             'completed_at' => $order->completed_at?->toIso8601String(),
             'completed_by' => $order->completed_by,
             'auto_completed_at' => $order->auto_completed_at?->toIso8601String(),
@@ -1226,12 +1365,12 @@ class ServiceOrderController extends Controller
                 'name' => $order->customer_name, // snapshot > user > nama
                 'phone' => $order->customer_phone, // snapshot > user > tel
             ],
-            // Merchant Info - gunakan SNAPSHOT accessor
+            // Merchant Info - gunakan SNAPSHOT accessor, fallback ke live primaryAddress + province/city/district/village
             'merchant' => [
                 'id' => $order->merchant_id,
                 'name' => $order->merchant_name, // snapshot > live
                 'phone' => $order->merchant_phone, // snapshot > live
-                'address' => $order->merchant_address, // snapshot > live
+                'address' => $this->getMerchantFullAddress($order), // snapshot > live primaryAddress
             ],
             // Jasa Info - gunakan SNAPSHOT accessor
             'jasa' => [

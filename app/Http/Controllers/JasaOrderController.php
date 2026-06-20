@@ -166,8 +166,8 @@ class JasaOrderController extends Controller
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
                 'status' => $initialStatus,
-                // SLA: merchant wajib merespon dalam 1x24 jam
-                'merchant_response_deadline' => now()->addHours(24),
+                // SLA: merchant wajib merespon dalam durasi yang dikonfigurasi
+                'merchant_response_deadline' => now()->addHours((int) config('sla.merchant_response_hours', 24)),
                 // COD: langsung set confirm_deadline
                 'confirm_deadline' => $isCodPayment ? now()->addMinutes($confirmMinutes) : null,
                 // SNAPSHOT: Capture customer data at time of order
@@ -333,6 +333,7 @@ class JasaOrderController extends Controller
                 'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
                 'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
                 'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
+                'completion_deadline_at' => $order->completion_deadline_at?->toISOString(),
                 'completed_at' => $order->completed_at?->toISOString(),
                 'completed_by' => $order->completed_by,
                 'auto_completed_at' => $order->auto_completed_at?->toISOString(),
@@ -382,9 +383,15 @@ class JasaOrderController extends Controller
         $customerId = Auth::id();
 
         $order = Order::with([
+            'user:id,name,phone',
             'merchant:id,name,slug,logo_path,phone,segmentation_id',
             'merchant.primaryAddress',
+            'merchant.primaryAddress.province',
+            'merchant.primaryAddress.city',
+            'merchant.primaryAddress.district',
+            'merchant.primaryAddress.village',
             'jasaItems.jasa:id,title,image,description',
+            'jasaItems.jasa.categories',
             'jasaItems.review',
             'jasaItems.completionEvidences',
         ])
@@ -402,7 +409,8 @@ class JasaOrderController extends Controller
         // Use snapshot data (prioritize snapshot over live data)
         $merchantName = $order->merchant_name_snapshot ?? $order->merchant?->name ?? 'Merchant';
         $merchantPhone = $order->merchant_phone_snapshot ?? $order->merchant?->phone ?? null;
-        $merchantAddress = $order->merchant_address_snapshot ?? $order->merchant?->address ?? null;
+        $customerName = $order->customer_name_snapshot ?? $order->user?->name ?? '-';
+        $customerPhone = $order->customer_phone_snapshot ?? $order->user?->phone ?? '-';
         $serviceTitle = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa?->title ?? $jasaItem?->jasa?->name ?? null;
         $serviceDescription = $jasaItem?->jasa_description_snapshot ?? $jasaItem?->jasa?->description ?? null;
         $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa?->image_url ?? null;
@@ -415,6 +423,11 @@ class JasaOrderController extends Controller
         $offerNote = $jasaItem?->offer_note_snapshot ?? null;
         $agreedAt = $jasaItem?->agreed_at?->toISOString() ?? null;
         $serviceType = $jasaItem?->service_type_snapshot ?? $jasaItem?->service_type ?? null;
+        $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
+        $orderMethod = $jasaItem?->order_method ?? null;
+        $categoryName = $jasaItem?->jasa?->categories?->first()?->name ?? null;
+        $merchantAddress = $this->getMerchantFullAddress($order);
+        $serviceLocationAddress = $this->getServiceLocationAddress($serviceType, $order, $jasaItem);
         // Get payment info
         $payment = Payment::where('order_id', $orderId)->first();
 
@@ -436,8 +449,9 @@ class JasaOrderController extends Controller
         }
 
         return ApiResponse::success([
-            'id' => $order->id, // PRIMARY ID - used by FE for routing and display
+            'id' => $order->id,
             'order_id' => $order->id,
+            'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'jasa_order_item_id' => $jasaItem?->id,
             'status' => $order->status,
             'order_status' => $order->status,
@@ -456,13 +470,28 @@ class JasaOrderController extends Controller
             'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
             'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
             'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
+            'completion_deadline_at' => $order->completion_deadline_at?->toISOString(),
             'completed_at' => $order->completed_at?->toISOString(),
             'completed_by' => $order->completed_by,
             'auto_completed_at' => $order->auto_completed_at?->toISOString(),
             'expired_at' => $order->expired_at?->toISOString(),
-            // Completion evidences — flat top-level for easy FE access
-            'completion_evidences' => $completionEvidences->toArray(),
-            'completion_note' => $jasaItem?->completion_note ?? null,
+            // Customer info
+            'customer_name' => $customerName,
+            'customer_phone' => $customerPhone,
+            // Service info (flat + inside jasa_order_item)
+            'service_name' => $serviceTitle,
+            'category_name' => $categoryName,
+            'service_type' => $serviceType,
+            'service_type_label' => $serviceTypeLabel,
+            'service_location_address' => $serviceLocationAddress,
+            'service_image' => $serviceImage,
+            // Booking
+            'booking_date' => $bookingDate,
+            'booking_time' => $bookingTime,
+            // Cara pemesanan
+            'cara_pemesanan' => $orderMethod,
+            'cara_pemesanan_label' => $this->getOrderMethodLabel($orderMethod),
+            // Merchant info
             'merchant' => [
                 'id' => $order->merchant?->id,
                 'name' => $merchantName,
@@ -470,18 +499,17 @@ class JasaOrderController extends Controller
                 'address' => $merchantAddress,
                 'slug' => $order->merchant?->slug,
             ],
-            'service_title' => $serviceTitle,
             'service_description' => $serviceDescription,
-            'service_image' => $serviceImage,
             'jasa_order_item' => [
                 'id' => $jasaItem?->id,
                 'service_type' => $serviceType,
+                'service_type_label' => $serviceTypeLabel,
                 'booking_date' => $bookingDate,
                 'booking_time' => $bookingTime,
                 'booking_note' => $customerNote,
                 'offer_note' => $offerNote,
                 'agreed_at' => $agreedAt,
-                'service_location_address' => $jasaItem?->service_location_address,
+                'service_location_address' => $serviceLocationAddress,
                 'customer_confirmed' => $jasaItem?->customer_confirmed,
                 'is_reviewed' => $jasaItem?->is_reviewed,
                 'completion_evidences' => $completionEvidences->toArray(),
@@ -660,6 +688,69 @@ class JasaOrderController extends Controller
     }
 
     /**
+     * Get service type label for API response.
+     */
+    private function getServiceTypeLabel(?string $serviceType): string
+    {
+        return match ($serviceType) {
+            'online' => 'Online',
+            'di_tempat_umkm', 'ditempat_umkm', 'at_location', 'at_merchant' => 'Di Tempat UMKM',
+            'ke_rumah_pelanggan', 'ke_tempat_pelanggan', 'on_site', 'customer_location' => 'Ke Tempat Pelanggan',
+            default => ucfirst($serviceType ?? '-'),
+        };
+    }
+
+    /**
+     * Get order method (cara pemesanan) label for API response.
+     */
+    private function getOrderMethodLabel(?string $orderMethod): string
+    {
+        return match ($orderMethod) {
+            'keranjang', 'direct_checkout', 'checkout', 'langsung_pesan', 'direct' => 'Checkout Tanpa Jadwal',
+            'booking', 'booking_schedule', 'scheduled' => 'Booking Jadwal',
+            'konsultasi', 'consultation', 'memerlukan_konsultasi' => 'Hasil Konsultasi',
+            default => ucfirst($orderMethod ?? '-'),
+        };
+    }
+
+    /**
+     * Get merchant full address from primaryAddress + province/city/district/village.
+     */
+    private function getMerchantFullAddress(Order $order): ?string
+    {
+        if (!empty($order->merchant_address_snapshot)) {
+            return $order->merchant_address_snapshot;
+        }
+        $addr = $order->merchant?->primaryAddress;
+        return $addr?->full_address;
+    }
+
+    /**
+     * Get service location address based on service_type.
+     */
+    private function getServiceLocationAddress(?string $serviceType, Order $order, ?JasaOrderItem $jasaItem): ?string
+    {
+        $type = $serviceType ?? '';
+
+        if ($type === 'online') {
+            return 'Online';
+        }
+
+        if (in_array($type, ['di_tempat_umkm', 'ditempat_umkm', 'at_location', 'at_merchant'])) {
+            return $this->getMerchantFullAddress($order);
+        }
+
+        if (in_array($type, ['ke_rumah_pelanggan', 'ke_tempat_pelanggan', 'on_site', 'customer_location'])) {
+            return $order->customer_address_snapshot
+                ?? $order->alamat
+                ?? $jasaItem?->service_location_address
+                ?? null;
+        }
+
+        return $this->getMerchantFullAddress($order);
+    }
+
+    /**
      * Get merchant jasa orders
      *
      * @param Request $request
@@ -729,6 +820,7 @@ class JasaOrderController extends Controller
                 'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
                 'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
                 'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
+                'completion_deadline_at' => $order->completion_deadline_at?->toISOString(),
                 'completed_at' => $order->completed_at?->toISOString(),
                 'completed_by' => $order->completed_by,
                 'auto_completed_at' => $order->auto_completed_at?->toISOString(),
@@ -824,7 +916,11 @@ class JasaOrderController extends Controller
 
             // Handle completion evidence uploads when marking as menunggu_konfirmasi_selesai
             if ($newStatus === 'menunggu_konfirmasi_selesai' && $jasaItem) {
-                $order->update(['completion_submitted_at' => now()]);
+                // SLA: customer harus konfirmasi dalam durasi yang dikonfigurasi
+                $order->update([
+                    'completion_submitted_at' => now(),
+                    'completion_deadline_at' => now()->addHours((int) config('sla.customer_confirm_hours', 24)),
+                ]);
                 $files = $request->file('evidences', []);
                 foreach ($files as $index => $file) {
                     $error = \App\Models\ServiceCompletionEvidence::validateFile($file);
