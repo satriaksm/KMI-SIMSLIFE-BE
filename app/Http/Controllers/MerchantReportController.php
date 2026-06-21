@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Merchant;
-use App\Models\ServiceOrder;
 use App\Models\Order;
 use App\Models\JasaOrderItem;
 use Illuminate\Http\Request;
@@ -93,7 +92,7 @@ class MerchantReportController extends Controller
 
     /**
      * Get summary for jasa merchant from orders table (primary source)
-     * Falls back to service_orders for backward compatibility
+     * NOTE: Fallback to service_orders telah dihapus.
      */
     private function getJasaMerchantSummaryFromOrders(int $merchantId, Carbon $startDate, Carbon $endDate)
     {
@@ -117,58 +116,19 @@ class MerchantReportController extends Controller
             });
         });
 
-        // Check if orders table has data
         $totalTransaksiFromOrders = $completedQuery->count();
         $pendapatanFromOrders = (float) $completedQuery->sum('total_price');
 
-        // If no data in orders, fallback to service_orders
+        // Check if orders table has data
+        // NOTE: Fallback to service_orders telah dihapus.
+        // Semua data jasa baru harus sudah ada di orders + jasa_order_items
         if ($totalTransaksiFromOrders === 0) {
-            $baseQuerySO = ServiceOrder::where('merchant_id', $merchantId)
-                ->whereBetween('created_at', [$startDate, $endDate]);
-
-            $completedQuerySO = clone $baseQuerySO;
-            $completedQuerySO->where(function ($q) {
-                $q->where(function ($inner) {
-                    $inner->where('payment_method', 'COD')
-                        ->where('status', 'selesai');
-                })->orWhere(function ($inner) {
-                    $inner->where('payment_method', '!=', 'COD')
-                        ->where('status', 'selesai')
-                        ->where('payment_status', 'PAID');
-                });
-            });
-
-            $totalTransaksi = $completedQuerySO->count();
-            $pendapatanBersih = (float) $completedQuerySO->sum('total_price');
-
-            // Saldo bisa ditarik & ditahan
-            $completedOrdersSO = clone $baseQuerySO;
-            $completedOrdersSO->where(function ($q) {
-                $q->where(function ($inner) {
-                    $inner->where('payment_method', 'COD')
-                        ->where('status', 'selesai');
-                })->orWhere(function ($inner) {
-                    $inner->where('payment_method', '!=', 'COD')
-                        ->where('status', 'selesai')
-                        ->where('payment_status', 'PAID');
-                });
-            });
-
-            $saldoBisaDitarik = (float) $completedOrdersSO
-                ->clone()
-                ->where('updated_at', '<=', Carbon::now()->subHours(24))
-                ->sum('total_price');
-
-            $saldoDitahan = (float) $completedOrdersSO
-                ->clone()
-                ->where('updated_at', '>', Carbon::now()->subHours(24))
-                ->sum('total_price');
-
+            // Tidak ada data di orders table, return kosong
             return [
-                'total_transaksi' => $totalTransaksi,
-                'pendapatan_bersih' => $pendapatanBersih,
-                'saldo_bisa_ditarik' => $saldoBisaDitarik,
-                'saldo_ditahan' => $saldoDitahan,
+                'total_transaksi' => 0,
+                'pendapatan_bersih' => 0,
+                'saldo_bisa_ditarik' => 0,
+                'saldo_ditahan' => 0,
             ];
         }
 
@@ -213,8 +173,9 @@ class MerchantReportController extends Controller
     {
         // PRIMARY: Query from orders table
         // Use whereHas('jasaItems') to detect jasa orders (NOT order_type='jasa')
-        // Use jasaItems.jasa for accessing jasa data (NOT Order::jasa)
-        $query = Order::with(['jasaItems.jasa:id,title'])
+        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
+        // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
+        $query = Order::with(['jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot'])
             ->where('merchant_id', $merchantId)
             ->whereHas('jasaItems')
             ->whereBetween('created_at', [$startDate, $endDate])
@@ -238,77 +199,40 @@ class MerchantReportController extends Controller
 
         $paginated = $query->paginate($perPage);
 
-        // Check if we have data from orders table
-        if ($paginated->total() > 0) {
-            $transactions = $paginated->map(function ($order) {
-                $isWithdrawable = $order->updated_at->lt(Carbon::now()->subHours(24));
-
-                // Get jasa data through jasaItems (not $order->jasa which doesn't exist)
-                $jasaItem = $order->jasaItems->first();
-                $serviceOrder = $jasaItem?->serviceOrder;
-
-                return [
-                    'id' => $order->id,
-                    'order_number' => $serviceOrder?->order_number ?? 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-                    'service_name' => $jasaItem?->jasa?->title ?? 'Layanan Jasa',
-                    'customer_name' => $order->nama,
-                    'total_price' => (float) ($serviceOrder?->total_price ?? $order->total_price),
-                    'payment_method' => $serviceOrder?->payment_method ?? $order->payment_method,
-                    'payment_status' => $serviceOrder?->payment_status ?? $order->payment_status,
-                    'status' => $serviceOrder?->status ?? $order->status,
-                    'status_label' => $serviceOrder?->status_label ?? 'Selesai',
-                    'created_at' => $order->created_at->toIso8601String(),
-                    'updated_at' => $order->updated_at->toIso8601String(),
-                    'withdrawable' => $isWithdrawable,
-                ];
-            });
-
+        // NOTE: Fallback to service_orders telah dihapus.
+        // Semua data jasa baru harus sudah ada di orders + jasa_order_items
+        if ($paginated->total() === 0) {
             return [
-                'data' => $transactions,
+                'data' => [],
                 'pagination' => [
                     'current_page' => $paginated->currentPage(),
-                    'last_page' => $paginated->lastPage(),
+                    'last_page' => 1,
                     'per_page' => $paginated->perPage(),
-                    'total' => $paginated->total(),
+                    'total' => 0,
                 ]
             ];
         }
 
-        // FALLBACK: Use service_orders if no data in orders table
-        $querySO = ServiceOrder::where('merchant_id', $merchantId)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->where(function ($q) {
-                $q->where(function ($inner) {
-                    $inner->where('payment_method', 'COD')
-                        ->where('status', 'selesai');
-                })->orWhere(function ($inner) {
-                    $inner->where('payment_method', '!=', 'COD')
-                        ->where('status', 'selesai')
-                        ->where('payment_status', 'PAID');
-                });
-            });
-
-        if ($sortBy === 'oldest') {
-            $querySO->orderBy('created_at', 'asc');
-        } else {
-            $querySO->orderBy('created_at', 'desc');
-        }
-
-        $paginatedSO = $querySO->paginate($perPage);
-
-        $transactions = $paginatedSO->map(function ($order) {
+        $transactions = $paginated->map(function ($order) {
             $isWithdrawable = $order->updated_at->lt(Carbon::now()->subHours(24));
+
+            // Get jasa data from SNAPSHOT (jasa_title_snapshot accessor)
+            $jasaItem = $order->jasaItems->first();
 
             return [
                 'id' => $order->id,
-                'order_number' => $order->order_number ?? 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-                'service_name' => $order->service_name,
+                'order_number' => 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                // Service name dari SNAPSHOT (jasa_title accessor: snapshot > live)
+                'service_name' => $jasaItem?->jasa_title,
+                // Customer name dari SNAPSHOT (customer_name accessor: snapshot > user > nama)
                 'customer_name' => $order->customer_name,
-                'total_price' => (float) $order->total_price,
-                'payment_method' => $order->payment_method,
+                // Payment dari SNAPSHOT
+                'payment_method' => $order->payment_method_display,
+                'payment_channel' => $order->payment_channel_snapshot ?? $order->payment_channel ?? null,
+                'total_price' => (float) $order->total_payment_display, // snapshot > total_price
                 'payment_status' => $order->payment_status,
                 'status' => $order->status,
-                'status_label' => $order->status_label,
+                'status_label' => $this->getStatusLabel($order->status),
                 'created_at' => $order->created_at->toIso8601String(),
                 'updated_at' => $order->updated_at->toIso8601String(),
                 'withdrawable' => $isWithdrawable,
@@ -318,10 +242,10 @@ class MerchantReportController extends Controller
         return [
             'data' => $transactions,
             'pagination' => [
-                'current_page' => $paginatedSO->currentPage(),
-                'last_page' => $paginatedSO->lastPage(),
-                'per_page' => $paginatedSO->perPage(),
-                'total' => $paginatedSO->total(),
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
             ]
         ];
     }
@@ -436,5 +360,27 @@ class MerchantReportController extends Controller
                 'total' => $paginated->total(),
             ]
         ];
+    }
+
+    /**
+     * Get status label untuk jasa order.
+     * Mapping status Order ke label yang sesuai.
+     *
+     * @param string|null $status
+     * @return string
+     */
+    private function getStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Menunggu Pembayaran',
+            'menunggu_konfirmasi_merchant' => 'Menunggu Konfirmasi',
+            'diterima' => 'Diterima',
+            'ditolak' => 'Ditolak',
+            'layanan_dikerjakan' => 'Sedang Dikerjakan',
+            'menunggu_konfirmasi_selesai' => 'Menunggu Konfirmasi Selesai',
+            'selesai' => 'Selesai',
+            'dibatalkan' => 'Dibatalkan',
+            default => ucfirst($status ?? 'Unknown'),
+        };
     }
 }

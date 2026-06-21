@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Merchant;
 use App\Models\Product;
 use App\Models\Category;
+use App\Models\PaymentFee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -152,6 +153,42 @@ class HomeController extends Controller
             return response()->json([
                 'message' => 'Failed to load statistics',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get active payment fees for frontend checkout.
+     * Endpoint: GET /api/public/home/payment-fees
+     */
+    public function paymentFees()
+    {
+        try {
+            $fees = PaymentFee::active()
+                ->orderBy('method_code')
+                ->get()
+                ->map(function ($fee) {
+                    return [
+                        'method_code' => $fee->method_code,
+                        'method_name' => $fee->method_name,
+                        'type' => $fee->type, // 'fixed' or 'percentage'
+                        'value' => $fee->value,
+                        'description' => $fee->description,
+                    ];
+                });
+
+            return response()->json([
+                'data' => $fees,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[HomeController] Failed to get payment fees', [
+                'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to load payment fees',
+                'data' => [],
             ], 500);
         }
     }

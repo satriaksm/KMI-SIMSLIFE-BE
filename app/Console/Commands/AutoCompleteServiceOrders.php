@@ -30,11 +30,14 @@ class AutoCompleteServiceOrders extends Command
     {
         $this->info('Running: AutoCompleteServiceOrders...');
 
+        $customerConfirmHours = (int) config('sla.customer_confirm_hours', 24);
+        $this->info("Customer confirm SLA: {$customerConfirmHours} hours");
+
         $toComplete = Order::where('order_type', 'jasa')
             ->where('status', 'menunggu_selesai')
-            ->whereNotNull('completion_submitted_at')
+            ->whereNotNull('completion_deadline_at')
             ->whereNull('completed_at')
-            ->where('completion_submitted_at', '<=', now()->subHours(24))
+            ->where('completion_deadline_at', '<=', now())
             ->get();
 
         $this->info("Found {$toComplete->count()} orders to auto-complete.");

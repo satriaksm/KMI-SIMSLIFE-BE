@@ -278,7 +278,9 @@ class JasaOrderController extends Controller
 
         $orders = Order::with([
             'merchant:id,name,slug,logo_path,segmentation_id',
-            'jasaItems.jasa:id,title,image',
+            'jasaItems:id,order_id,jasa_id,service_type,order_method',
+            'jasaItems.jasa:id,title,image,service_type',
+            'jasaItems.jasa.categories',
             'jasaItems.review',
             'jasaItems.completionEvidences',
             'payment',
@@ -289,6 +291,9 @@ class JasaOrderController extends Controller
             ->paginate($perPage);
 
         $data = $orders->map(function ($order) {
+            // Auto-expire if deadline passed (source of truth: orders table)
+            $this->autoExpireOrder($order);
+
             $jasaItem = $order->jasaItems->first();
             $payment = $order->payment;
 
@@ -298,6 +303,11 @@ class JasaOrderController extends Controller
             $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa?->image_url ?? null;
             $totalPrice = $order->total_payment_snapshot ?? $order->total_price ?? 0;
             $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
+            $serviceType = $jasaItem?->service_type_snapshot ?? $jasaItem?->service_type ?? null;
+            $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
+            $orderMethod = $jasaItem?->order_method ?? null;
+            $orderMethodLabel = $this->getOrderMethodLabel($orderMethod);
+            $categoryName = $jasaItem?->jasa?->categories?->first()?->name ?? null;
 
             // Build response - use BOTH id and order_id for FE compatibility
             // id: used by ServiceOrderCard/key binding; order_id: canonical name
@@ -316,9 +326,16 @@ class JasaOrderController extends Controller
                     'name' => $merchantName,
                     'slug' => $order->merchant?->slug,
                 ],
+                // Flat merchant name for card convenience
+                'merchant_name' => $merchantName,
                 // Snapshot service data
                 'service_title' => $serviceTitle,
                 'service_image' => $serviceImage,
+                'service_type' => $serviceType,
+                'service_type_label' => $serviceTypeLabel,
+                'category_name' => $categoryName,
+                'cara_pemesanan' => $orderMethod,
+                'cara_pemesanan_label' => $orderMethodLabel,
                 // Payment info for "continue payment" button
                 'payment' => $payment ? [
                     'id' => $payment->id,
@@ -403,6 +420,9 @@ class JasaOrderController extends Controller
         if (!$order) {
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
+
+        // Auto-expire if deadline passed (source of truth: orders table)
+        $this->autoExpireOrder($order);
 
         $jasaItem = $order->jasaItems->first();
 
@@ -751,6 +771,48 @@ class JasaOrderController extends Controller
     }
 
     /**
+     * Auto-expire order if merchant_response_deadline has passed.
+     * Source of truth: orders.merchant_response_deadline and orders.status.
+     */
+    private function autoExpireOrder(Order $order): bool
+    {
+        $pendingStatuses = [
+            'menunggu_konfirmasi',
+            'menunggu_konfirmasi_merchant',
+            'pending',
+        ];
+
+        if (!in_array($order->status, $pendingStatuses)) {
+            return false;
+        }
+
+        if (!$order->merchant_response_deadline) {
+            return false;
+        }
+
+        if ($order->merchant_response_deadline->isFuture()) {
+            return false;
+        }
+
+        // Deadline has passed — expire the order
+        $order->update([
+            'status' => 'expired',
+            'expired_at' => now(),
+        ]);
+
+        // Update in-memory model so transformations pick up the new status
+        $order->status = 'expired';
+        $order->expired_at = now();
+
+        Log::info('[JasaOrderController] Order auto-expired', [
+            'order_id' => $order->id,
+            'deadline' => $order->merchant_response_deadline->toISOString(),
+        ]);
+
+        return true;
+    }
+
+    /**
      * Get merchant jasa orders
      *
      * @param Request $request
@@ -785,6 +847,9 @@ class JasaOrderController extends Controller
         $orders = $query->orderByDesc('created_at')->paginate($perPage);
 
         $data = $orders->map(function ($order) {
+            // Auto-expire if deadline passed (source of truth: orders table)
+            $this->autoExpireOrder($order);
+
             $jasaItem = $order->jasaItems->first();
 
             // Use snapshot accessors: jasa_title (snapshot > live)
@@ -1164,6 +1229,7 @@ class JasaOrderController extends Controller
             'diterima' => ['layanan_dikerjakan'],
             'layanan_dikerjakan' => ['menunggu_konfirmasi_selesai', 'selesai'],
             'menunggu_konfirmasi_selesai' => ['selesai'],
+            'expired' => [], // terminal: cannot transition from expired
             default => [],
         };
     }

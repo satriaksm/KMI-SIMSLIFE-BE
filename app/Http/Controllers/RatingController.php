@@ -281,13 +281,16 @@ class RatingController extends Controller
                 ?? null;
         }
 
-        // Include jasa order item image for service orders
+        // Include jasa order item image for service orders - gunakan SNAPSHOT accessor
         if ($rating->jasaOrderItem) {
-            $response['item_image'] = $rating->jasaOrderItem->service_image
-                ?? $rating->jasaOrderItem->image_url
-                ?? $rating->jasaOrderItem->jasa?->image_url
-                ?? $rating->jasaOrderItem->jasa?->image
+            // jasa_image_url accessor: snapshot > coverImage > image_url > image
+            $response['item_image'] = $rating->jasaOrderItem->jasa_image_url
+                ?? $rating->jasaOrderItem->jasa_image_snapshot
                 ?? null;
+            // Also include service title from snapshot for review display
+            $response['item_title'] = $rating->jasaOrderItem->jasa_title;
+            // Include merchant name from snapshot
+            $response['merchant_name'] = $rating->jasaOrderItem->merchant_name;
         }
 
         return response()->json([
@@ -546,7 +549,8 @@ class RatingController extends Controller
         }
 
         // Find the rating
-        $rating = Rating::with(['media', 'user', 'jasaOrderItem', 'jasaOrderItem.order', 'jasaOrderItem.jasa'])
+        // NOTE: jasaOrderItem.jasa not eager-loaded - use snapshot accessors for historical data
+        $rating = Rating::with(['media', 'user', 'jasaOrderItem'])
             ->find($ratingId);
 
         if (!$rating) {

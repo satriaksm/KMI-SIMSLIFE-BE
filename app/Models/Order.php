@@ -110,6 +110,7 @@ class Order extends Model
         'merchant_response_deadline',
         'merchant_responded_at',
         'completion_submitted_at',
+        'completion_deadline_at',
         'auto_completed_at',
         'completed_by',
 
@@ -136,6 +137,7 @@ class Order extends Model
         'merchant_response_deadline' => 'datetime',
         'merchant_responded_at' => 'datetime',
         'completion_submitted_at' => 'datetime',
+        'completion_deadline_at' => 'datetime',
         'auto_completed_at' => 'datetime',
         'expired_at' => 'datetime',
 

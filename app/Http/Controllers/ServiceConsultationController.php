@@ -205,7 +205,6 @@ class ServiceConsultationController extends Controller
                 'jasa',
                 'merchant:id,name,slug,phone',
                 'messages.media',
-                'serviceOrder',
             ])->find($id);
 
             if (!$consultation) {
@@ -484,7 +483,6 @@ class ServiceConsultationController extends Controller
                 'jasa',
                 'customer:id,name,phone',
                 'messages.media',
-                'serviceOrder',
             ])
                 ->where('merchant_id', $merchant->id)
                 ->where('id', $id)

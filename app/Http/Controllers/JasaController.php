@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Jasa;
+use App\Models\JasaOrderItem;
 use App\Models\Merchant;
 use App\Models\Image;
 use Illuminate\Http\Request;
@@ -110,7 +111,16 @@ class JasaController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Jasa::with(['categories', 'images'])
+        $query = Jasa::with([
+            'categories',
+            'merchant.segmentation',
+            'merchant.primaryAddress',
+            'merchant.primaryAddress.province:id,name',
+            'merchant.primaryAddress.city:id,name',
+            'merchant.primaryAddress.district:id,name',
+            'merchant.primaryAddress.village:id,name',
+            'images',
+        ])
             // Tampilkan jasa lama di atas, yang baru di urutan terakhir
             ->orderBy('id', 'asc');
 
@@ -151,7 +161,16 @@ class JasaController extends Controller
 
     public function show($id)
     {
-        $jasa = Jasa::with(['categories', 'merchant', 'images'])->find($id);
+        $jasa = Jasa::with([
+            'categories',
+            'merchant.segmentation',
+            'merchant.primaryAddress',
+            'merchant.primaryAddress.province:id,name',
+            'merchant.primaryAddress.city:id,name',
+            'merchant.primaryAddress.district:id,name',
+            'merchant.primaryAddress.village:id,name',
+            'images',
+        ])->find($id);
 
         if (!$jasa) {
             return response()->json(['message' => 'Jasa tidak ditemukan'], 404);
@@ -212,7 +231,16 @@ class JasaController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        $query = Jasa::with(['categories', 'merchant.segmentation', 'images'])
+        $query = Jasa::with([
+            'categories',
+            'merchant.segmentation',
+            'merchant.primaryAddress',
+            'merchant.primaryAddress.province:id,name',
+            'merchant.primaryAddress.city:id,name',
+            'merchant.primaryAddress.district:id,name',
+            'merchant.primaryAddress.village:id,name',
+            'images',
+        ])
             // Hanya tampilkan jasa yang aktif/dipublish ke customer
             ->where(function ($q) {
                 // Kompatibel dengan dua skema status: status ('published' / 'active') atau flag is_active
@@ -327,7 +355,16 @@ class JasaController extends Controller
     {
         $merchant = Merchant::where('slug', $merchantSlug)->firstOrFail();
 
-        $jasas = Jasa::with(['categories', 'merchant.segmentation', 'images'])
+        $jasas = Jasa::with([
+            'categories',
+            'merchant.segmentation',
+            'merchant.primaryAddress',
+            'merchant.primaryAddress.province:id,name',
+            'merchant.primaryAddress.city:id,name',
+            'merchant.primaryAddress.district:id,name',
+            'merchant.primaryAddress.village:id,name',
+            'images',
+        ])
             ->where('merchant_id', $merchant->id)
             ->where(function ($q) {
                 $q->whereIn('status', ['published', 'active'])
@@ -374,6 +411,10 @@ class JasaController extends Controller
             'categories',
             'merchant.segmentation',
             'merchant.primaryAddress',
+            'merchant.primaryAddress.province:id,name',
+            'merchant.primaryAddress.city:id,name',
+            'merchant.primaryAddress.district:id,name',
+            'merchant.primaryAddress.village:id,name',
             'images',
             'ratingSummary',
             'ratings.user',
@@ -442,6 +483,10 @@ class JasaController extends Controller
             'categories',
             'merchant.segmentation',
             'merchant.primaryAddress',
+            'merchant.primaryAddress.province:id,name',
+            'merchant.primaryAddress.city:id,name',
+            'merchant.primaryAddress.district:id,name',
+            'merchant.primaryAddress.village:id,name',
             'images',
             'ratingSummary',
         ])

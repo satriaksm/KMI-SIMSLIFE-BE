@@ -8,7 +8,6 @@ use App\Models\Jasa;
 use App\Models\Package;
 use App\Models\Promo;
 use App\Models\Merchant;
-use App\Models\ServiceOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -25,7 +24,7 @@ class OrderController extends Controller
      */
     public function myOrders(Request $request)
     {
-        return Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])
+        return Order::with(['package', 'productItems.product', 'jasaItems.jasa'])
             ->where('user_id', $request->user()->id)
             ->latest()
             ->get();
@@ -37,7 +36,7 @@ class OrderController extends Controller
      */
     public function myOrderShow(Request $request, int $id)
     {
-        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
+        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa'])->find($id);
         if (!$order) {
             return response()->json(['message' => 'Order tidak ditemukan.'], 404);
         }
@@ -52,6 +51,9 @@ class OrderController extends Controller
     /**
      * POST /api/orders
      * Customer buat order jasa (alamat + catatan alamat + pilih COD/QRIS)
+     *
+     * DEPRECATED: Gunakan JasaOrderController::create() sebagai gantinya.
+     * Method ini dipertahankan untuk backward compatibility.
      */
     public function store(Request $request)
     {
@@ -68,39 +70,66 @@ class OrderController extends Controller
             'status' => 'in:pending,proses,selesai,batal'
         ]);
 
-        $serviceOrder = null;
-        $order = null;
+        $jasa = Jasa::with('merchant')->findOrFail($data['jasa_id']);
+        $userId = $request->user()->id;
+        $paymentMethod = strtoupper($data['metode_pembayaran']);
+        $isCodPayment = strtolower($paymentMethod) === 'cod';
+        $confirmMinutes = (int) config('app.order_confirm_minutes', 60);
 
-        DB::transaction(function () use (&$serviceOrder, &$order, $data, $request) {
-            $jasa = Jasa::with('merchant')->findOrFail($data['jasa_id']);
+        // Tentukan initial status
+        // COD: langsung tunggu konfirmasi merchant
+        // Xendit: tunggu pembayaran dulu
+        $initialStatus = $isCodPayment ? 'menunggu_konfirmasi_merchant' : 'pending';
 
-            $serviceOrder = ServiceOrder::create([
-                'customer_id' => $request->user()->id,
+        $order = DB::transaction(function () use ($jasa, $userId, $data, $paymentMethod, $initialStatus, $confirmMinutes) {
+            // Create Order
+            $order = Order::create([
+                'user_id' => $userId,
                 'merchant_id' => $jasa->merchant_id,
-                'jasa_id' => $jasa->id,
-                'service_name' => $jasa->title,
-                'service_type' => $jasa->service_type ?? $jasa->service_type_booking ?? null,
-                'service_image' => $jasa->cover_img?->url ?? ($jasa->image ? asset('storage/' . $jasa->image) : null),
-                'merchant_name' => $jasa->merchant?->name ?? 'UMKM',
+                'order_type' => 'jasa',
+                'nama' => $data['nama'],
+                'tel' => $data['tel'],
+                'alamat' => $data['alamat'],
+                'tanggal' => $data['tanggal'],
+                'waktu' => $data['waktu'],
                 'total_price' => $data['total'],
-                'status' => ServiceOrder::STATUS_MENUNGGU_KONFIRMASI,
-                'booking_date' => $data['tanggal'],
-                'booking_time' => $data['waktu'],
-                'booking_note' => null,
-                'customer_name' => $data['nama'],
-                'customer_phone' => $data['tel'],
-                'customer_address' => $data['alamat'],
-                'payment_method' => strtoupper($data['metode_pembayaran']),
-                'payment_status' => ServiceOrder::PAYMENT_UNPAID,
+                'payment_method' => $paymentMethod,
+                'payment_status' => 'UNPAID',
+                'status' => $initialStatus,
+                // COD: langsung set confirm_deadline
+                'confirm_deadline' => $isCodPayment ? now()->addMinutes($confirmMinutes) : null,
             ]);
 
-            $order = null;
+            // Create JasaOrderItem
+            $jasaOrderItem = JasaOrderItem::create([
+                'order_id' => $order->id,
+                'jasa_id' => $jasa->id,
+                'quantity' => 1,
+                'price' => $data['total'],
+                'subtotal' => $data['total'],
+                'booking_date' => $data['tanggal'],
+                'booking_time' => $data['waktu'],
+                'service_type' => $jasa->service_type,
+                'order_method' => 'keranjang',
+            ]);
+
+            return $order;
         });
+
+        // Load relasi untuk response
+        $order->load(['merchant', 'jasaItems.jasa']);
 
         return response()->json([
             'message' => 'Order berhasil dibuat.',
-            'data' => $serviceOrder?->fresh(['merchant', 'jasa']),
-            'service_order' => $serviceOrder?->fresh(['merchant', 'jasa']),
+            'data' => [
+                'order_id' => $order->id,
+                'jasa_order_item_id' => $order->jasaItems->first()?->id,
+                'status' => $order->status,
+                'payment_method' => $paymentMethod,
+                'is_cod' => $isCodPayment,
+                'confirm_deadline' => $order->confirm_deadline?->toISOString(),
+            ],
+            'order' => $order,
         ]);
     }
 
@@ -113,7 +142,7 @@ class OrderController extends Controller
      */
     public function adminIndex()
     {
-        return Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
+        return Order::with(['package', 'productItems.product', 'jasaItems.jasa'])->latest()->get();
     }
 
     /**
@@ -121,7 +150,7 @@ class OrderController extends Controller
      */
     public function adminShow(int $id)
     {
-        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->find($id);
+        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa'])->find($id);
         if (!$order) {
             return response()->json(['message' => 'Order tidak ditemukan.'], 404);
         }
@@ -134,12 +163,12 @@ class OrderController extends Controller
 
     public function index()
     {
-        return Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->latest()->get();
+        return Order::with(['package', 'productItems.product', 'jasaItems.jasa'])->latest()->get();
     }
 
     public function show($id)
     {
-        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa', 'jasaItems.serviceOrder', 'jasaItems.serviceConsultation'])->findOrFail($id);
+        $order = Order::with(['package', 'productItems.product', 'jasaItems.jasa'])->findOrFail($id);
         return response()->json($order);
     }
 

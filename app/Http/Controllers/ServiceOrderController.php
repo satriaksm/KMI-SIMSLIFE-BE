@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\ServiceOrder;
 use App\Models\ServiceCompletionEvidence;
 use App\Models\Jasa;
 use App\Models\Merchant;
@@ -43,6 +42,13 @@ use Illuminate\Validation\Rules\Enum;
  */
 class ServiceOrderController extends Controller
 {
+    // Status constants (source of truth: orders.status)
+    private const STATUS_DITERIMA = 'diterima';
+    private const STATUS_DITOLAK = 'ditolak';
+    private const STATUS_DIKERJAKAN = 'layanan_dikerjakan';
+    private const STATUS_MENUNGGU_SELESAI = 'menunggu_konfirmasi_selesai';
+    private const STATUS_SELESAI = 'selesai';
+
     /**
      * Create a new service order (langsung_pesan flow)
      * Creates order using Order + JasaOrderItem (NO ServiceOrder anymore)
@@ -780,6 +786,7 @@ class ServiceOrderController extends Controller
             'dibatalkan' => 'Dibatalkan',
             'cancelled' => 'Dibatalkan',
             'batal' => 'Dibatalkan',
+            'expired' => 'Kadaluarsa',
             // Legacy generic statuses (for backward compat with old orders)
             'proses' => 'Sedang Diproses',
         ];
@@ -861,6 +868,49 @@ class ServiceOrderController extends Controller
         }
         $addr = $order->merchant?->primaryAddress;
         return $addr?->full_address;
+    }
+
+    /**
+     * Auto-expire order if merchant_response_deadline has passed.
+     * Returns true if order was expired, false otherwise.
+     * Source of truth: orders.merchant_response_deadline and orders.status.
+     */
+    private function autoExpireOrder(Order $order): bool
+    {
+        $pendingStatuses = [
+            'menunggu_konfirmasi',
+            'menunggu_konfirmasi_merchant',
+            'pending',
+        ];
+
+        if (!in_array($order->status, $pendingStatuses)) {
+            return false;
+        }
+
+        if (!$order->merchant_response_deadline) {
+            return false;
+        }
+
+        if ($order->merchant_response_deadline->isFuture()) {
+            return false;
+        }
+
+        // Deadline has passed — expire the order
+        $order->update([
+            'status' => 'expired',
+            'expired_at' => now(),
+        ]);
+
+        // Update in-memory model so transformations pick up the new status without extra query
+        $order->status = 'expired';
+        $order->expired_at = now();
+
+        Log::info('[autoExpireOrder] Order expired', [
+            'order_id' => $order->id,
+            'deadline' => $order->merchant_response_deadline->toISOString(),
+        ]);
+
+        return true;
     }
 
     /**
@@ -1004,7 +1054,6 @@ class ServiceOrderController extends Controller
 
         // Build query from orders table
         // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
-        // Include serviceOrder for backward compatibility with legacy evidences
         // NOTE: Load jasaItems jasa with only needed columns for performance.
         // Use snapshot accessors as primary source, fallback to live jasa.service_type.
         $query = Order::with([
@@ -1020,7 +1069,6 @@ class ServiceOrderController extends Controller
             'jasaItems.review.media',
             'jasaItems.review.histories',
             'jasaItems.completionEvidences',
-            'jasaItems.serviceOrder',
         ])
             ->where('merchant_id', $merchant->id)
             ->whereHas('jasaItems')
@@ -1071,6 +1119,9 @@ class ServiceOrderController extends Controller
 
         // Transform orders to API response format
         $transformedData = collect($orders->items())->map(function ($order) {
+            // Auto-expire if deadline passed (source of truth: orders table)
+            $this->autoExpireOrder($order);
+
             $jasaItem = $order->jasaItems->first();
 
             // Completion Evidences - dari jasa_order_items (PRIMARY)
@@ -1277,6 +1328,9 @@ class ServiceOrderController extends Controller
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
+        // Auto-expire if deadline passed (source of truth: orders table)
+        $this->autoExpireOrder($order);
+
         $jasaItem = $order->jasaItems->first();
         $transformedOrder = $this->transformMerchantOrderOnly($order, $jasaItem);
 
@@ -1402,14 +1456,6 @@ class ServiceOrderController extends Controller
     }
 
     /**
-     * Map service order status to orders table status.
-     */
-    private function mapServiceOrderStatusToOrdersStatus(string $serviceOrderStatus): string
-    {
-        return $serviceOrderStatus;
-    }
-
-    /**
      * Update service order status (merchant actions)
      *
      * PRIMARY: orders.id + jasa_order_items
@@ -1433,15 +1479,15 @@ class ServiceOrderController extends Controller
         // Normalize status aliases from frontend
         $requestedStatus = $request->input('status');
         $statusAliases = [
-            'accepted' => ServiceOrder::STATUS_DITERIMA,
-            'diterima' => ServiceOrder::STATUS_DITERIMA,
-            'rejected' => ServiceOrder::STATUS_DITOLAK,
-            'ditolak' => ServiceOrder::STATUS_DITOLAK,
-            'in_progress' => ServiceOrder::STATUS_DIKERJAKAN,
-            'dikerjakan' => ServiceOrder::STATUS_DIKERJAKAN,
-            'completed' => ServiceOrder::STATUS_SELESAI,
-            'selesai' => ServiceOrder::STATUS_SELESAI,
-            'menunggu_konfirmasi_selesai' => ServiceOrder::STATUS_MENUNGGU_SELESAI,
+            'accepted' => 'diterima',
+            'diterima' => 'diterima',
+            'rejected' => 'ditolak',
+            'ditolak' => 'ditolak',
+            'in_progress' => 'layanan_dikerjakan',
+            'dikerjakan' => 'layanan_dikerjakan',
+            'completed' => 'selesai',
+            'selesai' => 'selesai',
+            'menunggu_konfirmasi_selesai' => 'menunggu_konfirmasi_selesai',
         ];
         $normalizedStatus = $statusAliases[$requestedStatus] ?? $requestedStatus;
 
@@ -1454,11 +1500,11 @@ class ServiceOrderController extends Controller
                 'required',
                 'string',
                 Rule::in([
-                    ServiceOrder::STATUS_DITERIMA,
-                    ServiceOrder::STATUS_DITOLAK,
-                    ServiceOrder::STATUS_DIKERJAKAN,
-                    ServiceOrder::STATUS_MENUNGGU_SELESAI,
-                    ServiceOrder::STATUS_SELESAI,
+                    'diterima',
+                    'ditolak',
+                    'layanan_dikerjakan',
+                    'menunggu_konfirmasi_selesai',
+                    'selesai',
                 ]),
             ],
             'rejection_reason' => 'required_if:status,ditolak|nullable|string|max:500',
@@ -1494,9 +1540,9 @@ class ServiceOrderController extends Controller
         $jasaOrderItem = $order->jasaItems->first();
 
         // Check terminal status
-        $terminalStatuses = [ServiceOrder::STATUS_SELESAI, ServiceOrder::STATUS_DITOLAK];
+        $terminalStatuses = ['selesai', 'ditolak'];
         if (in_array($order->status, $terminalStatuses)) {
-            $statusLabel = ServiceOrder::getStatusLabelStatic($order->status);
+            $statusLabel = $this->getServiceStatusLabel($order->status);
             Log::warning('[ServiceOrder UpdateStatus] Order in terminal state', [
                 'received_id' => $id,
                 'current_status' => $order->status,
@@ -1517,7 +1563,7 @@ class ServiceOrderController extends Controller
             $orderTimestampData = [];
 
             // Handle DITOLAK (rejection)
-            if ($newStatus === ServiceOrder::STATUS_DITOLAK) {
+            if ($newStatus === 'ditolak') {
                 $rejectionReason = $data['rejection_reason'] ?? 'Merchant menolak pesanan';
                 $orderTimestampData['status'] = $newStatus;
                 $orderTimestampData['rejected_at'] = now();
@@ -1532,7 +1578,7 @@ class ServiceOrderController extends Controller
                 ]);
             }
             // Handle DITERIMA (accepted)
-            elseif ($newStatus === ServiceOrder::STATUS_DITERIMA) {
+            elseif ($newStatus === 'diterima') {
                 $orderTimestampData['status'] = $newStatus;
                 $orderTimestampData['accepted_at'] = now();
                 $orderTimestampData['responsed_at'] = now();
@@ -1545,7 +1591,7 @@ class ServiceOrderController extends Controller
                 ]);
             }
             // Handle DIKERJAKAN (started working)
-            elseif ($newStatus === ServiceOrder::STATUS_DIKERJAKAN) {
+            elseif ($newStatus === 'layanan_dikerjakan') {
                 $orderTimestampData['status'] = $newStatus;
                 $orderTimestampData['started_at'] = now();
                 $order->update($orderTimestampData);
@@ -1557,7 +1603,7 @@ class ServiceOrderController extends Controller
                 ]);
             }
             // Handle SELESAI (completion)
-            elseif ($newStatus === ServiceOrder::STATUS_SELESAI) {
+            elseif ($newStatus === 'selesai') {
                 $files = $request->file('evidences', []);
                 $uploadedEvidences = [];
 
