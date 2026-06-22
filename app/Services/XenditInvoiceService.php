@@ -201,8 +201,9 @@ class XenditInvoiceService
      */
     protected function getOrderAmount(Order $order): int
     {
-        // Untuk semua order - gunakan total_price atau gross_amount
-        return (int) ($order->total_price ?? $order->gross_amount ?? 0);
+        // Prioritas: total_payment_snapshot (subtotal + platform_fee) > total_price
+        // total_payment_snapshot selalu di-set saat order dibuat
+        return (int) ($order->total_payment_snapshot ?? $order->total_price ?? 0);
     }
 
     /**

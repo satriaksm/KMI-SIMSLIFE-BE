@@ -6,6 +6,7 @@ use App\Models\Order;
 use App\Models\JasaOrderItem;
 use App\Models\Jasa;
 use App\Models\Payment;
+use App\Models\PaymentFee;
 use App\Models\Rating;
 use App\Models\ReviewMedia;
 use App\Helpers\ApiResponse;
@@ -58,7 +59,9 @@ class JasaOrderController extends Controller
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'total_price' => 'nullable|numeric|min:0',
+            'subtotal' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|string|max:50',
+            'payment_channel' => 'nullable|string|max:50',
         ]);
 
         $jasa = Jasa::with(['merchant', 'images'])->findOrFail($request->jasa_id);
@@ -123,13 +126,26 @@ class JasaOrderController extends Controller
             ?? 'keranjang';
 
         $paymentMethod = strtoupper($request->payment_method ?? 'COD');
+        $paymentChannel = $request->payment_channel
+            ? strtoupper($request->payment_channel)
+            : null;
         $isCodPayment = strtolower($paymentMethod) === 'cod';
 
-        // Calculate total price
-        $totalPrice = floatval($request->total_price ?? 0);
-        if ($totalPrice <= 0) {
-            $totalPrice = floatval($jasa->fixed_price ?? $jasa->base_price ?? $jasa->price ?? 0);
+        // subtotal: harga layanan (sebelum fee)
+        $subtotal = floatval($request->subtotal ?? $request->total_price ?? 0);
+        if ($subtotal <= 0) {
+            $subtotal = floatval($jasa->fixed_price ?? $jasa->base_price ?? $jasa->price ?? 0);
         }
+
+        // platform_fee: biaya admin/platform yang dibebankan ke customer
+        // Hitung dari SIMSLIFE PaymentFee config (payment_channel → SIMSLIFE fee)
+        $platformFee = 0;
+        if (!$isCodPayment && $paymentChannel) {
+            $platformFee = PaymentFee::calculatePlatformFee($paymentChannel, $subtotal);
+        }
+
+        // total_price yang customer bayarkan = subtotal + platform_fee
+        $totalPrice = $subtotal + $platformFee;
 
         // Determine service location address
         $serviceLocationAddress = null;
@@ -180,6 +196,11 @@ class JasaOrderController extends Controller
                 'merchant_address_snapshot' => $jasa->merchant->address ?? '',
                 // SNAPSHOT: Capture payment data at time of order
                 'payment_method_snapshot' => $paymentMethod,
+                'payment_channel_snapshot' => $paymentChannel,
+                'subtotal_snapshot' => $subtotal,
+                'admin_fee_snapshot' => $platformFee,
+                'platform_fee_snapshot' => $platformFee,
+                'payment_fee_snapshot' => $platformFee,
                 'total_payment_snapshot' => $totalPrice,
             ]);
 
@@ -215,7 +236,7 @@ class JasaOrderController extends Controller
                 'jasa_title_snapshot' => $jasa->title,
                 'jasa_description_snapshot' => $jasa->description,
                 'jasa_image_snapshot' => $jasaImage,
-                'jasa_price_snapshot' => $totalPrice,
+                'jasa_price_snapshot' => $subtotal,
                 'original_price_snapshot' => $jasa->base_price ?? $jasa->price ?? 0,
                 'offered_price_snapshot' => $totalPrice,
                 'agreed_price_snapshot' => $totalPrice,
@@ -241,10 +262,15 @@ class JasaOrderController extends Controller
                 'order_id' => $order->id,
                 'jasa_order_item_id' => $jasaOrderItem->id,
                 'payment_method' => $paymentMethod,
+                'payment_channel' => $paymentChannel,
                 'is_cod' => $isCodPayment,
                 'status' => $order->status,
                 'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
                 'confirm_deadline' => $order->confirm_deadline?->toISOString(),
+                // Fee breakdown
+                'subtotal' => $subtotal,
+                'payment_fee' => $platformFee,
+                'total_payment' => $totalPrice,
             ];
 
             // COD: redirect URL
@@ -308,6 +334,45 @@ class JasaOrderController extends Controller
             $orderMethod = $jasaItem?->order_method ?? null;
             $orderMethodLabel = $this->getOrderMethodLabel($orderMethod);
             $categoryName = $jasaItem?->jasa?->categories?->first()?->name ?? null;
+            $paymentChannel = $order->payment_channel_snapshot ?? $order->payment_channel ?? null;
+
+            // ─── Fee breakdown ────────────────────────────────────────────────────
+            // Use saved snapshots if available; otherwise derive for legacy orders
+            $isCod = strtoupper($paymentMethod) === 'COD';
+            $savedSubtotal = (float) ($order->subtotal_snapshot ?? 0);
+            $savedPlatformFee = (float) ($order->platform_fee_snapshot ?? 0);
+            $savedTotalPayment = (float) ($order->total_payment_snapshot ?? 0);
+            $savedPaymentFee = (float) ($order->payment_fee_snapshot ?? 0);
+
+            if ($savedSubtotal > 0 && $savedTotalPayment > 0) {
+                // New order: use saved snapshots
+                $subtotal = $savedSubtotal;
+                $platformFee = $isCod ? 0 : $savedPlatformFee;
+                $paymentFee = $savedPaymentFee;
+                $totalPayment = $savedTotalPayment;
+            } elseif ($savedTotalPayment > 0) {
+                // Legacy order: subtotal_snapshot is null, but total_payment_snapshot is set
+                // Try to derive service price from jasaOrderItem snapshots
+                $legacySubtotal = (float) ($jasaItem?->original_price_snapshot ?? 0);
+                if ($legacySubtotal <= 0) {
+                    // Fallback: jasa_price_snapshot (may include fee for old buggy orders)
+                    $legacySubtotal = (float) ($jasaItem?->jasa_price_snapshot ?? $order->total_price ?? 0);
+                }
+                $subtotal = $legacySubtotal;
+                $totalPayment = $savedTotalPayment;
+                // Fee = what customer actually paid minus service subtotal
+                $paymentFee = max($totalPayment - $subtotal, 0);
+                // For non-COD: recalculate expected fee as verification
+                $platformFee = $isCod ? 0 : (
+                    $savedPlatformFee > 0 ? $savedPlatformFee : $paymentFee
+                );
+            } else {
+                // Fully legacy order: no snapshots at all
+                $subtotal = (float) ($jasaItem?->original_price_snapshot ?? $order->total_price ?? 0);
+                $totalPayment = (float) ($order->total_price ?? 0);
+                $paymentFee = 0;
+                $platformFee = 0;
+            }
 
             // Build response - use BOTH id and order_id for FE compatibility
             // id: used by ServiceOrderCard/key binding; order_id: canonical name
@@ -320,7 +385,14 @@ class JasaOrderController extends Controller
                 'status_label' => $this->getServiceStatusLabel($order->status),
                 'payment_status' => $order->payment_status,
                 'payment_method' => $paymentMethod,
+                // Fee breakdown
+                'subtotal' => $subtotal,
+                'payment_fee' => $paymentFee,
+                'platform_fee' => $platformFee,
+                'is_cod' => $isCod,
                 'total_price' => $totalPrice,
+                'total_payment' => $totalPayment,
+                'payment_channel' => $paymentChannel,
                 'merchant' => [
                     'id' => $order->merchant?->id,
                     'name' => $merchantName,
@@ -342,6 +414,11 @@ class JasaOrderController extends Controller
                     'status' => $payment->status,
                     'invoice_url' => $payment->invoice_url,
                     'expired_at' => $payment->expired_at?->toISOString(),
+                    'subtotal' => $subtotal,
+                    'payment_fee' => $paymentFee,
+                    'total_payment' => $totalPayment,
+                    'payment_method' => $paymentMethod,
+                    'payment_channel' => $paymentChannel,
                 ] : null,
                 'booking_date' => $jasaItem?->booking_date_snapshot ?? $jasaItem?->booking_date,
                 'booking_time' => $jasaItem?->booking_time_snapshot ?? $jasaItem?->booking_time,
@@ -451,6 +528,43 @@ class JasaOrderController extends Controller
         // Get payment info
         $payment = Payment::where('order_id', $orderId)->first();
 
+        // ─── Fee breakdown ────────────────────────────────────────────────────
+        // Use saved snapshots if available; otherwise derive for legacy orders
+        $isCod = strtoupper($paymentMethod) === 'COD';
+        $savedSubtotal = (float) ($order->subtotal_snapshot ?? 0);
+        $savedPlatformFee = (float) ($order->platform_fee_snapshot ?? 0);
+        $savedTotalPayment = (float) ($order->total_payment_snapshot ?? 0);
+        $savedPaymentFee = (float) ($order->payment_fee_snapshot ?? 0);
+
+        if ($savedSubtotal > 0 && $savedTotalPayment > 0) {
+            // New order: use saved snapshots
+            $subtotal = $savedSubtotal;
+            $platformFee = $isCod ? 0 : $savedPlatformFee;
+            $paymentFee = $savedPaymentFee;
+            $totalPayment = $savedTotalPayment;
+        } elseif ($savedTotalPayment > 0) {
+            // Legacy order: subtotal_snapshot is null, but total_payment_snapshot is set
+            // Try to derive service price from jasaOrderItem snapshots
+            $legacySubtotal = (float) ($jasaItem?->original_price_snapshot ?? 0);
+            if ($legacySubtotal <= 0) {
+                $legacySubtotal = (float) ($jasaItem?->jasa_price_snapshot ?? $order->total_price ?? 0);
+            }
+            $subtotal = $legacySubtotal;
+            $totalPayment = $savedTotalPayment;
+            $paymentFee = max($totalPayment - $subtotal, 0);
+            $platformFee = $isCod ? 0 : (
+                $savedPlatformFee > 0 ? $savedPlatformFee : $paymentFee
+            );
+        } else {
+            // Fully legacy order: no snapshots at all
+            $subtotal = (float) ($jasaItem?->original_price_snapshot ?? $order->total_price ?? 0);
+            $totalPayment = (float) ($order->total_price ?? 0);
+            $paymentFee = 0;
+            $platformFee = 0;
+        }
+        // Kept for response compatibility
+        $totalPrice = $totalPayment;
+
         // Transform completion evidences from jasa_order_items relation
         $completionEvidences = collect();
         if ($jasaItem) {
@@ -482,7 +596,13 @@ class JasaOrderController extends Controller
             'payment_status' => $order->payment_status,
             'payment_method' => $paymentMethod,
             'payment_channel' => $paymentChannel,
+            // Fee breakdown
+            'subtotal' => $subtotal,
+            'payment_fee' => $paymentFee,
+            'platform_fee' => $platformFee,
+            'is_cod' => $isCod,
             'total_price' => $totalPrice,
+            'total_payment' => $totalPayment,
             'paid_at' => $order->paid_at?->toISOString(),
             'confirm_deadline' => $order->confirm_deadline?->toISOString(),
             'cancelled_at' => $order->cancelled_at?->toISOString(),
@@ -539,6 +659,11 @@ class JasaOrderController extends Controller
                 'status' => $payment->status,
                 'invoice_url' => $payment->invoice_url,
                 'expired_at' => $payment->expired_at?->toISOString(),
+                'subtotal' => $subtotal,
+                'payment_fee' => $paymentFee,
+                'total_payment' => $totalPayment,
+                'payment_method' => $paymentMethod,
+                'payment_channel' => $paymentChannel,
             ] : null,
             'created_at' => $order->created_at->toISOString(),
         ], 'Order detail fetched');

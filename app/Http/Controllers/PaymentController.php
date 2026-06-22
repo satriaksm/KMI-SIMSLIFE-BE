@@ -92,6 +92,11 @@ class PaymentController extends Controller
                 'invoice_url' => $payment->invoice_url,
                 'payment_status' => $payment->status,
                 'expired_at' => $payment->expired_at?->toISOString(),
+                // Fee breakdown
+                'subtotal' => (float) ($order->subtotal_snapshot ?? $order->total_price ?? 0),
+                'payment_fee' => (float) ($order->payment_fee_snapshot ?? $order->platform_fee_snapshot ?? 0),
+                'total_payment' => (float) ($order->total_payment_snapshot ?? $order->total_price ?? 0),
+                'payment_channel' => $order->payment_channel_snapshot ?? $order->payment_channel ?? null,
             ], 'Invoice berhasil dibuat');
 
         } catch (\Throwable $e) {

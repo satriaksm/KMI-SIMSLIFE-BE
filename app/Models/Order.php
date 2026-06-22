@@ -89,6 +89,7 @@ class Order extends Model
         'subtotal_snapshot',
         'admin_fee_snapshot',
         'platform_fee_snapshot',
+        'payment_fee_snapshot',
         'total_payment_snapshot',
 
         // Timestamps from staging-ta
@@ -145,6 +146,7 @@ class Order extends Model
         'subtotal_snapshot' => 'decimal:2',
         'admin_fee_snapshot' => 'decimal:2',
         'platform_fee_snapshot' => 'decimal:2',
+        'payment_fee_snapshot' => 'decimal:2',
         'total_payment_snapshot' => 'decimal:2',
     ];
 
