@@ -53,7 +53,7 @@ class UserController
         $rules = [
             'name' => 'sometimes|string|max:255',
             'phone' => 'sometimes|string|max:20',
-            'nik' => 'sometimes|nullable|string|max:20',
+            'nik' => 'sometimes|nullable|string|max:20|unique:users,nik,' . $user->id,
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'profile_picture' => 'sometimes|image|mimes:jpeg,png,jpg,gif,svg|max:5048',
 
