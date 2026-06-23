@@ -335,56 +335,97 @@ class MerchantController extends Controller
      */
     public function showMyMerchant(Request $request, Merchant $merchant)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
-        $this->authorize('view', $merchant);
+            $this->authorize('view', $merchant);
 
-        $merchant->load([
-            'segmentation',
-            'paguyuban',
-            'primaryAddress.province',
-            'primaryAddress.city',
-            'primaryAddress.district',
-            'primaryAddress.village',
-        ]);
+            // Load essential relations with fallbacks and null safety
+            $merchant->load([
+                'segmentation',
+                'paguyuban',
+                'primaryAddress.province',
+                'primaryAddress.city',
+                'primaryAddress.district',
+                'primaryAddress.village',
+            ]);
 
-        // Load ratings/reviews with user, media, and histories for review section
-        $merchant->load([
-            'ratings' => function ($query) {
-                $query->with(['user', 'media', 'histories'])
-                    ->orderByDesc('created_at')
-                    ->limit(50);
-            },
-        ]);
+            // Determine segmentation ID
+            $segmentationId = (int) ($merchant->segmentation_id ?? 0);
 
-        // Add rating summary to merchant data
-        $ratings = \App\Models\Rating::where('merchant_id', $merchant->id)->get();
-        $merchant->rating_summary = [
-            'average_rating' => $ratings->count() > 0 ? round($ratings->avg('rating'), 1) : 0,
-            'total_reviews' => $ratings->count(),
-        ];
-
-        // Fallback: beberapa data lama mungkin tidak memakai label 'utama'
-        // sehingga relasi primaryAddress null. Untuk kebutuhan edit form,
-        // gunakan alamat terakhir bila primaryAddress tidak ditemukan.
-        if (!$merchant->primaryAddress) {
-            $fallback = $merchant->addresses()
-                ->with([
-                    'province:id,name',
-                    'city:id,name',
-                    'district:id,name',
-                    'village:id,name',
-                ])
-                ->latest('id')
-                ->first();
-
-            if ($fallback) {
-                $merchant->setRelation('primaryAddress', $fallback);
+            // Dynamically load counts depending on UMKM type
+            if ($segmentationId === 3) {
+                // Jasa
+                $merchant->loadCount('jasas');
+                $merchant->jasa_count = $merchant->jasas_count ?? 0;
+            } else {
+                // Toko/Kuliner
+                $merchant->loadCount('products');
             }
+
+            // Load ratings/reviews with user, media, and histories for review section, filtered by UMKM type
+            $merchant->load([
+                'ratings' => function ($query) use ($segmentationId) {
+                    $query->with(['user', 'media', 'histories']);
+                    
+                    if ($segmentationId === 3) {
+                        $query->where('rateable_type', 'App\\Models\\Jasa');
+                    } else {
+                        $query->where('rateable_type', 'App\\Models\\Product');
+                    }
+
+                    $query->orderByDesc('created_at')->limit(50);
+                },
+            ]);
+
+            // Calculate rating summary safely
+            $ratingsQuery = \App\Models\Rating::where('merchant_id', $merchant->id);
+            if ($segmentationId === 3) {
+                $ratingsQuery->where('rateable_type', 'App\\Models\\Jasa');
+            } else {
+                $ratingsQuery->where('rateable_type', 'App\\Models\\Product');
+            }
+            $ratings = $ratingsQuery->get();
+
+            $merchant->rating_summary = [
+                'average_rating' => $ratings->count() > 0 ? round($ratings->avg('rating'), 1) : 0,
+                'total_reviews' => $ratings->count(),
+            ];
+
+            // Fallback: beberapa data lama mungkin tidak memakai label 'utama'
+            // sehingga relasi primaryAddress null. Untuk kebutuhan edit form,
+            // gunakan alamat terakhir bila primaryAddress tidak ditemukan.
+            if (!$merchant->primaryAddress) {
+                $fallback = $merchant->addresses()
+                    ->with([
+                        'province:id,name',
+                        'city:id,name',
+                        'district:id,name',
+                        'village:id,name',
+                    ])
+                    ->latest('id')
+                    ->first();
+
+                if ($fallback) {
+                    $merchant->setRelation('primaryAddress', $fallback);
+                }
+            }
+
+            return ApiResponse::success($merchant, 'success');
+
+        } catch (\Throwable $e) {
+            Log::error('[MerchantController::showMyMerchant] Error loading merchant profile', [
+                'merchant_id' => $merchant->id ?? null,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return ApiResponse::error(
+                'Gagal memuat profil merchant.',
+                500,
+                config('app.debug') ? [$e->getMessage()] : null
+            );
         }
-
-        return ApiResponse::success($merchant, 'success');
-
     }
 
     // 🆕 ADDED from feat/rating-system: UMKM owner update profile

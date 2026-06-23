@@ -126,6 +126,12 @@ class Merchant extends Model
         return $this->hasMany(Jasa::class, 'merchant_id');
     }
 
+    // Relasi ke Ratings
+    public function ratings(): HasMany
+    {
+        return $this->hasMany(Rating::class, 'merchant_id');
+    }
+
 
     public function user(): BelongsTo
     {
@@ -208,11 +214,11 @@ class Merchant extends Model
             return null;
         }
 
-        return route('merchant_profile_pictures.show', [
-            'merchant' => $this->id,
-            // Query param for cache-busting (no extra path segment)
-            'v' => basename((string) $this->logo_path),
-        ]);
+        if (str_starts_with($this->logo_path, 'http')) {
+            return $this->logo_path;
+        }
+
+        return asset('storage/' . $this->logo_path);
     }
 
     // Accessor untuk Banner/Cover URL
@@ -222,11 +228,11 @@ class Merchant extends Model
             return null;
         }
 
-        return route('merchant_banner.show', [
-            'merchant' => $this->id,
-            // Query param for cache-busting (no extra path segment)
-            'v' => basename((string) $this->cover_path),
-        ]);
+        if (str_starts_with($this->cover_path, 'http')) {
+            return $this->cover_path;
+        }
+
+        return asset('storage/' . $this->cover_path);
     }
 
     public function getIsOpenNowAttribute(): bool
