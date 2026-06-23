@@ -8,6 +8,9 @@ use App\Models\Product;
 use App\Models\Jasa;
 use App\Models\Merchant;
 use App\Models\ReviewMedia;
+use App\Models\Order;
+use App\Models\ProductOrderItem;
+use App\Models\JasaOrderItem;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -20,7 +23,7 @@ class RatingController extends Controller
      * GET /api/public/products/{productId}/ratings
      * Dapatkan semua rating untuk produk tertentu (accepts slug or id)
      */
-    public function indexForProduct($productId)
+    public function indexForProduct(Request $request, $productId)
     {
         // Support both id and slug
         $product = Product::where('id', $productId)
@@ -31,11 +34,14 @@ class RatingController extends Controller
             return response()->json(['data' => [], 'total' => 0]);
         }
 
-        $ratings = Rating::where('rateable_id', $product->id)
+        $query = Rating::where('rateable_id', $product->id)
             ->where('rateable_type', Product::class)
-            ->with(['user', 'media', 'histories'])
-            ->latest()
-            ->paginate(10);
+            ->with(['user', 'media', 'histories']);
+
+        $this->applyFilters($request, $query);
+
+        $perPage = $request->query('per_page', 10);
+        $ratings = $query->paginate($perPage);
 
         return response()->json($ratings);
     }
@@ -44,7 +50,7 @@ class RatingController extends Controller
      * GET /api/public/jasas/{jasaId}/ratings
      * Dapatkan semua rating untuk jasa tertentu (accepts slug or id)
      */
-    public function indexForJasa($jasaId)
+    public function indexForJasa(Request $request, $jasaId)
     {
         // Support both id and slug
         $jasa = Jasa::where('id', $jasaId)
@@ -55,11 +61,14 @@ class RatingController extends Controller
             return response()->json(['data' => [], 'total' => 0]);
         }
 
-        $ratings = Rating::where('rateable_id', $jasa->id)
+        $query = Rating::where('rateable_id', $jasa->id)
             ->where('rateable_type', Jasa::class)
-            ->with(['user', 'media', 'histories'])
-            ->latest()
-            ->paginate(10);
+            ->with(['user', 'media', 'histories']);
+
+        $this->applyFilters($request, $query);
+
+        $perPage = $request->query('per_page', 10);
+        $ratings = $query->paginate($perPage);
 
         return response()->json($ratings);
     }
@@ -100,7 +109,7 @@ class RatingController extends Controller
      * GET /api/merchants/{merchantSlug}/ratings
      * Dapatkan semua individual ratings untuk produk/jasa merchant
      */
-    public function indexForMerchantBySlug($merchantSlug)
+    public function indexForMerchantBySlug(Request $request, $merchantSlug)
     {
         $merchant = Merchant::where('slug', $merchantSlug)->first();
 
@@ -111,11 +120,20 @@ class RatingController extends Controller
             ]);
         }
 
-        // Load reviews with histories for review updates tracking
-        $ratings = Rating::where('merchant_id', $merchant->id)
-            ->with(['user', 'rateable', 'media', 'histories'])
-            ->latest()
-            ->paginate(10);
+        $query = Rating::where('merchant_id', $merchant->id)
+            ->with(['user', 'rateable', 'media', 'histories']);
+
+        // Filter ratings based on merchant segmentation type to avoid cross-UMKM reviews
+        if ($merchant->segmentation_id == 3) {
+            $query->where('rateable_type', 'App\\Models\\Jasa');
+        } else {
+            $query->where('rateable_type', 'App\\Models\\Product');
+        }
+
+        $this->applyFilters($request, $query);
+
+        $perPage = $request->query('per_page', 10);
+        $ratings = $query->paginate($perPage);
 
         return response()->json($ratings);
     }
@@ -137,41 +155,77 @@ class RatingController extends Controller
             'title' => 'nullable|string|max:255',
             'comment' => 'required|string|min:10|max:2000',
             'is_anonymous' => 'nullable|boolean',
-            'order_id' => 'nullable|integer',
+            'order_id' => 'required|integer|exists:orders,id',
             // media is nullable — can be single UploadedFile or array of files
             // Normalize to array in controller logic (see below)
             'media' => 'nullable',
             'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,avi,mov,mkv|max:10240',
         ]);
 
-        // Validasi: pengguna sudah beli produk ini
-        // TODO: Implement order validation
-        // $hasOrder = Order::where('user_id', $user->id)
-        //     ->whereHas('items', function ($q) use ($data) {
-        //         if ($data['rateable_type'] === 'App\\Models\\Product') {
-        //             $q->where('product_id', $data['rateable_id']);
-        //         }
-        //     })
-        //     ->exists();
-        
-        // if (!$hasOrder) {
-        //     return response()->json(['message' => 'Anda harus membeli produk ini terlebih dahulu'], 403);
-        // }
+        // Find order — must belong to customer
+        $order = Order::where('id', $data['order_id'])
+            ->where('user_id', $user->id)
+            ->first();
 
-        // Check: sudah pernah rating?
-        $existingRating = Rating::where('user_id', $user->id)
-            ->where('rateable_id', $data['rateable_id'])
-            ->where('rateable_type', $data['rateable_type'])
-            ->exists();
+        if (!$order) {
+            return response()->json(['message' => 'Pesanan tidak ditemukan atau Anda bukan pemilik pesanan'], 404);
+        }
+
+        // Validate completion status
+        if (!in_array($order->status, ['completed', 'selesai'])) {
+            return response()->json(['message' => 'Pesanan harus diselesaikan terlebih dahulu sebelum memberikan ulasan'], 422);
+        }
+
+        $orderItemId = null;
+        $jasaOrderItemId = null;
+
+        // Resolve item from order and check if already reviewed
+        if ($data['rateable_type'] === 'App\\Models\\Product') {
+            $productItem = ProductOrderItem::where('order_id', $order->id)
+                ->where('product_id', $data['rateable_id'])
+                ->first();
+
+            if (!$productItem) {
+                return response()->json(['message' => 'Produk tidak ditemukan dalam pesanan ini'], 404);
+            }
+
+            $orderItemId = $productItem->id;
+
+            $existingRating = Rating::where('order_item_id', $orderItemId)
+                ->exists();
+        } else {
+            $jasaItem = JasaOrderItem::where('order_id', $order->id)
+                ->where('jasa_id', $data['rateable_id'])
+                ->first();
+
+            if (!$jasaItem) {
+                return response()->json(['message' => 'Jasa tidak ditemukan dalam pesanan ini'], 404);
+            }
+
+            $jasaOrderItemId = $jasaItem->id;
+
+            $existingRating = Rating::where('order_id', $order->id)
+                ->where('jasa_order_item_id', $jasaOrderItemId)
+                ->where('user_id', $user->id)
+                ->exists();
+
+            if (!$existingRating) {
+                $existingRating = Rating::where('jasa_order_item_id', $jasaOrderItemId)
+                    ->where('user_id', $user->id)
+                    ->exists();
+            }
+        }
 
         if ($existingRating) {
             return response()->json([
-                'message' => 'Anda sudah memberikan rating untuk produk ini'
+                'message' => 'Anda sudah memberikan rating untuk pesanan ini'
             ], 422);
         }
 
-        // Tambahkan user_id dan merchant_id
+        // Tambahkan user_id, order_item_id, dan jasa_order_item_id
         $data['user_id'] = $user->id;
+        $data['order_item_id'] = $orderItemId;
+        $data['jasa_order_item_id'] = $jasaOrderItemId;
 
         // Konversi is_anonymous dari string '1'/'0' ke boolean
         if (isset($data['is_anonymous'])) {
@@ -186,6 +240,14 @@ class RatingController extends Controller
         // Buat rating
         $rating = Rating::create($data);
 
+        // Update JasaOrderItem flags if Jasa
+        if ($jasaOrderItemId) {
+            JasaOrderItem::where('id', $jasaOrderItemId)->update([
+                'is_reviewed' => true,
+                'review_id' => $rating->id,
+            ]);
+        }
+
         // Handle media uploads
         // Normalize to array: single UploadedFile → array, already array → use as-is
         $rawMedia = $request->file('media');
@@ -198,9 +260,9 @@ class RatingController extends Controller
             }
         }
 
-        Log::info('[RatingController::store] Processing media files:', [
+        Log::info('[RatingController::store] Processing media files', [
             'count' => count($mediaFiles),
-            'type' => gettype($rawMedia),
+            'type'  => gettype($rawMedia),
         ]);
 
         foreach ($mediaFiles as $index => $file) {
@@ -333,6 +395,7 @@ class RatingController extends Controller
     public function update(Request $request, $ratingId)
     {
         $user = $request->user();
+        // Load media relation first so it can be captured in history
         $rating = Rating::with('media')->findOrFail($ratingId);
 
         // Validasi: hanya pemberi rating yang bisa edit
@@ -368,15 +431,44 @@ class RatingController extends Controller
             }
         }
 
-        $rating->update($data);
+        // Process new media uploads first, retrieve their database IDs
+        $rawMedia = $request->file('media')
+            ?? $request->file('images')
+            ?? $request->file('files')
+            ?? [];
+        if ($rawMedia && !is_array($rawMedia)) {
+            $rawMedia = [$rawMedia];
+        }
 
-        // Increment update_count and set review_updated_at
-        $rating->update([
-            'update_count' => ($rating->update_count ?? 0) + 1,
-            'review_updated_at' => now(),
-        ]);
+        $newMediaIds = [];
+        if (is_array($rawMedia) && count($rawMedia) > 0) {
+            $currentCount = $rating->media()->count();
+            $maxFiles = 5;
+            foreach ($rawMedia as $index => $file) {
+                if (!($file instanceof \Illuminate\Http\UploadedFile)) continue;
+                if ($currentCount + $index >= $maxFiles) break;
 
-        // Handle removed_media_ids - delete only selected old media
+                $path = $file->store('reviews', 'public');
+                $fileUrl = asset('storage/' . $path);
+                $fileType = str_starts_with($file->getMimeType(), 'image') ? 'image' : 'video';
+
+                $mediaObj = ReviewMedia::create([
+                    'review_id' => $rating->id,
+                    'file_path' => $path,
+                    'file_url' => $fileUrl,
+                    'file_type' => $fileType,
+                    'original_name' => $file->getClientOriginalName(),
+                    'file_size' => $file->getSize(),
+                    'display_order' => $currentCount + $index,
+                ]);
+                $newMediaIds[] = $mediaObj->id;
+            }
+        }
+
+        // Update ulasan using the history tracking method
+        $rating->updateWithHistory($data, $user->id, $newMediaIds);
+
+        // Process removed_media_ids after history is created
         $removedIds = [];
         $rawRemoved = $request->input('removed_media_ids');
         if ($rawRemoved) {
@@ -394,37 +486,6 @@ class RatingController extends Controller
                     Storage::disk('public')->delete($media->file_path);
                 }
                 $media->delete();
-            }
-        }
-
-        // Handle new media uploads (support media[], images[], files[])
-        $rawMedia = $request->file('media')
-            ?? $request->file('images')
-            ?? $request->file('files')
-            ?? [];
-        if ($rawMedia && !is_array($rawMedia)) {
-            $rawMedia = [$rawMedia];
-        }
-        if (is_array($rawMedia) && count($rawMedia) > 0) {
-            $currentCount = $rating->media()->count();
-            $maxFiles = 5;
-            foreach ($rawMedia as $index => $file) {
-                if (!($file instanceof \Illuminate\Http\UploadedFile)) continue;
-                if ($currentCount + $index >= $maxFiles) break;
-
-                $path = $file->store('reviews', 'public');
-                $fileUrl = asset('storage/' . $path);
-                $fileType = str_starts_with($file->getMimeType(), 'image') ? 'image' : 'video';
-
-                ReviewMedia::create([
-                    'review_id' => $rating->id,
-                    'file_path' => $path,
-                    'file_url' => $fileUrl,
-                    'file_type' => $fileType,
-                    'original_name' => $file->getClientOriginalName(),
-                    'file_size' => $file->getSize(),
-                    'display_order' => $currentCount + $index,
-                ]);
             }
         }
 
@@ -562,11 +623,6 @@ class RatingController extends Controller
             return ApiResponse::error('Ulasan ini bukan untuk merchant Anda', 403);
         }
 
-        // Validate rating is for a jasa order
-        if (!$rating->jasa_order_item_id && !$rating->service_order_id) {
-            return ApiResponse::error('Ulasan ini bukan untuk pesanan jasa', 400);
-        }
-
         // Check if merchant already replied
         if ($rating->hasMerchantReply()) {
             return ApiResponse::error('Ulasan ini sudah ditanggapi. Ulasan hanya dapat ditanggapi satu kali.', 422);
@@ -599,5 +655,62 @@ class RatingController extends Controller
             'merchant_reply' => $rating->merchant_reply,
             'merchant_reply_at' => $rating->merchant_reply_at?->toIso8601String(),
         ], 'Tanggapan ulasan berhasil dikirim');
+    }
+
+    /**
+     * Helper to apply universal filters & sorting to ratings query.
+     */
+    private function applyFilters(Request $request, $query)
+    {
+        // 1. Filter by segment_type / type (useful for merchant level)
+        $segmentType = $request->query('segment_type') ?? $request->query('type');
+        if ($segmentType) {
+            $segmentType = strtolower($segmentType);
+            if ($segmentType === 'jasa') {
+                $query->where('rateable_type', 'App\\Models\\Jasa');
+            } elseif ($segmentType === 'produk' || $segmentType === 'kuliner') {
+                $segmentationId = $segmentType === 'produk' ? 1 : 2;
+                $query->where('rateable_type', 'App\\Models\\Product')
+                    ->whereHas('merchant', function ($q) use ($segmentationId) {
+                        $q->where('segmentation_id', $segmentationId);
+                    });
+            }
+        }
+
+        // 2. Filter by rating (1..5)
+        $rating = $request->query('rating');
+        if ($rating) {
+            $query->where('rating', (int)$rating);
+        }
+
+        // 3. Filter by has_media (true/false)
+        $hasMedia = $request->query('has_media');
+        if ($hasMedia !== null) {
+            if ($hasMedia === 'true' || $hasMedia === '1') {
+                $query->whereHas('media');
+            } elseif ($hasMedia === 'false' || $hasMedia === '0') {
+                $query->whereDoesntHave('media');
+            }
+        }
+
+        // 4. Filter by has_reply (true/false)
+        $hasReply = $request->query('has_reply');
+        if ($hasReply !== null) {
+            if ($hasReply === 'true' || $hasReply === '1') {
+                $query->whereNotNull('merchant_reply')->where('merchant_reply', '!=', '');
+            } elseif ($hasReply === 'false' || $hasReply === '0') {
+                $query->where(function($q) {
+                    $q->whereNull('merchant_reply')->orWhere('merchant_reply', '');
+                });
+            }
+        }
+
+        // 5. Sort (newest | oldest)
+        $sort = $request->query('sort', 'newest');
+        if (strtolower($sort) === 'oldest') {
+            $query->orderBy('created_at', 'asc');
+        } else {
+            $query->orderBy('created_at', 'desc');
+        }
     }
 }

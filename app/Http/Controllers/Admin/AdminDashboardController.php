@@ -335,65 +335,32 @@ class AdminDashboardController extends Controller
     private function getRecentOrders(): array
     {
         try {
-            // Check if jasa_order_items table exists (zero-downtime compatible)
-            $jasaOrderItemsTableExists = \Illuminate\Support\Facades\Schema::hasTable('jasa_order_items');
-
-            if ($jasaOrderItemsTableExists) {
-                // PRIMARY: Use jasa_order_items for jasa orders
-                return DB::table('orders')
-                    ->join('jasa_order_items', 'orders.id', '=', 'jasa_order_items.order_id')
-                    ->join('jasas', 'jasa_order_items.jasa_id', '=', 'jasas.id')
-                    ->select(
-                        'orders.id',
-                        'orders.nama',
-                        'orders.tel',
-                        'orders.tanggal',
-                        'orders.waktu',
-                        'orders.total',
-                        'jasas.id as jasa_id',
-                        'jasas.title as jasa_title'
-                    )
-                    ->latest('orders.created_at')
-                    ->limit(10)
-                    ->get()
-                    ->map(fn($order) => [
+            return \App\Models\Order::with(['merchant', 'jasaItems'])
+                ->latest('created_at')
+                ->limit(10)
+                ->get()
+                ->map(function ($order) {
+                    $jasaItem = $order->jasaItems->first();
+                    return [
                         'id' => $order->id,
-                        'nama' => $order->nama,
-                        'tel' => $order->tel,
-                        'tanggal' => $order->tanggal,
-                        'waktu' => $order->waktu,
-                        'total' => (int) $order->total,
-                        'jasa' => [
-                            'id' => $order->jasa_id,
-                            'title' => $order->jasa_title,
+                        'order_code' => $order->order_code,
+                        'nama' => $order->user_name_snapshot ?? $order->nama ?? 'Customer',
+                        'tel' => $order->user_phone_snapshot ?? $order->tel ?? '-',
+                        'tanggal' => $order->created_at->format('Y-m-d'),
+                        'waktu' => $order->created_at->format('H:i:s'),
+                        'total' => (int) ($order->total_payment_snapshot ?? $order->gross_amount ?? $order->total ?? $order->total_price ?? 0),
+                        'merchant' => [
+                            'id' => $order->merchant_id,
+                            'name' => $order->merchant ? $order->merchant->name : 'Unknown Merchant',
                         ],
-                    ])
-                    ->toArray();
-            } else {
-                // FALLBACK: Query orders directly (legacy, before jasa_order_items migration)
-                return DB::table('orders')
-                    ->select(
-                        'id',
-                        'nama',
-                        'tel',
-                        'tanggal',
-                        'waktu',
-                        'total'
-                    )
-                    ->latest('created_at')
-                    ->limit(10)
-                    ->get()
-                    ->map(fn($order) => [
-                        'id' => $order->id,
-                        'nama' => $order->nama,
-                        'tel' => $order->tel,
-                        'tanggal' => $order->tanggal,
-                        'waktu' => $order->waktu,
-                        'total' => (int) $order->total,
-                        'jasa' => null,
-                    ])
-                    ->toArray();
-            }
+                        'status' => $order->status,
+                        'jasa' => $jasaItem ? [
+                            'id' => $jasaItem->jasa_id,
+                            'title' => $jasaItem->jasa_title_snapshot ?? $jasaItem->jasa_title ?? 'Layanan Jasa',
+                        ] : null,
+                    ];
+                })
+                ->toArray();
         } catch (\Exception $e) {
             Log::error('[Orders] ' . $e->getMessage());
             return [];
@@ -529,8 +496,8 @@ class AdminDashboardController extends Controller
             $weekEnd = $weekStart->copy()->endOfWeek()->min($endDate);
 
             try {
-                $orders = Order::whereBetween('created_at', [$weekStart, $weekEnd])->count();
-                $revenue = Order::whereBetween('created_at', [$weekStart, $weekEnd])->sum('total');
+                $orders = Order::whereBetween('created_at', [$weekStart, $weekEnd])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$weekStart, $weekEnd])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
@@ -561,8 +528,8 @@ class AdminDashboardController extends Controller
             $endDate = $startDate->copy()->endOfMonth();
 
             try {
-                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->count();
-                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->sum('total');
+                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
@@ -591,8 +558,8 @@ class AdminDashboardController extends Controller
             $endDate = $startDate->copy()->endOfMonth();
 
             try {
-                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->count();
-                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->sum('total');
+                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;

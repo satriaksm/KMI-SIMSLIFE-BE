@@ -11,6 +11,7 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('merchant_id')->constrained('merchants')->onDelete('cascade');
             $table->string('title');
+            $table->string('slug')->unique()->nullable();
             $table->string('vendor')->nullable();
             $table->integer('price')->default(0);
             $table->string('image')->nullable();
@@ -22,6 +23,7 @@ return new class extends Migration {
             $table->integer('fixed_price')->default(0);
             $table->integer('base_price')->default(0);
             $table->string('service_type')->default('at_location'); // at_location | on_site | online
+            $table->string('service_type_booking', 30)->default('keranjang');
             $table->string('location_address')->nullable();
             $table->string('service_area')->nullable();
             $table->text('special_notes')->nullable();

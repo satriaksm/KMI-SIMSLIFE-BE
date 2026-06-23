@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Laporan Data Merchant</title>
+    <title>Laporan Data UMKM</title>
     <style>
         body {
             font-family: DejaVu Sans, sans-serif;
@@ -174,8 +174,8 @@
                 <img src="{{ $logoBase64 }}" alt="Logo Sumilir">
             </div>
         @endif
-        <h1>Laporan Data Merchant</h1>
-        <p>Daftar Merchant - Platform Marketplace SUMILIR</p>
+        <h1>Laporan Data UMKM</h1>
+        <p>Daftar UMKM - Platform Marketplace SUMILIR</p>
     </div>
 
     <!-- Metadata -->

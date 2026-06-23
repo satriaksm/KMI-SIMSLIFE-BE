@@ -18,6 +18,7 @@ class ServiceCompletionEvidence extends Model
 
     protected $fillable = [
         'jasa_order_item_id',
+        'order_id',
         'service_order_id',
         'file_name',
         'file_path',
@@ -65,6 +66,14 @@ class ServiceCompletionEvidence extends Model
     public function jasaOrderItem(): BelongsTo
     {
         return $this->belongsTo(JasaOrderItem::class, 'jasa_order_item_id');
+    }
+
+    /**
+     * Relasi ke Order.
+     */
+    public function order(): BelongsTo
+    {
+        return $this->belongsTo(Order::class, 'order_id');
     }
 
     // ============================================================

@@ -16,8 +16,9 @@ public function up(): void
             $table->id();
             $table->foreignId('review_id')->constrained('ratings')->cascadeOnDelete();
             $table->string('file_path')->nullable();
-            $table->string('file_url')->nullable()->after('file_path');
+            $table->string('file_url')->nullable();
             $table->string('file_type')->nullable();
+            $table->string('mime_type', 100)->nullable();
             $table->string('original_name')->nullable();
             $table->unsignedBigInteger('file_size')->nullable();
             $table->integer('display_order')->default(0);
@@ -39,6 +40,10 @@ public function up(): void
 
             if (!Schema::hasColumn('review_media', 'original_name')) {
                 $table->string('original_name')->nullable()->after('file_type');
+            }
+
+            if (!Schema::hasColumn('review_media', 'mime_type')) {
+                $table->string('mime_type', 100)->nullable()->after('file_type');
             }
 
             if (!Schema::hasColumn('review_media', 'file_size')) {

@@ -22,6 +22,7 @@ return new class extends Migration
                 ->constrained('users')->onDelete('cascade');
             $table->string('sender_type', 20);  // customer | merchant
             $table->text('message')->nullable();  // Text message (optional if media exists)
+            $table->string('message_type', 30)->default('text'); // text | proposal | rejection | acceptance
             $table->decimal('proposed_price', 12, 2)->nullable();  // Proposed price if any
             $table->timestamps();
 

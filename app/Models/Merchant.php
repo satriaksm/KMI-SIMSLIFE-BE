@@ -31,6 +31,14 @@ class Merchant extends Model
         'status',
         'response_at',
         'operational_hours',
+
+        'NPWP',
+        'bank_code',
+        'bank_account_number',
+        'bank_account_name',
+        'balance_available',
+        'balance_pending',
+        'last_payout_at',
     ];
 
     protected $guarded = [
@@ -40,9 +48,12 @@ class Merchant extends Model
     protected $casts = [
         'response_at' => 'datetime',
         'operational_hours' => 'array',
+        'balance_available' => 'decimal:2',
+        'balance_pending' => 'decimal:2',
+        'last_payout_at' => 'datetime',
     ];
 
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'address', 'alamat'];
+    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'balance_held', 'balance_withdrawable'];
 
     protected static function boot()
     {
@@ -136,6 +147,20 @@ class Merchant extends Model
         return $this->hasMany(Voucher::class, 'merchant_id');
     }
 
+    public function orders()
+    {
+        return $this->hasMany(Order::class, 'merchant_id');
+    }
+
+    public function payouts()
+    {
+        return $this->hasMany(Payout::class, 'merchant_id');
+    }
+
+    public function walletHistories()
+    {
+        return $this->hasMany(MerchantWalletHistory::class, 'merchant_id');
+    }
 
     // Relasi ke paguyuban
     public function paguyuban(): BelongsTo
@@ -270,17 +295,23 @@ class Merchant extends Model
     }
 
     /**
-     * ✅ NEW: Reports about this merchant
+     * Get balance that is currently held (completed within the last 24 hours)
      */
-    public function reports()
+    public function getBalanceHeldAttribute()
     {
-        return $this->morphMany(ContentReport::class, 'reportable');
+        return \App\Models\MerchantWalletHistory::where('merchant_id', $this->id)
+            ->where('type', 'release')
+            ->where('reference_type', 'order')
+            ->where('created_at', '>', now()->subHours(24))
+            ->sum('amount');
     }
 
-    // 🆕 Rating System
-    public function ratings(): HasMany
+    /**
+     * Get the balance that is actually withdrawable (available - held)
+     */
+    public function getBalanceWithdrawableAttribute()
     {
-        return $this->hasMany(Rating::class);
+        return max(0, $this->balance_available - $this->balance_held);
     }
 
     public function ratingSummary(): MorphOne

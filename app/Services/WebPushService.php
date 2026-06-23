@@ -2,190 +2,449 @@
 
 namespace App\Services;
 
+use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\Payment;
-use Illuminate\Support\Facades\Http;
+use App\Models\PushSubscription;
+use App\Models\User;
 use Illuminate\Support\Facades\Log;
+use Minishlink\WebPush\Subscription;
+use Minishlink\WebPush\WebPush;
 
-/**
- * WebPushService
- *
- * Service untuk mengirim push notification ke frontend.
- * NON-BLOCKING: failure akan di-log tapi tidak mengganggu alur utama.
- */
 class WebPushService
 {
-    /**
-     * Send payment status update notification.
-     * Ini dipanggil dari webhook saat payment status berubah.
-     *
-     * @param Order $order
-     * @param Payment|null $payment
-     * @param string|null $context Context notification (e.g., 'webhook', 'manual')
-     * @return bool
-     */
-    public function sendPaymentStatusUpdate(Order $order, ?Payment $payment = null, ?string $context = null): bool
+    private function makeWebPush(): WebPush
     {
+        // Suppress E_NOTICE from minishlink/web-push when GMP/BCMath extension is missing.
+        // Laravel converts notices to ErrorException; we restore the handler after construction.
+        $previous = set_error_handler(null);
         try {
-            $payload = $this->buildPaymentPayload($order, $payment, $context);
-
-            // Log untuk debugging
-            Log::info('[WebPushService] Sending payment status update', [
-                'order_id' => $order->id,
-                'payment_id' => $payment?->id,
-                'context' => $context,
+            $webPush = new WebPush([
+                'VAPID' => [
+                    'subject'    => config('services.webpush.subject'),
+                    'publicKey'  => config('services.webpush.public_key'),
+                    'privateKey' => config('services.webpush.private_key'),
+                ],
             ]);
-
-            // Jika ada FCM/API endpoint untuk push notification, implementasikan di sini
-            // Untuk saat ini, kita cukup log karena FE biasanya pakai polling/websocket
-
-            return true;
-        } catch (\Throwable $e) {
-            // NON-BLOCKING - log error tapi jangan throw
-            Log::warning('[WebPushService] Failed to send payment status update', [
-                'order_id' => $order->id,
-                'error' => $e->getMessage(),
-            ]);
-            return false;
+        } finally {
+            // Always restore the original error handler
+            if ($previous !== null) {
+                set_error_handler($previous);
+            } else {
+                restore_error_handler();
+            }
         }
+
+        return $webPush;
+    }
+
+    public function sendMerchantApplicationDecision(User $user, Merchant $merchant, string $status = 'approved'): void
+    {
+        $payload = json_encode($this->buildPayload($merchant, $status), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $this->sendPayloadToUser($user, $payload, 'Merchant decision', 'merchant');
     }
 
     /**
-     * Send order status update notification.
-     * Dipanggil saat status order berubah.
-     *
-     * @param Order $order
-     * @param string|null $cancelContext Context jika order dibatalkan
-     * @return bool
+     * Setelah checkout: Transfer → ingatkan bayar (pembeli).
+     * COD → beri tahu UMKM ada pesanan baru.
      */
-    public function sendOrderStatusUpdate(Order $order, ?string $cancelContext = null): bool
+    public function notifyOrderCreated(Order $order): void
     {
-        try {
-            $payload = $this->buildOrderPayload($order, $cancelContext);
+        $order = $this->loadOrderRelations($order);
 
-            Log::info('[WebPushService] Sending order status update', [
+        if ($this->isCod($order)) {
+            $this->notifyMerchantNewOrder($order);
+            return;
+        }
+
+        $code = $order->order_code ?: ('#' . $order->id);
+        $this->notifyCustomer(
+            $order,
+            'Bayar tagihan pesanan Anda',
+            "Selesaikan pembayaran pesanan {$code} agar diproses penjual.",
+            'order-pay-' . $order->id,
+        );
+    }
+
+    /**
+     * Setelah pembayaran transfer berhasil: hanya UMKM (pesanan baru).
+     * Pembeli tidak di-spam notifikasi "paid".
+     * Compatibility: allows optional payment and context parameters.
+     */
+    public function sendPaymentStatusUpdate(Order $order, ?Payment $payment = null, ?string $context = null): void
+    {
+        $order = $this->loadOrderRelations($order);
+        if (!$payment) {
+            $payment = $order->payment ?? Payment::where('order_id', $order->id)->first();
+        }
+        if (!$payment) {
+            Log::warning('[WebPushService] sendPaymentStatusUpdate failed: Payment not found', ['order_id' => $order->id]);
+            return;
+        }
+
+        $paymentStatus = strtolower((string) $payment->status);
+
+        if ($order->order_type === 'jasa') {
+            if ($paymentStatus === 'paid') {
+                $this->notifyMerchantNewOrder($order);
+            } else {
+                $messages = [
+                    'expired' => ['Pembayaran jasa kedaluwarsa', 'Tagihan pesanan jasa Anda telah kedaluwarsa.'],
+                    'failed' => ['Pembayaran jasa gagal', 'Pembayaran pesanan jasa gagal diproses.'],
+                ];
+                if (isset($messages[$paymentStatus])) {
+                    [$title, $body] = $messages[$paymentStatus];
+                    $this->notifyCustomer($order, $title, $body, 'payment-status-' . $payment->id);
+                }
+            }
+            return;
+        }
+
+        if ($paymentStatus === 'paid') {
+            if (!$this->isCod($order)) {
+                $this->notifyMerchantNewOrder($order);
+            }
+            return;
+        }
+
+        $messages = [
+            'expired' => ['Pembayaran kedaluwarsa', 'Tagihan pesanan Anda telah kedaluwarsa.'],
+            'failed' => ['Pembayaran gagal', 'Pembayaran pesanan gagal diproses.'],
+        ];
+
+        if (!isset($messages[$paymentStatus])) {
+            return;
+        }
+
+        [$title, $body] = $messages[$paymentStatus];
+        $this->notifyCustomer($order, $title, $body, 'payment-status-' . $payment->id);
+    }
+
+    /**
+     * Perubahan status pesanan (responsed, delivered, completed, cancelled).
+     * Status paid/pending tidak memicu push (hindari duplikat & "paid" langsung).
+     * @param  'merchant_reject'|'customer_cancel'|'auto'|null  $cancelContext
+     */
+    public function sendOrderStatusUpdate(Order $order, ?string $cancelContext = null): void
+    {
+        $order = $this->loadOrderRelations($order);
+        $status = (string) $order->status;
+
+        if ($order->order_type === 'jasa') {
+            // Jasa status notification mappings
+            match ($status) {
+                'menunggu_konfirmasi_merchant' => $this->notifyMerchantNewOrder($order),
+                'diterima' => $this->notifyCustomer($order, 'Pesanan Jasa Diterima', 'Pesanan jasa Anda telah diterima oleh merchant.', 'jasa-accepted-' . $order->id),
+                'ditolak' => $this->notifyCustomer($order, 'Pesanan Jasa Ditolak', 'Pesanan jasa Anda ditolak oleh merchant.', 'jasa-rejected-' . $order->id),
+                'layanan_dikerjakan' => $this->notifyCustomer($order, 'Layanan Mulai Dikerjakan', 'Layanan jasa Anda sedang mulai dikerjakan.', 'jasa-started-' . $order->id),
+                'menunggu_konfirmasi_selesai' => $this->notifyCustomer($order, 'Konfirmasi Selesai', 'Merchant telah menandai pengerjaan selesai. Silakan konfirmasi.', 'jasa-completion-' . $order->id),
+                'selesai' => $this->notifyCustomer($order, 'Pesanan Jasa Selesai', 'Pesanan jasa Anda telah selesai.', 'jasa-completed-' . $order->id),
+                'dibatalkan' => $this->notifyCustomer($order, 'Pesanan Jasa Dibatalkan', 'Pesanan jasa Anda telah dibatalkan.', 'jasa-cancelled-' . $order->id),
+                'expired' => $this->notifyCustomer($order, 'Pesanan Jasa Kedaluwarsa', 'Pesanan jasa Anda telah kedaluwarsa.', 'jasa-expired-' . $order->id),
+                default => null,
+            };
+            return;
+        }
+
+        if (in_array($status, ['pending', 'paid'], true)) {
+            return;
+        }
+
+        match ($status) {
+            'responsed' => $this->notifyOrderAccepted($order),
+            'delivered' => $this->notifyOrderDelivered($order),
+            'completed' => $this->notifyOrderCompleted($order),
+            'cancelled' => $this->notifyOrderCancelled($order, $cancelContext),
+            default => null,
+        };
+    }
+
+    private function notifyOrderAccepted(Order $order): void
+    {
+        if ($this->isCod($order) && $this->isPickup($order)) {
+            $this->notifyCustomer(
+                $order,
+                'Pesanan siap diambil',
+                'Silakan ambil pesanan Anda di toko.',
+                'order-responsed-' . $order->id,
+            );
+            return;
+        }
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan diterima',
+            'Pesanan Anda diterima dan sedang diproses penjual.',
+            'order-responsed-' . $order->id,
+        );
+    }
+
+    private function notifyOrderDelivered(Order $order): void
+    {
+        if ($this->isPickup($order)) {
+            return;
+        }
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan diantar',
+            'Pesanan Anda sedang dalam pengiriman.',
+            'order-delivered-' . $order->id,
+        );
+    }
+
+    private function notifyOrderCompleted(Order $order): void
+    {
+        if ($this->isCod($order)) {
+            $this->notifyCustomer(
+                $order,
+                'Pesanan selesai',
+                'Pesanan telah diambil dan dibayar.',
+                'order-completed-' . $order->id,
+            );
+            $this->notifyMerchant(
+                $order,
+                'Pesanan selesai',
+                'Pesanan COD telah diambil dan dibayar.',
+                'order-completed-' . $order->id,
+            );
+            return;
+        }
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan selesai',
+            'Pesanan telah diterima.',
+            'order-completed-' . $order->id,
+        );
+        $this->notifyMerchant(
+            $order,
+            'Pesanan selesai',
+            'Pesanan telah diterima.',
+            'order-completed-' . $order->id,
+        );
+    }
+
+    private function notifyOrderCancelled(Order $order, ?string $cancelContext = null): void
+    {
+        $body = match ($cancelContext) {
+            'merchant_reject' => 'Pesanan Anda ditolak.',
+            'customer_cancel' => 'Pesanan Anda dibatalkan.',
+            'auto' => 'Pesanan Anda dibatalkan karena batas waktu habis.',
+            default => (!$order->responsed_at && $order->paid_at)
+                ? 'Pesanan Anda ditolak.'
+                : 'Pesanan Anda dibatalkan.',
+        };
+
+        $this->notifyCustomer(
+            $order,
+            'Pesanan dibatalkan',
+            $body,
+            'order-cancelled-' . $order->id,
+        );
+    }
+
+    private function notifyMerchantNewOrder(Order $order): void
+    {
+        $productLabel = $this->orderProductLabel($order);
+        $this->notifyMerchant(
+            $order,
+            'Pesanan baru',
+            "Anda mendapatkan pesanan \"{$productLabel}\".",
+            'order-new-' . $order->id,
+        );
+    }
+
+    private function notifyCustomer(Order $order, string $title, string $body, string $tag): void
+    {
+        if (!$order->user) {
+            return;
+        }
+
+        $payload = $this->buildOrderPayload($order, $title, $body, $tag, 'customer');
+        $this->sendPayloadToUser($order->user, $payload, 'Order customer', 'customer');
+    }
+
+    private function notifyMerchant(Order $order, string $title, string $body, string $tag): void
+    {
+        $merchantUser = $order->merchant?->user;
+        if (!$merchantUser || $this->isBuyerAlsoMerchantOwner($order)) {
+            return;
+        }
+
+        $payload = $this->buildOrderPayload($order, $title, $body, $tag, 'merchant');
+        $this->sendPayloadToUser($merchantUser, $payload, 'Order merchant', 'merchant');
+    }
+
+    private function buildOrderPayload(Order $order, string $title, string $body, string $tag, string $role): string
+    {
+        $baseUrl = rtrim((string) config('app.frontend_url'), '/');
+
+        $url = $role === 'merchant'
+            ? $baseUrl . '/merchant-center/' . ($order->merchant?->slug ?? '') . '/orders/' . $order->id
+            : $baseUrl . '/orders/' . $order->id;
+
+        return json_encode([
+            'title' => $title,
+            'body' => $body,
+            'icon' => '/icon192.png',
+            'badge' => '/icon192.png',
+            'tag' => $tag,
+            'data' => [
+                'url' => $url,
                 'order_id' => $order->id,
                 'status' => $order->status,
-                'cancel_context' => $cancelContext,
-            ]);
+                'role' => $role,
+            ],
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
 
-            // Implementasi push notification di sini jika diperlukan
-            // Untuk saat ini, FE akan menerima update via WebSocket/Broadcast events
+    private function loadOrderRelations(Order $order): Order
+    {
+        return $order->loadMissing(['user', 'merchant.user', 'items', 'jasaItems']);
+    }
 
-            return true;
-        } catch (\Throwable $e) {
-            Log::warning('[WebPushService] Failed to send order status update', [
-                'order_id' => $order->id,
-                'error' => $e->getMessage(),
-            ]);
+    private function isCod(Order $order): bool
+    {
+        return strtoupper((string) ($order->payment_method ?? '')) === 'COD';
+    }
+
+    private function isPickup(Order $order): bool
+    {
+        return (string) ($order->delivery_type ?? '') === 'pickup';
+    }
+
+    private function isBuyerAlsoMerchantOwner(Order $order): bool
+    {
+        $buyerId = $order->user_id ?? $order->user?->id;
+        $merchantOwnerId = $order->merchant?->user_id ?? $order->merchant?->user?->id;
+
+        if (!$buyerId || !$merchantOwnerId) {
             return false;
         }
+
+        return (int) $buyerId === (int) $merchantOwnerId;
     }
 
-    /**
-     * Notify merchant tentang order baru.
-     *
-     * @param Order $order
-     * @return bool
-     */
-    public function notifyOrderCreated(Order $order): bool
+    private function subscriptionMatchesAudience(PushSubscription $subscription, string $audience): bool
     {
-        try {
-            Log::info('[WebPushService] Notifying order created', [
-                'order_id' => $order->id,
-                'merchant_id' => $order->merchant_id,
-            ]);
+        $audiences = $subscription->audiences;
 
-            return true;
-        } catch (\Throwable $e) {
-            Log::warning('[WebPushService] Failed to notify order created', [
-                'order_id' => $order->id,
-                'error' => $e->getMessage(),
-            ]);
+        if (!is_array($audiences) || $audiences === []) {
             return false;
         }
+
+        return in_array($audience, $audiences, true);
     }
 
-    /**
-     * Build payload untuk payment status notification.
-     *
-     * @param Order $order
-     * @param Payment|null $payment
-     * @param string|null $context
-     * @return array
-     */
-    protected function buildPaymentPayload(Order $order, ?Payment $payment, ?string $context): array
+    private function orderProductLabel(Order $order): string
     {
-        return [
-            'type' => 'payment_status_updated',
-            'order_id' => $order->id,
-            'payment_id' => $payment?->id,
-            'payment_status' => $payment?->status ?? $order->payment_status,
-            'payment_method' => $payment?->payment_method,
-            'paid_at' => $payment?->paid_at?->toISOString(),
-            'context' => $context,
-            'timestamp' => now()->toISOString(),
-        ];
-    }
+        if ($order->order_type === 'jasa') {
+            $order->loadMissing('jasaItems');
+            $names = $order->jasaItems
+                ->pluck('jasa_title_snapshot')
+                ->filter(fn ($n) => is_string($n) && trim($n) !== '')
+                ->unique()
+                ->values();
 
-    /**
-     * Build payload untuk order status notification.
-     *
-     * @param Order $order
-     * @param string|null $cancelContext
-     * @return array
-     */
-    protected function buildOrderPayload(Order $order, ?string $cancelContext): array
-    {
-        return [
-            'type' => 'order_status_updated',
-            'order_id' => $order->id,
-            'status' => $order->status,
-            'user_id' => $order->user_id,
-            'merchant_id' => $order->merchant_id,
-            'cancel_context' => $cancelContext,
-            'timestamp' => now()->toISOString(),
-        ];
-    }
-
-    /**
-     * Send notification via FCM (Firebase Cloud Messaging).
-     * Ini adalah placeholder untuk implementasi FCM jika diperlukan.
-     *
-     * @param string $fcmToken
-     * @param string $title
-     * @param string $body
-     * @param array $data
-     * @return bool
-     */
-    public function sendViaFcm(string $fcmToken, string $title, string $body, array $data = []): bool
-    {
-        try {
-            $serverKey = config('services.fcm.server_key');
-
-            if (empty($serverKey)) {
-                Log::debug('[WebPushService] FCM server key not configured');
-                return false;
+            if ($names->isEmpty()) {
+                return 'layanan jasa';
             }
 
-            $response = Http::withHeaders([
-                'Authorization' => 'key=' . $serverKey,
-                'Content-Type' => 'application/json',
-            ])->post('https://fcm.googleapis.com/fcm/send', [
-                'to' => $fcmToken,
-                'notification' => [
-                    'title' => $title,
-                    'body' => $body,
-                ],
-                'data' => $data,
+            if ($names->count() === 1) {
+                return $names->first();
+            }
+
+            return $names->first() . ' +' . ($names->count() - 1) . ' lainnya';
+        }
+
+        $names = $order->items
+            ->pluck('product_name_snapshot')
+            ->filter(fn ($n) => is_string($n) && trim($n) !== '')
+            ->unique()
+            ->values();
+
+        if ($names->isEmpty()) {
+            return 'produk';
+        }
+
+        if ($names->count() === 1) {
+            return $names->first();
+        }
+
+        return $names->first() . ' +' . ($names->count() - 1) . ' lainnya';
+    }
+
+    private function buildPayload(Merchant $merchant, string $status): array
+    {
+        $approved = $status === 'approved';
+
+        return [
+            'title' => $approved ? 'UMKM disetujui' : 'UMKM ditolak',
+            'body' => $approved
+                ? 'Pendaftaran UMKM "' . $merchant->name . '" telah disetujui.'
+                : 'Pendaftaran UMKM "' . $merchant->name . '" ditolak.',
+            'icon' => '/icon192.png',
+            'badge' => '/icon192.png',
+            'tag' => 'merchant-application-' . $merchant->id,
+            'data' => [
+                'url' => rtrim((string) config('app.frontend_url'), '/') . '/dashboard',
+                'merchant_id' => $merchant->id,
+                'status' => $status,
+            ],
+        ];
+    }
+
+    private function toSubscription(PushSubscription $subscription): Subscription
+    {
+        return Subscription::create([
+            'endpoint' => $subscription->endpoint,
+            'keys' => [
+                'p256dh' => $subscription->p256dh,
+                'auth' => $subscription->auth,
+            ],
+            'contentEncoding' => $subscription->content_encoding,
+        ]);
+    }
+
+    private function sendPayloadToUser(
+        User $user,
+        string $payload,
+        string $context,
+        ?string $audience = null,
+    ): void {
+        $subscriptions = $user->pushSubscriptions()->get();
+
+        if ($audience !== null) {
+            $subscriptions = $subscriptions->filter(
+                fn (PushSubscription $sub) => $this->subscriptionMatchesAudience($sub, $audience),
+            );
+        }
+
+        if ($subscriptions->isEmpty()) {
+            return;
+        }
+
+        $webPush = $this->makeWebPush();
+
+        foreach ($subscriptions as $subscription) {
+            $webPush->queueNotification($this->toSubscription($subscription), $payload);
+        }
+
+        foreach ($webPush->flush() as $report) {
+            if ($report->isSuccess()) {
+                continue;
+            }
+
+            Log::warning('[WebPush] ' . $context . ' push failed', [
+                'endpoint' => $report->getEndpoint(),
+                'reason' => $report->getReason(),
+                'expired' => $report->isSubscriptionExpired(),
             ]);
 
-            return $response->successful();
-        } catch (\Throwable $e) {
-            Log::warning('[WebPushService] FCM send failed', [
-                'error' => $e->getMessage(),
-            ]);
-            return false;
+            if ($report->isSubscriptionExpired()) {
+                PushSubscription::query()->where('endpoint', $report->getEndpoint())->delete();
+            }
         }
     }
 }

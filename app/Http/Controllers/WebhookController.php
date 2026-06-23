@@ -2,13 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\OrderStatusUpdated;
+use App\Events\PaymentStatusUpdated;
+use App\Helpers\ApiResponse;
 use App\Models\Order;
 use App\Models\Payment;
-use App\Models\JasaOrderItem;
-use App\Events\PaymentStatusUpdated;
-use App\Events\OrderStatusUpdated;
-use App\Services\WebPushService;
+use App\Models\MerchantWalletHistory;
+use App\Models\Payout;
 use App\Services\XenditInvoiceService;
+use App\Services\WebPushService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -16,22 +18,8 @@ use Illuminate\Support\Facades\Log;
 /**
  * WebhookController
  *
- * Centralized webhook handler untuk Xendit payment callbacks.
- * HANYA menangani Order (produk/kuliner dan jasa).
- *
- * NOTE: ServiceOrder sudah deprecated. Semua order baru menggunakan Order + JasaOrderItem.
- *
- * Supported order types:
- * - Order produk/kuliner: external_id = "order-{id}"
- * - Order jasa: external_id = "order-{id}" (order_type = 'jasa')
- *
- * Flow:
- * 1. Validate callback token
- * 2. Parse external_id untuk tentukan order
- * 3. Update payment status
- * 4. Update order status + confirm_deadline (untuk jasa)
- * 5. Fire events (PaymentStatusUpdated, OrderStatusUpdated)
- * 6. Send push notification (non-blocking)
+ * Centralized webhook handler untuk Xendit callbacks (payment callbacks AND payout callbacks).
+ * Menangani order produk/kuliner, order jasa, dan penarikan dana (payout).
  */
 class WebhookController extends Controller
 {
@@ -42,274 +30,352 @@ class WebhookController extends Controller
     }
 
     /**
-     * Handle Xendit payment callback/webhook.
+     * Handle Xendit callback/webhook.
      * Endpoint: POST /api/payment/xendit/webhook
-     *
-     * @param Request $request
-     * @return \Illuminate\Http\JsonResponse
      */
     public function callback(Request $request)
     {
-        Log::info('[WebhookController] Received webhook', [
-            'external_id' => $request->input('external_id'),
-            'status' => $request->input('status'),
-        ]);
+        // 🔐 1. VALIDASI CALLBACK TOKEN
+        $callbackToken = (string) $request->header('x-callback-token', '');
+        $expectedToken = (string) config('services.xendit.callback_token', '');
 
-        // Validasi callback token
-        if (!$this->xenditInvoiceService->validateCallbackToken($request->header('x-callback-token'))) {
+        if ($expectedToken === '' || !hash_equals($expectedToken, $callbackToken)) {
             Log::warning('[WebhookController] Invalid callback token', [
                 'ip' => $request->ip(),
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
+            return ApiResponse::error('Unauthorized', 403);
         }
 
         $data = $request->all();
         $externalId = $data['external_id'] ?? null;
-        $status = strtoupper((string) ($data['status'] ?? ''));
 
         if (!$externalId) {
             Log::warning('[WebhookController] Missing external_id');
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid payload'
-            ], 400);
+            return ApiResponse::error('Invalid payload', 400);
         }
 
-        // Only handle order-{id} format
+        Log::info('[WebhookController] Received webhook', [
+            'external_id' => $externalId,
+            'status' => $data['status'] ?? null,
+        ]);
+
+        // 🔹 HANDLE PAYMENT (order-xxx)
         if (str_starts_with($externalId, 'order-')) {
-            return $this->handleOrderWebhook($data);
+            return $this->handlePaymentWebhook($data);
         }
 
-        // Unknown format - ignore
+        // 🔹 HANDLE PAYOUT (payout-xxx)
+        if (str_starts_with($externalId, 'payout-')) {
+            return $this->handlePayoutWebhook($data);
+        }
+
         Log::info('[WebhookController] Unknown external_id format, ignored', [
             'external_id' => $externalId,
         ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Ignored'
-        ], 200);
+        return ApiResponse::success(null, 'Ignored');
     }
 
     /**
-     * Handle webhook untuk Order (produk/kuliner dan jasa).
-     *
-     * @param array $data
-     * @return \Illuminate\Http\JsonResponse
+     * HANDLE PAYMENT WEBHOOK
      */
-    protected function handleOrderWebhook(array $data)
+    private function handlePaymentWebhook(array $data)
     {
         $externalId = $data['external_id'] ?? null;
         $status = strtoupper((string) ($data['status'] ?? ''));
+        $amount = $data['amount'] ?? null;
 
-        // Extract order ID dari external_id
-        $orderId = (int) str_replace('order-', '', $externalId);
+        if (!$externalId || $status === '' || is_null($amount)) {
+            return ApiResponse::error('Invalid payload', 400);
+        }
 
-        // Find payment
-        $payment = Payment::where('external_id', $externalId)->first();
+        $payment = Payment::query()->where('external_id', $externalId)->first();
 
         if (!$payment) {
             Log::warning('[WebhookController] Payment not found', [
                 'external_id' => $externalId,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Payment not found'
-            ], 404);
+            return ApiResponse::error('Payment not found', 404);
+        }
+
+        // ❗ IDEMPOTENCY (ANTI DOUBLE TRIGGER)
+        $processedStatusMap = [
+            'paid' => 'PAID',
+            'expired' => 'EXPIRED',
+            'failed' => 'FAILED',
+        ];
+        $currentStatus = strtolower((string) $payment->status);
+        if (isset($processedStatusMap[$currentStatus])) {
+            if ($processedStatusMap[$currentStatus] === $status) {
+                return ApiResponse::success(null, 'Already processed');
+            }
+            if ($currentStatus === 'paid') {
+                return ApiResponse::success(null, 'Ignored');
+            }
         }
 
         $order = $payment->order;
-
         if (!$order) {
             Log::warning('[WebhookController] Order not found', [
-                'order_id' => $orderId,
+                'external_id' => $externalId,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Order not found'
-            ], 404);
+            return ApiResponse::error('Order not found', 404);
         }
 
-        // IDEMPOTENCY: Check if already processed
-        if ($this->isPaymentAlreadyProcessed($payment, $status)) {
-            Log::info('[WebhookController] Payment already processed', [
-                'payment_id' => $payment->id,
-                'order_id' => $orderId,
-                'status' => $status,
+        if ((int) round((float) $amount) !== (int) round((float) $payment->amount)) {
+            Log::warning('[WebhookController] Invalid amount in callback', [
+                'callback_amount' => $amount,
+                'payment_amount' => $payment->amount,
             ]);
-            return response()->json([
-                'success' => true,
-                'message' => 'Already processed'
-            ], 200);
+            return ApiResponse::error('Invalid amount', 400);
         }
 
         // Handle based on status
-        switch ($status) {
-            case 'PAID':
-                return $this->handleOrderPaid($order, $payment, $data);
+        if ($status === 'PAID') {
+            $allowedStatuses = $order->order_type === 'jasa'
+                ? ['menunggu_konfirmasi', 'menunggu_konfirmasi_merchant']
+                : ['pending'];
 
-            case 'EXPIRED':
-                return $this->handleOrderExpired($order, $payment, $data);
-
-            case 'FAILED':
-                return $this->handleOrderFailed($order, $payment, $data);
-
-            default:
-                Log::info('[WebhookController] Unhandled status', [
-                    'payment_id' => $payment->id,
-                    'order_id' => $orderId,
-                    'status' => $status,
+            if (!in_array($order->status, $allowedStatuses, true)) {
+                Log::warning('[WebhookController] Invalid order status state for PAID', [
+                    'order_id' => $order->id,
+                    'status' => $order->status,
                 ]);
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Unhandled status'
-                ], 200);
+                return ApiResponse::error('Invalid order state', 400);
+            }
+
+            return $this->handlePaymentPaid($order, $payment, $data);
         }
+
+        if ($status === 'EXPIRED') {
+            return $this->handlePaymentExpired($order, $payment, $data);
+        }
+
+        if ($status === 'FAILED') {
+            return $this->handlePaymentFailed($order, $payment, $data);
+        }
+
+        return ApiResponse::success(null, 'Unhandled status');
     }
 
     /**
-     * Check if payment is already processed with this status.
-     * Maps Xendit UPPERCASE status to DB lowercase ENUM values for comparison.
+     * Process PAID state for Order payment.
      */
-    protected function isPaymentAlreadyProcessed(Payment $payment, string $newStatus): bool
+    private function handlePaymentPaid(Order $order, Payment $payment, array $data)
     {
-        $statusMap = [
-            'PAID' => 'paid',
-            'EXPIRED' => 'expired',
-            'FAILED' => 'failed',
-        ];
+        return DB::transaction(function () use ($data, $payment, $order) {
+            $lockedPayment = Payment::where('id', $payment->id)
+                ->lockForUpdate()
+                ->first();
 
-        $dbStatus = $statusMap[$newStatus] ?? null;
-
-        if (!$dbStatus) {
-            return false;
-        }
-
-        return $payment->status === $dbStatus;
-    }
-
-    /**
-     * Handle PAID status untuk Order.
-     * Update payment, order, dan set confirm_deadline untuk jasa.
-     */
-    protected function handleOrderPaid(Order $order, Payment $payment, array $data): \Illuminate\Http\JsonResponse
-    {
-        return DB::transaction(function () use ($order, $payment, $data) {
-            // Lock payment untuk prevent race condition
-            $lockedPayment = Payment::where('id', $payment->id)->lockForUpdate()->first();
-
-            if (!$lockedPayment || $lockedPayment->status === 'paid') {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Already processed'
-                ], 200);
+            if (!$lockedPayment || strtolower((string) $lockedPayment->status) === 'paid') {
+                return ApiResponse::success(null, 'Already processed');
             }
 
             $paymentChannel = $data['payment_channel'] ?? $data['payment_method'] ?? null;
             $isJasa = $order->order_type === 'jasa';
-            $confirmMinutes = (int) config('app.order_confirm_minutes', 60);
 
-            // Update payment (Payment.status is lowercase ENUM: pending, paid, expired, failed)
-            $lockedPayment->status = 'paid';
-            $lockedPayment->paid_at = now();
-            $lockedPayment->payment_method = $paymentChannel;
-            $lockedPayment->raw_response = $data;
-            $lockedPayment->save();
+            // 1. UPDATE PAYMENT
+            $lockedPayment->update([
+                'status' => 'PAID',
+                'paid_at' => now(),
+                'payment_method' => $paymentChannel,
+                'raw_response' => $data,
+            ]);
 
-            // Update order
-            $order->payment_status = 'paid';
-            $order->paid_at = now();
-            $order->payment_channel = $paymentChannel;
-            $order->paid_channel = $paymentChannel;
+            // 2. UPDATE ORDER
+            $orderUpdate = [
+                'payment_status' => 'PAID',
+                'paid_at' => now(),
+                'payment_channel' => $paymentChannel,
+                'paid_channel' => $paymentChannel,
+            ];
 
-            // Untuk jasa, ubah status ke waiting_confirm dan set confirm_deadline
             if ($isJasa) {
-                $order->status = 'menunggu_konfirmasi_merchant';
-                $order->confirm_deadline = now()->addMinutes($confirmMinutes);
+                $orderUpdate['status'] = 'menunggu_konfirmasi_merchant';
+                $orderUpdate['merchant_response_deadline'] = now()->addHours(24);
+                $orderUpdate['confirm_deadline'] = null; // Do not use confirm_deadline for jasa
             } else {
-                $order->status = 'paid';
+                $orderUpdate['status'] = 'paid';
+                $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
+                $orderUpdate['confirm_deadline'] = now()->addMinutes($confirmMinutes);
             }
-            $order->save();
 
-            // Fire events
+            $order->update($orderUpdate);
+
+            // 3. For product orders, increment balance_pending and record wallet history
+            if (!$isJasa) {
+                $merchant = $order->merchant;
+                if ($merchant) {
+                    $netAmount = (float) ($order->net_amount ?? 0);
+                    if ($netAmount <= 0) {
+                        $netAmount = max(0, (float) $order->gross_amount - (float) $order->platform_fee);
+                    }
+
+                    $merchant->increment('balance_pending', $netAmount);
+
+                    MerchantWalletHistory::create([
+                        'merchant_id' => $merchant->id,
+                        'type' => 'credit',
+                        'amount' => $netAmount,
+                        'reference_type' => 'order',
+                        'reference_id' => $order->id,
+                        'description' => 'Payment received (pending)',
+                    ]);
+                }
+            }
+
+            // Trigger events
             event(new PaymentStatusUpdated($lockedPayment->fresh()));
             event(new OrderStatusUpdated($order->fresh(), $order->status));
 
-            // Non-blocking push notification
+            // Web push notification
             $this->webPushService->sendPaymentStatusUpdate($order, $lockedPayment, 'webhook');
 
-            Log::info('[WebhookController] Order payment processed', [
+            Log::info('[WebhookController] Payment webhook success processed', [
                 'payment_id' => $lockedPayment->id,
                 'order_id' => $order->id,
                 'is_jasa' => $isJasa,
-                'confirm_deadline' => $order->confirm_deadline?->toISOString(),
+                'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
             ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Payment processed'
-            ], 200);
+            return ApiResponse::success(null, 'Payment processed');
         });
     }
 
     /**
-     * Handle EXPIRED status untuk Order.
-     * Cancel order jika masih pending.
+     * Process EXPIRED state for Order payment.
      */
-    protected function handleOrderExpired(Order $order, Payment $payment, array $data): \Illuminate\Http\JsonResponse
+    private function handlePaymentExpired(Order $order, Payment $payment, array $data)
     {
-        // Payment.status is lowercase ENUM
-        $payment->status = 'expired';
-        $payment->raw_response = $data;
-        $payment->save();
+        $payment->update([
+            'status' => 'expired',
+            'raw_response' => $data,
+        ]);
 
-        // Cancel order jika masih pending (Order uses lowercase status)
+        $isJasa = $order->order_type === 'jasa';
+        $cancelStatus = $isJasa ? 'dibatalkan' : 'cancelled';
+
         if (in_array($order->status, ['pending', 'menunggu_konfirmasi_merchant'])) {
-            $order->status = 'batal';
-            $order->cancelled_at = now();
-            $order->save();
-
-            Log::info('[WebhookController] Order expired cancelled', [
-                'order_id' => $order->id,
-                'confirm_deadline' => $order->confirm_deadline,
+            $order->update([
+                'status' => $cancelStatus,
+                'cancelled_at' => now(),
             ]);
-
-            event(new OrderStatusUpdated($order->fresh(), 'batal'));
         }
 
-        event(new PaymentStatusUpdated($payment->fresh()));
+        $payment->refresh();
+        event(new PaymentStatusUpdated($payment));
+        event(new OrderStatusUpdated($order->fresh(), $order->status));
 
-        if ($order) {
-            $this->webPushService->sendPaymentStatusUpdate($order, $payment->fresh(), 'expired');
-        }
+        $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'expired');
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment expired'
-        ], 200);
+        Log::info('[WebhookController] Payment expired callback processed', [
+            'order_id' => $order->id,
+            'status' => $order->status,
+        ]);
+
+        return ApiResponse::success(null, 'Payment expired');
     }
 
     /**
-     * Handle FAILED status untuk Order.
+     * Process FAILED state for Order payment.
      */
-    protected function handleOrderFailed(Order $order, Payment $payment, array $data): \Illuminate\Http\JsonResponse
+    private function handlePaymentFailed(Order $order, Payment $payment, array $data)
     {
-        $payment->status = 'failed';
-        $payment->raw_response = $data;
-        $payment->save();
+        $payment->update([
+            'status' => 'failed',
+            'raw_response' => $data,
+        ]);
 
-        event(new PaymentStatusUpdated($payment->fresh()));
+        $payment->refresh();
+        event(new PaymentStatusUpdated($payment));
 
-        if ($order) {
-            $this->webPushService->sendPaymentStatusUpdate($order, $payment->fresh(), 'failed');
+        $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'failed');
+
+        Log::info('[WebhookController] Payment failed callback processed', [
+            'order_id' => $order->id,
+        ]);
+
+        return ApiResponse::success(null, 'Payment failed');
+    }
+
+    /**
+     * HANDLE PAYOUT WEBHOOK (staging-ta payout callback)
+     */
+    private function handlePayoutWebhook(array $data)
+    {
+        $externalId = $data['external_id'] ?? null;
+        $status = $data['status'] ?? null;
+
+        if (!$externalId || !$status) {
+            return ApiResponse::error('Invalid payload', 400);
         }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment failed'
-        ], 200);
+        $payout = Payout::query()->where('external_id', $externalId)->first();
+
+        if (!$payout) {
+            return ApiResponse::error('Payout not found', 404);
+        }
+
+        // ❗ IDEMPOTENCY
+        if ($payout->status === 'success') {
+            return ApiResponse::success(null, 'Already processed');
+        }
+
+        // 🔹 SUCCESS
+        if ($status === 'COMPLETED') {
+            DB::transaction(function () use ($payout, $data) {
+                $payout = Payout::query()
+                    ->where('id', $payout->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$payout || $payout->status === 'success') {
+                    return;
+                }
+
+                $payout->update([
+                    'status' => 'success',
+                    'processed_at' => now(),
+                ]);
+            });
+
+            return ApiResponse::success(null, 'Payout success');
+        }
+
+        // 🔹 FAILED
+        if ($status === 'FAILED') {
+            DB::transaction(function () use ($payout, $data) {
+                $payout = Payout::query()
+                    ->where('id', $payout->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$payout || in_array($payout->status, ['success', 'failed'])) {
+                    return;
+                }
+
+                $payout->update([
+                    'status' => 'failed',
+                    'failure_reason' => $data['failure_reason'] ?? null,
+                ]);
+
+                $merchant = $payout->merchant;
+                $merchant->increment('balance_available', $payout->amount);
+
+                MerchantWalletHistory::create([
+                    'merchant_id' => $merchant->id,
+                    'type' => 'refund',
+                    'amount' => $payout->amount,
+                    'reference_type' => 'payout',
+                    'reference_id' => $payout->id,
+                    'description' => 'Payout failed, balance refunded',
+                ]);
+            });
+
+            return ApiResponse::success(null, 'Payout failed');
+        }
+
+        return ApiResponse::success(null, 'Unhandled payout status');
     }
 }

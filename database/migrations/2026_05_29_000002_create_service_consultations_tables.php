@@ -39,8 +39,14 @@ return new class extends Migration
             $table->decimal('negotiated_price', 12, 2)->nullable();  // Final agreed price
             $table->text('negotiation_notes')->nullable();  // Both parties notes
             $table->date('agreed_deadline')->nullable();  // Agreed deadline
+            
+            // Booking proposal fields
+            $table->date('proposed_date')->nullable();
+            $table->time('proposed_time')->nullable();
+            $table->text('proposed_notes')->nullable();
 
             // Customer confirmation of the agreement
+            $table->string('offer_status', 30)->nullable();
             $table->boolean('customer_accepted')->default(false);
             $table->timestamp('customer_accepted_at')->nullable();
 
@@ -97,13 +103,19 @@ return new class extends Migration
 
             $table->index(['service_consultation_id']);
         });
+
+        Schema::table('service_orders', function (Blueprint $table) {
+            $table->foreign('consultation_id')->references('id')->on('service_consultations')->nullOnDelete();
+        });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
+        Schema::table('service_orders', function (Blueprint $table) {
+            if (Schema::hasColumn('service_orders', 'consultation_id')) {
+                $table->dropForeign(['consultation_id']);
+            }
+        });
         Schema::dropIfExists('service_consultation_notes');
         Schema::dropIfExists('service_consultation_media');
         Schema::dropIfExists('service_consultations');

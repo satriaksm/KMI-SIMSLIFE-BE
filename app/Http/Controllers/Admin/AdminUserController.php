@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Storage;
+use App\Http\Requests\Admin\ChangeUserStatusRequest;
 
 class AdminUserController extends Controller
 {
@@ -409,7 +410,17 @@ class AdminUserController extends Controller
             });
         }
 
-        $users = $query->latest()
+        $sortBy = $request->input('sort_by') ?: 'created_at';
+        $sortOrder = $request->input('sort_order') ?: 'desc';
+
+        if (!in_array($sortBy, ['id', 'name', 'email', 'phone', 'nik', 'status', 'created_at'])) {
+            $sortBy = 'created_at';
+        }
+        if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
+            $sortOrder = 'desc';
+        }
+
+        $users = $query->orderBy($sortBy, $sortOrder)
             ->paginate($request->input('per_page', 15));
 
         // Transform for UI
@@ -502,7 +513,7 @@ class AdminUserController extends Controller
                     'required',
                     'confirmed',
                     \Illuminate\Validation\Rules\Password::min(8),
-                    'regex:/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_]).+$/',
+                    'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_]).+$/',
                 ],
                 'password_confirmation' => ['required'],
             ],
@@ -516,7 +527,7 @@ class AdminUserController extends Controller
                 'password_confirmation.required' => 'Konfirmasi password wajib diisi.',
                 'password_confirmation.confirmed' => 'Konfirmasi password tidak cocok.',
                 'password.min' => 'Password minimal 8 karakter.',
-                'password.regex' => 'Password harus mengandung huruf besar, angka, dan simbol (!@#$%^&*-_).',
+                'password.regex' => 'Password harus mengandung huruf besar, huruf kecil, angka, dan simbol (!@#$%^&*-_).',
                 'nik.size' => 'NIK harus 16 karakter.',
             ]
         );
@@ -537,6 +548,7 @@ class AdminUserController extends Controller
             'nik' => $data['nik'],
             'password' => \Illuminate\Support\Facades\Hash::make($data['password']),
             'status' => 'active',
+            'email_verified_at' => now(),
         ]);
 
         // Tetapkan role default 'customer'
@@ -717,6 +729,8 @@ class AdminUserController extends Controller
                 'status' => $newStatus, 
             ]);
 
+            // (Tokens deletion removed as it throws 500 without Sanctum DB)
+
             // Log action
             AdminAction::create([
                 'admin_id' => auth()->id(),
@@ -878,6 +892,7 @@ class AdminUserController extends Controller
         $user->update([
             'status' => 'suspended', 
         ]);
+        // (Tokens deletion removed)
 
         // Log action
         AdminAction::create([

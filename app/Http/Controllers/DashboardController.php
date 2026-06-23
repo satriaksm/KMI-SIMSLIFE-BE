@@ -135,12 +135,49 @@ class DashboardController extends Controller
             $data[] = $otherTotal;
         }
 
+        /**
+         * =========================
+         * STAT PESANAN & KEUANGAN
+         * =========================
+         */
+        $ordersToday = \App\Models\Order::where('merchant_id', $merchantId)
+            ->whereDate('created_at', today())
+            ->count();
+
+        $ordersPending = \App\Models\Order::where('merchant_id', $merchantId)
+            ->where(function ($q) {
+                $q->where('status', 'paid')
+                  ->orWhere(function ($sq) {
+                      $sq->where('status', 'pending')->where('payment_method', 'COD');
+                  });
+            })->count();
+
+        $ordersCompleted = \App\Models\Order::where('merchant_id', $merchantId)
+            ->where('status', 'completed')
+            ->count();
+
+        $revenueTotal = \App\Models\Order::where('merchant_id', $merchantId)
+            ->where('status', 'completed')
+            ->sum('net_amount');
+
         return ApiResponse::success(
             [
                 'merchant' => [
                     'id' => $merchant->id,
                     'slug' => $merchant->slug,
                     'name' => $merchant->name,
+                ],
+                'wallet' => [
+                    'balance_available'    => (float) $merchant->balance_available,
+                    'balance_pending'      => (float) $merchant->balance_pending,
+                    'balance_held'         => (float) $merchant->balance_held,
+                    'balance_withdrawable' => (float) $merchant->balance_withdrawable,
+                ],
+                'order_stats' => [
+                    'today'      => $ordersToday,
+                    'pending'    => $ordersPending,
+                    'completed'  => $ordersCompleted,
+                    'revenue'    => (float) $revenueTotal,
                 ],
                 'stats' => [
                     'total' => $totalProducts,
@@ -157,6 +194,7 @@ class DashboardController extends Controller
                     'expired' => $expiredVouchers,
                     'used' => $voucherUsedCount,
                 ],
+                'rating_summary' => \App\Models\RatingSummary::updateMerchantOverall($merchant->id),
                 'charts' => [
                     'status' => [
                         'labels' => ['Published', 'Draft', 'Archived'],

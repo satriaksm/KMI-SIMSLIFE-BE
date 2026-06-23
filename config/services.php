@@ -35,19 +35,18 @@ return [
         ],
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Xendit Payment Gateway
-    |--------------------------------------------------------------------------
-    |
-    | Konfigurasi untuk integrasi Xendit sebagai payment gateway.
-    | Secret key dan callback token diambil dari dashboard Xendit.
-    |
-    */
     'xendit' => [
-        'secret_key' => env('XENDIT_SECRET_KEY'),
-        'callback_token' => env('XENDIT_CALLBACK_TOKEN'),
-        'webhook_url' => env('XENDIT_WEBHOOK_URL'),
+        'secret_key'       => env('XENDIT_SECRET_KEY'),
+        'callback_token'   => env('XENDIT_CALLBACK_TOKEN'),
+        'invoice_duration' => env('XENDIT_INVOICE_DURATION', 7200),
+        'base_url'         => env('XENDIT_BASE_URL', 'https://api.xendit.co'),
+        'frontend_url'     => env('FRONTEND_URL', 'http://localhost:5173'),
+    ],
+
+    'webpush' => [
+        'subject' => env('VAPID_SUBJECT', 'mailto:hello@example.com'),
+        'public_key' => env('VAPID_PUBLIC_KEY'),
+        'private_key' => env('VAPID_PRIVATE_KEY'),
     ],
 
 ];

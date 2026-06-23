@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ContentReport extends Model
 {
@@ -88,11 +89,55 @@ class ContentReport extends Model
         return $query->where('status', 'dismissed');
     }
 
+    // ✅ NEW: Sanggahan/appeals
+    public function appeals(): HasMany
+    {
+        return $this->hasMany(ReportAppeal::class, 'content_report_id');
+    }
+
+    public function latestAppeal()
+    {
+        return $this->hasOne(ReportAppeal::class, 'content_report_id')->latest();
+    }
+
     // ✅ Helper: Check if "Lainnya" reason requires comment
     public function requiresComment(): bool
     {
-        return $this->reason && 
+        return $this->reason &&
                strtolower($this->reason->reason_title) === 'lainnya' &&
                empty($this->report_comment);
+    }
+
+    // ✅ Helper: Get target user of this report
+    public function getTargetUser(): ?User
+    {
+        $reportable = $this->reportable;
+        if (!$reportable) return null;
+
+        if ($reportable instanceof User) return $reportable;
+        if ($reportable instanceof Merchant) return $reportable->user;
+        if ($reportable instanceof Product) return $reportable->merchant?->user;
+        if ($reportable instanceof Jasa) return $reportable->merchant?->user;
+        if (isset($reportable->user_id)) return User::find($reportable->user_id);
+
+        return null;
+    }
+
+    // ✅ Helper: Get target name/title
+    public function getTargetName(): string
+    {
+        $reportable = $this->reportable;
+        if (!$reportable) return 'Konten';
+
+        if ($reportable instanceof User) return $reportable->name;
+        if ($reportable instanceof Merchant) return $reportable->name ?? 'Merchant';
+        if ($reportable instanceof Product) return $reportable->name;
+        if ($reportable instanceof Jasa) return $reportable->name ?? 'Jasa';
+        
+        // For posts or comments
+        if (isset($reportable->content)) return \Illuminate\Support\Str::limit(strip_tags($reportable->content), 30);
+        if (isset($reportable->title)) return $reportable->title;
+
+        return 'Konten';
     }
 }

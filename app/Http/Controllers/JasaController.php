@@ -714,6 +714,23 @@ class JasaController extends Controller
             $data['is_active'] = in_array($status, ['active', 'published']);
         }
 
+        // Block re-publishing jasa that has active admin violation (archive_service)
+        if (isset($data['status']) && in_array($data['status'], ['published', 'active'])) {
+            $hasServiceSanction = \App\Models\ContentReport::whereIn('reportable_type', [
+                    $jasa->getMorphClass(), get_class($jasa)
+                ])
+                ->where('reportable_id', $jasa->id)
+                ->whereIn('action_taken', ['archive_service', 'archive_product'])
+                ->whereDoesntHave('appeals', fn($q) => $q->where('status', 'accepted'))
+                ->exists();
+
+            if ($hasServiceSanction) {
+                return response()->json([
+                    'message' => 'Layanan ini telah diarsipkan oleh Admin karena pelanggaran. Silakan ajukan sanggahan atau hubungi Admin untuk dapat mempublikasikannya kembali.',
+                ], 403);
+            }
+        }
+
         // Hapus field frontend-only sebelum menyimpan ke tabel jasas
         unset($data['booking_type'], $data['order_method']);
 

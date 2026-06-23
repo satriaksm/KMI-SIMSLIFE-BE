@@ -31,11 +31,23 @@ class ApiResponse
     public static function error(
         string $message,
         int $status = 400,
-        mixed $errors = null
+        mixed $errors = null,
+        mixed $data = null,
+        ?string $code = null
     ): JsonResponse {
-        return response()->json([
+        $response = [
             'message' => $message,
             'errors' => $errors,
-        ], $status);
+        ];
+
+        if (!is_null($data)) {
+            $response['data'] = $data;
+        }
+
+        if (!is_null($code)) {
+            $response['code'] = $code;
+        }
+
+        return response()->json($response, $status);
     }
 }

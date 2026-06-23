@@ -435,6 +435,8 @@ class ServiceOrderController extends Controller
                     'jasa_order_item_id' => $evidence->jasa_order_item_id,
                     'file_path' => $evidence->file_path,
                     'file_url' => $evidence->file_url,
+                    'image_url' => $evidence->file_url,
+                    'url' => $evidence->file_url,
                     'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
                     'note' => $evidence->note ?? null,
                     'created_at' => $evidence->created_at?->toIso8601String(),
@@ -675,6 +677,8 @@ class ServiceOrderController extends Controller
                     'jasa_order_item_id' => $evidence->jasa_order_item_id,
                     'file_path' => $evidence->file_path,
                     'file_url' => $evidence->file_url,
+                    'image_url' => $evidence->file_url,
+                    'url' => $evidence->file_url,
                     'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
                     'note' => $evidence->note ?? null,
                     'created_at' => $evidence->created_at?->toIso8601String(),
@@ -1052,6 +1056,15 @@ class ServiceOrderController extends Controller
             'params' => $request->all(),
         ]);
 
+        // Audit Logs (Log target 10)
+        $totalOrdersJasaBeforeFilter = Order::where('order_type', 'jasa')->count();
+        $totalOrdersJasaAfterMerchant = Order::where('order_type', 'jasa')->where('merchant_id', $merchant->id)->count();
+        
+        Log::info('[getMerchantOrders] Audit count before status filter', [
+            'total_jasa_before_filter' => $totalOrdersJasaBeforeFilter,
+            'total_jasa_after_merchant_id_filter' => $totalOrdersJasaAfterMerchant,
+        ]);
+
         // Build query from orders table
         // NOTE: jasa_id ada di jasa_order_items, BUKAN di orders
         // NOTE: Load jasaItems jasa with only needed columns for performance.
@@ -1071,18 +1084,23 @@ class ServiceOrderController extends Controller
             'jasaItems.completionEvidences',
         ])
             ->where('merchant_id', $merchant->id)
+            ->where('order_type', 'jasa')
             ->whereHas('jasaItems')
             ->orderByDesc('created_at');
 
-        // Filter by order_type if provided (jasa, product - primary type)
-        if ($request->has('order_type')) {
-            $query->where('order_type', $request->order_type);
-        }
-
         // Filter by status if provided
-        if ($request->has('status')) {
+        if ($request->has('status') && !empty($request->status) && $request->status !== 'all') {
             $status = $request->get('status');
             $query->where('status', $status);
+
+            $totalOrdersJasaAfterStatus = Order::where('order_type', 'jasa')
+                ->where('merchant_id', $merchant->id)
+                ->where('status', $status)
+                ->count();
+            Log::info('[getMerchantOrders] Audit count after status filter', [
+                'status_value' => $status,
+                'total_jasa_after_status_filter' => $totalOrdersJasaAfterStatus,
+            ]);
         }
 
         // Search by order code or customer name
@@ -1214,6 +1232,8 @@ class ServiceOrderController extends Controller
                         'jasa_order_item_id' => $evidence->jasa_order_item_id,
                         'file_path' => $evidence->file_path,
                         'file_url' => $evidence->file_url,
+                        'image_url' => $evidence->file_url,
+                        'url' => $evidence->file_url,
                         'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
                         'note' => $evidence->note ?? null,
                         'created_at' => $evidence->created_at?->toIso8601String(),
@@ -1274,6 +1294,7 @@ class ServiceOrderController extends Controller
             'merchant_id' => $merchant->id,
             'total_orders' => $orders->total(),
             'current_page' => $orders->currentPage(),
+            'final_json_response' => $response,
         ]);
 
         return ApiResponse::success($response, 'success');
@@ -1447,6 +1468,8 @@ class ServiceOrderController extends Controller
                     'jasa_order_item_id' => $evidence->jasa_order_item_id,
                     'file_path' => $evidence->file_path,
                     'file_url' => $evidence->file_url,
+                    'image_url' => $evidence->file_url,
+                    'url' => $evidence->file_url,
                     'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
                     'note' => $evidence->note ?? null,
                     'created_at' => $evidence->created_at?->toIso8601String(),
@@ -1602,8 +1625,9 @@ class ServiceOrderController extends Controller
                     'new_status' => $newStatus,
                 ]);
             }
-            // Handle SELESAI (completion)
-            elseif ($newStatus === 'selesai') {
+
+            // Handle SELESAI or MENUNGGU_KONFIRMASI_SELESAI (completion or waiting customer confirmation)
+            elseif ($newStatus === 'selesai' || $newStatus === 'menunggu_konfirmasi_selesai') {
                 $files = $request->file('evidences', []);
                 $uploadedEvidences = [];
 
@@ -1621,16 +1645,19 @@ class ServiceOrderController extends Controller
 
                     Storage::disk('public')->put($path, file_get_contents($file));
 
-                    // Store evidence with jasa_order_item_id ONLY (no service_order_id)
+                    // Store evidence with jasa_order_item_id and order_id
                     // file_url generated by accessor from file_path
                     $evidence = ServiceCompletionEvidence::create([
                         'jasa_order_item_id' => $jasaOrderItem?->id,
+                        'order_id' => $order->id,
+                        'service_order_id' => null,
                         'file_name' => $file->getClientOriginalName(),
                         'file_path' => $path,
                         'file_type' => $type,
                         'mime_type' => $file->getMimeType(),
                         'file_size' => $file->getSize(),
                         'display_order' => $index,
+                        'note' => $data['completion_note'] ?? null,
                     ]);
                     $uploadedEvidences[] = $evidence;
 
@@ -1648,11 +1675,16 @@ class ServiceOrderController extends Controller
 
                 // Update orders table
                 $orderTimestampData = ['status' => $newStatus];
-                $orderTimestampData['completed_at'] = now();
-                $orderTimestampData['delivered_at'] = now();
+                if ($newStatus === 'selesai') {
+                    $orderTimestampData['completed_at'] = now();
+                    $orderTimestampData['delivered_at'] = now();
+                } else {
+                    $orderTimestampData['completion_submitted_at'] = now();
+                    $orderTimestampData['completion_deadline_at'] = now()->addDays(3);
+                }
                 $order->update($orderTimestampData);
 
-                Log::info('[ServiceOrder UpdateStatus] Order completed', [
+                Log::info('[ServiceOrder UpdateStatus] Order completion state updated', [
                     'received_id' => $id,
                     'orders_id' => $order->id,
                     'jasa_order_item_id' => $jasaOrderItem?->id,
@@ -1678,18 +1710,20 @@ class ServiceOrderController extends Controller
             $freshJasaItem = $freshOrder?->jasaItems->first();
             $freshEvidences = $freshJasaItem?->completionEvidences ?? collect();
 
-            // Transform evidences for response
             $transformedEvidences = $freshEvidences->map(function ($evidence) {
                 return [
                     'id' => $evidence->id,
                     'jasa_order_item_id' => $evidence->jasa_order_item_id,
                     'file_name' => $evidence->file_name,
                     'file_path' => $evidence->file_path,
-                    'file_url' => $evidence->media_url ?? ($evidence->file_path ? asset('storage/' . $evidence->file_path) : null),
+                    'file_url' => $evidence->file_url,
+                    'image_url' => $evidence->file_url,
+                    'url' => $evidence->file_url,
                     'file_type' => $evidence->file_type,
                     'mime_type' => $evidence->mime_type,
                     'file_size' => $evidence->file_size,
                     'display_order' => $evidence->display_order,
+                    'note' => $evidence->note ?? null,
                     'created_at' => $evidence->created_at?->toIso8601String(),
                 ];
             })->toArray();

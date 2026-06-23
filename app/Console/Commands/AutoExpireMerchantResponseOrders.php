@@ -31,7 +31,7 @@ class AutoExpireMerchantResponseOrders extends Command
         $this->info('Running: AutoExpireMerchantResponseOrders...');
 
         $expiredOrders = Order::where('order_type', 'jasa')
-            ->where('status', 'menunggu_konfirmasi')
+            ->where('status', 'menunggu_konfirmasi_merchant')
             ->whereNotNull('merchant_response_deadline')
             ->whereNull('merchant_responded_at')
             ->where('merchant_response_deadline', '<=', now())

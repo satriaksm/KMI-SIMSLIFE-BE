@@ -76,7 +76,9 @@ return [
     'middleware' => [
         'authenticate_session' => Laravel\Sanctum\Http\Middleware\AuthenticateSession::class,
         'encrypt_cookies' => Illuminate\Cookie\Middleware\EncryptCookies::class,
-        'validate_csrf_token' => Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
+        'add_queued_cookies' => Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
+        'start_session' => Illuminate\Session\Middleware\StartSession::class,
+        'verify_csrf_token' => Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
     ],
 
 ];

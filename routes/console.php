@@ -8,6 +8,12 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
+// Auto-cancel expired product orders — runs every minute
+Schedule::command('orders:auto-cancel-expired')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Auto-cancel expired jasa orders — runs every minute
 Schedule::command('jasa:auto-cancel-expired')
     ->everyMinute()

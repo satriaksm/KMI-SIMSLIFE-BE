@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use App\Models\ProductOrderItem;
 
 class Rating extends Model
 {
@@ -81,7 +82,7 @@ class Rating extends Model
      */
     public function orderItem(): BelongsTo
     {
-        return $this->belongsTo(OrderItem::class);
+        return $this->belongsTo(ProductOrderItem::class);
     }
 
     /**
@@ -243,6 +244,14 @@ class Rating extends Model
         $array['has_merchant_reply'] = $this->hasMerchantReply();
         $array['can_merchant_reply'] = $this->canMerchantReply();
 
+        // Universal date and time formats for created, updated, and replied timestamps
+        $array['created_date'] = $this->created_at ? $this->created_at->format('Y-m-d') : null;
+        $array['created_time'] = $this->created_at ? $this->created_at->format('H:i:s') : null;
+        $array['updated_date'] = $this->review_updated_at ? $this->review_updated_at->format('Y-m-d') : null;
+        $array['updated_time'] = $this->review_updated_at ? $this->review_updated_at->format('H:i:s') : null;
+        $array['replied_date'] = $this->merchant_reply_at ? $this->merchant_reply_at->format('Y-m-d') : null;
+        $array['replied_time'] = $this->merchant_reply_at ? $this->merchant_reply_at->format('H:i:s') : null;
+
         return $array;
     }
 
@@ -275,20 +284,32 @@ class Rating extends Model
 
     /**
      * Check if the review can still be updated.
-     * Returns true if update_count < 1.
+     * Returns true if update_count < 1 and histories count is 0.
      */
     public function canUpdate(): bool
     {
-        return ($this->update_count ?? 0) < 1;
+        if (isset($this->update_count) && (int)$this->update_count >= 1) {
+            return false;
+        }
+
+        try {
+            if ($this->histories()->count() >= 1) {
+                return false;
+            }
+        } catch (\Exception $e) {
+            // Fallback if table/relation doesn't exist
+        }
+
+        return true;
     }
 
     /**
      * Check if the review update has already been used.
-     * Returns true if update_count >= 1.
+     * Returns true if update_count >= 1 or histories count >= 1.
      */
     public function isUpdateExhausted(): bool
     {
-        return ($this->update_count ?? 0) >= 1;
+        return !$this->canUpdate();
     }
 
     /**

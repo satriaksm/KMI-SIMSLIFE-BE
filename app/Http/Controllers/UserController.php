@@ -53,7 +53,7 @@ class UserController
         $rules = [
             'name' => 'sometimes|string|max:255',
             'phone' => 'sometimes|string|max:20',
-            'nik' => 'sometimes|nullable|string|max:20',
+            'nik' => 'sometimes|nullable|string|max:20|unique:users,nik,' . $user->id,
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'profile_picture' => 'sometimes|image|mimes:jpeg,png,jpg,gif,svg|max:5048',
 
@@ -65,7 +65,12 @@ class UserController
             $rules['profile_picture'] = 'sometimes|string';
         }
 
-        $validator = Validator::make($request->all(), $rules);
+        $messages = [
+            'nik.unique' => 'NIK tidak boleh sama dengan pengguna lain.',
+            'email.unique' => 'Email telah digunakan oleh pengguna lain.',
+        ];
+
+        $validator = Validator::make($request->all(), $rules, $messages);
 
 
         if ($validator->fails()) {
@@ -105,8 +110,12 @@ class UserController
             $newNik = isset($validatedData['nik']) ? trim($validatedData['nik']) : $user->nik;
             $user->nik = ($newNik === '' || $newNik === 'null' || $newNik === null) ? null : $newNik;
 
+            $oldEmail = $user->email;
             $user->email = $validatedData['email'] ?? $user->email;
-            // $user->full_address = $validatedData['full_address'] ?? $user->full_address;
+
+            if ($oldEmail !== $user->email) {
+                $user->email_verified_at = null;
+            }
 
             Log::info('Prepared user for save:', [
                 'id' => $user->id,
@@ -114,7 +123,13 @@ class UserController
                 'email' => $user->email
             ]);
 
-            $user->save();
+            DB::transaction(function () use ($user, $oldEmail) {
+                $user->save();
+
+                if ($oldEmail !== $user->email) {
+                    $user->sendEmailVerificationNotification();
+                }
+            });
 
             $freshUser = $user->fresh()->load([
                 'primaryAddress.province',
@@ -192,8 +207,8 @@ class UserController
             'district_id' => ['required', 'integer', 'exists:districts,id'],
             'village_id' => ['required', 'integer', 'exists:villages,id'],
             'detail' => ['nullable', 'string'],
-            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
-            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
+            'latitude' => ['required', 'numeric', 'between:-90,90'],
+            'longitude' => ['required', 'numeric', 'between:-180,180'],
         ]);
 
         $address = $user->addresses()->updateOrCreate(
@@ -252,6 +267,13 @@ class UserController
             DB::transaction(function () use ($deleter, $user) {
                 $deleter->deleteUser($user);
             });
+
+            // Logging: cek apakah user masih ada di DB setelah transaksi
+            $userExists = User::find($user->id);
+            Log::info('[UserController@destroy] User exists after delete?', [
+                'id' => $user->id,
+                'exists' => $userExists
+            ]);
 
             // Best-effort logout (token already revoked in deleter)
             try {

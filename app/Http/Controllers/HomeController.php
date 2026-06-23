@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Merchant;
 use App\Models\Product;
 use App\Models\Category;
+use App\Models\Jasa;
 use App\Models\PaymentFee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -136,9 +137,12 @@ class HomeController extends Controller
     public function statistics()
     {
         try {
+            $totalProducts = Product::where('status', 'published')->count();
+            $totalJasas = Jasa::where('is_active', true)->count();
+
             $stats = [
                 'total_merchants' => Merchant::where('status', 'approved')->count(),
-                'total_products' => Product::where('status', 'published')->count(),
+                'total_products' => $totalProducts + $totalJasas,
                 'total_categories' => Category::whereNull('parent_id')->count(),
             ];
 
@@ -164,7 +168,8 @@ class HomeController extends Controller
     public function paymentFees()
     {
         try {
-            $fees = PaymentFee::active()
+            $fees = PaymentFee::where('is_active', true)
+                ->where('method_code', '!=', 'PAYOUT')
                 ->orderBy('method_code')
                 ->get()
                 ->map(function ($fee) {
@@ -172,7 +177,7 @@ class HomeController extends Controller
                         'method_code' => $fee->method_code,
                         'method_name' => $fee->method_name,
                         'type' => $fee->type, // 'fixed' or 'percentage'
-                        'value' => $fee->value,
+                        'value' => (float) $fee->value,
                         'description' => $fee->description,
                     ];
                 });
@@ -184,6 +189,7 @@ class HomeController extends Controller
             Log::error('[HomeController] Failed to get payment fees', [
                 'error' => $e->getMessage(),
                 'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([

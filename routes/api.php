@@ -1,49 +1,65 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\CartController;
-use App\Http\Controllers\JasaController;
-use App\Http\Controllers\JasaCategoryController;
-use App\Http\Controllers\OrderController;
-use App\Http\Controllers\CheckoutController;
-use App\Http\Controllers\PackageController;
-use App\Http\Controllers\EventController;
-use App\Http\Controllers\ImageController;
-use App\Http\Controllers\SearchController;
-use App\Http\Controllers\VoucherController;
-use App\Http\Controllers\CategoryController;
-use App\Http\Controllers\LocationController;
-use App\Http\Controllers\MerchantController;
-use App\Http\Controllers\Auth\AuthController;
-use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\HomeController;
-use App\Http\Controllers\PaguyubanController;
-use App\Http\Controllers\SegmentationController;
-use App\Http\Controllers\CommunityPostController;
-use App\Http\Controllers\Admin\AdminUserController;
-use App\Http\Controllers\Product\ProductController;
-use App\Http\Controllers\Auth\PasswordResetController;
-use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEventController;
-use App\Http\Controllers\Admin\AdminMerchantController;
-use App\Http\Controllers\Admin\ContentReportController;
-use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\Admin\AdminManagementController;
+use App\Http\Controllers\Admin\AdminMerchantController;
+use App\Http\Controllers\Admin\AdminSettingsController;
+use App\Http\Controllers\Admin\AdminUserController;
+use App\Http\Controllers\Admin\ReportAppealController as AdminReportAppealController;
 use App\Http\Controllers\Admin\AdminVoucherController;
-use App\Http\Controllers\Product\ProductOptionValueImageController;
-use App\Http\Controllers\ChatController;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\ReportController;
-use App\Http\Controllers\RatingController;
+use App\Http\Controllers\Admin\ContentReportController;
+use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Auth\EmailVerificationController;
+use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\BankController;
+use App\Http\Controllers\CartController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\CheckoutController;
+use App\Http\Controllers\CommunityPostController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\EventController;
+use App\Http\Controllers\HomeController;
+use App\Http\Controllers\ImageController;
+use App\Http\Controllers\JasaController;
+use App\Http\Controllers\LocationController;
+use App\Http\Controllers\MerchantController;
+use App\Http\Controllers\MerchantReportController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PaguyubanController;
+use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\PayoutController;
 use App\Http\Controllers\PostCommentController;
+use App\Http\Controllers\Product\ProductController;
+use App\Http\Controllers\Product\ProductOptionValueImageController;
 use App\Http\Controllers\Public\PublicProfileController;
+use App\Http\Controllers\PushSubscriptionController;
+use App\Http\Controllers\RatingController;
+use App\Http\Controllers\ReportAppealController;
+use App\Http\Controllers\ReportController;
+use App\Http\Controllers\SearchController;
+use App\Http\Controllers\SegmentationController;
+use App\Http\Controllers\ShippingController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\VoucherController;
+use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\ServiceOrderController;
 use App\Http\Controllers\ServiceConsultationController;
-use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\JasaOrderController;
-use App\Http\Controllers\MerchantReportController;
 use App\Models\Conversation;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Route;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
+
+
+
+
+
+
+
+
 
 // ============================================================
 // HEALTH CHECK
@@ -138,7 +154,6 @@ Route::prefix('public')->name('public.')->group(function () {
     });
 
     //  events endpoint (published only, for homepage banner)
-    //  events endpoint (published only, for homepage banner)
     Route::get('events', [EventController::class, 'publicIndex'])->name('events.index');
     Route::get('events/{id}', [EventController::class, 'publicShow'])->name('events.show');
 
@@ -160,6 +175,9 @@ Route::prefix('public')->name('public.')->group(function () {
 });
 
 // ============================================================
+// XENDIT WEBHOOK (NO AUTH)
+// ============================================================
+Route::post('/xendit/webhook', [WebhookController::class, 'callback'])->name('webhook.xendit');
 // ASSETS & MEDIA (Public Streaming)
 // ============================================================
 Route::get('community-images/{image}', [CommunityPostController::class, 'showImage'])->name('community-images.show');
@@ -189,15 +207,18 @@ Route::get('images/{image}', [ImageController::class, 'show'])
 // Cart item snapshot images (served via API - avoids direct /storage access)
 Route::get('cart-snapshots/{cartItem}', [ImageController::class, 'cartSnapshot'])
     ->name('cart-snapshots.show');
+Route::get('order-snapshots/{orderItem}', [ImageController::class, 'orderSnapshot'])
+    ->name('order-snapshots.show');
+Route::get('order-proofs/{order}', [ImageController::class, 'orderProof'])
+    ->name('order-proofs.show');
 Route::get('images/product-option-value/{optionValue}', [ProductOptionValueImageController::class, 'show'])
     ->name('images.product-option-value.show');
 
+Route::get('push/public-key', [PushSubscriptionController::class, 'publicKey'])
+    ->name('push.public-key');
+
 Route::get('profile-pictures/{user}', [UserController::class, 'profilePictureShow'])
     ->name('profile-pictures.show');
-
-// Backward/alternate naming (underscore) for clients that expect it
-Route::get('profile_pictures/{user}', [UserController::class, 'profilePictureShow'])
-    ->name('profile_pictures.show');
 
 Route::get('merchant-profile-pictures/{merchant}', [MerchantController::class, 'merchantProfilePictureShow'])
     ->name('merchant_profile_pictures.show');
@@ -213,10 +234,6 @@ Route::prefix('auth')->group(function () {
         ->middleware('throttle:5,1')
         ->name('register');
 
-    Route::post('login', [AuthController::class, 'login'])
-        ->middleware('throttle:5,1')
-        ->name('login');
-
     Route::post('forgot-password', [PasswordResetController::class, 'sendResetLink'])
         ->middleware('throttle:5,1')
         ->name('forgot-password');
@@ -224,6 +241,10 @@ Route::prefix('auth')->group(function () {
     Route::post('reset-password', [PasswordResetController::class, 'reset'])
         ->middleware('throttle:5,1')
         ->name('reset-password');
+
+    Route::post('resend-verification', [EmailVerificationController::class, 'resendPublic'])
+        ->middleware('throttle:5,1')
+        ->name('verification.resend.public');
 
     // Email verification
     Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
@@ -253,6 +274,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('/me', [AuthController::class, 'me'])->name('me');
 
+    Route::get('/banks', [BankController::class, 'index']);
+
     Route::prefix('profile')->controller(UserController::class)->group(function () {
         Route::get('/', 'show')->name('profile.show');
         Route::post('/update', 'update')->name('profile.update');
@@ -260,6 +283,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/address', 'addressShow')->name('profile.address.show');
         Route::post('/address', 'addressUpsert')->name('profile.address.upsert');
         Route::delete('/', 'destroy')->name('profile.destroy');
+    });
+
+    Route::prefix('push-subscriptions')->controller(PushSubscriptionController::class)->group(function () {
+        Route::get('/status', 'status')->name('push-subscriptions.status');
+        Route::post('/', 'store')->name('push-subscriptions.store');
+        Route::delete('/', 'destroy')->name('push-subscriptions.destroy');
     });
 
 
@@ -295,6 +324,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/my', [ReportController::class, 'myReports'])->name('my');
         Route::get('/{id}', [ReportController::class, 'show'])->whereNumber('id')->name('show');
         Route::post('/', [ReportController::class, 'store'])->name('store');
+        // ✅ Appeal routes (user/terlapor)
+        Route::post('/{reportId}/appeal', [ReportAppealController::class, 'store'])->name('appeal.store');
+        Route::get('/{reportId}/appeals', [ReportAppealController::class, 'index'])->name('appeal.index');
+    });
+
+    // ===== RATINGS (USER) =====
+    Route::prefix('ratings')->name('ratings.')->group(function () {
+        Route::post('/', [RatingController::class, 'store'])->name('store');
+        Route::get('/{id}', [RatingController::class, 'show'])->whereNumber('id')->name('show');
+        Route::put('/{id}', [RatingController::class, 'update'])->whereNumber('id')->name('update');
+        Route::delete('/{id}', [RatingController::class, 'destroy'])->whereNumber('id')->name('destroy');
     });
 
     // PROTECTED Community Actions (require auth)
@@ -341,34 +381,39 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
+        Route::prefix('orders')->group(function () {
+            Route::post('products/checkout', [OrderController::class, 'checkoutProductFromCart']);
+            Route::get('/', [OrderController::class, 'customerIndex']);
+            Route::get('/{order}', [OrderController::class, 'customerShow']);
+            Route::post('/{order}/cancel', [OrderController::class, 'cancel']);
+            Route::post('/{order}/complete', [OrderController::class, 'complete']);
+        });
+
+        Route::prefix('shipping')->group(function () {
+            Route::get('/settings', [ShippingController::class, 'settings']);
+            Route::post('/calculate', [ShippingController::class, 'calculate']);
+        });
+
         // ===== PAYMENT ENDPOINTS (ALL ORDERS) =====
-        // Xendit invoice creation for all orders (produk/kuliner AND jasa)
-        // Called by frontend after order is created with PENDING/UNPAID status
-        // PaymentController handles both product and jasa orders via Order + JasaOrderItem
         Route::prefix('payments')->name('payments.')->group(function () {
-            // Create Xendit invoice for Order
             Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice'])
                 ->name('create-invoice')
                 ->where('orderId', '[0-9]+');
 
-            // Verify payment status (fallback when webhook not received)
-            Route::get('/{orderId}/verify', [PaymentController::class, 'verifyPayment'])
+            Route::match(['get', 'post'], '/{orderId}/verify', [PaymentController::class, 'verifyPayment'])
                 ->name('verify')
                 ->where('orderId', '[0-9]+');
 
-            // Cancel payment and reset to PENDING
             Route::post('/{orderId}/cancel', [PaymentController::class, 'cancelPayment'])
                 ->name('cancel')
                 ->where('orderId', '[0-9]+');
 
-            // Get current payment status
             Route::get('/{orderId}/status', [PaymentController::class, 'getPaymentStatus'])
                 ->name('status')
                 ->where('orderId', '[0-9]+');
         });
 
-        // ===== JASA ORDERS (CUSTOMER) - Menggunakan Order + JasaOrderItem =====
-        // Endpoint baru untuk flow order jasa tanpa ServiceOrder
+        // ===== JASA ORDERS (CUSTOMER) =====
         Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
             Route::post('/', [JasaOrderController::class, 'create'])->name('create');
             Route::get('/', [JasaOrderController::class, 'customerHistory'])->name('customer-history');
@@ -376,7 +421,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{orderId}/confirm', [JasaOrderController::class, 'confirmCompleted'])->name('confirm');
             Route::post('/{orderId}/cancel', [JasaOrderController::class, 'cancelOrder'])->name('cancel');
             Route::post('/{orderId}/review', [JasaOrderController::class, 'submitReview'])->name('review');
-	            Route::put('/{orderId}/review', [JasaOrderController::class, 'updateReview'])->name('review.update');
+            Route::put('/{orderId}/review', [JasaOrderController::class, 'updateReview'])->name('review.update');
+        });
+
+        // ===== SERVICE ORDERS (CUSTOMER - LEGACY) =====
+        Route::prefix('service-orders')->name('service-orders.')->group(function () {
+            Route::post('/', [ServiceOrderController::class, 'create'])->name('create');
+            Route::get('/', [ServiceOrderController::class, 'getCustomerHistory'])->name('customer-history');
+            Route::get('/{id}', [ServiceOrderController::class, 'getCustomerOrderDetail'])->name('show');
+            Route::post('/{id}/confirm', [ServiceOrderController::class, 'confirmCompleted'])->name('confirm');
+            Route::post('/{id}/review', [ServiceOrderController::class, 'submitReview'])->name('review');
         });
 
         // Service Consultations (Customer)
@@ -529,6 +583,19 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
             });
 
+            Route::prefix('orders')->group(function () {
+                Route::get('', [OrderController::class, 'merchantIndex']);
+                Route::get('/{order}', [OrderController::class, 'merchantShow']);
+                Route::post('/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
+            });
+
+            Route::prefix('reports')->group(function () {
+                Route::get('transactions', [App\Http\Controllers\MerchantReportController::class, 'index']);
+                Route::get('transactions/export/pdf', [App\Http\Controllers\MerchantReportController::class, 'exportPdf']);
+                Route::get('transactions/export/excel', [App\Http\Controllers\MerchantReportController::class, 'exportExcel']);
+            });
+
+            Route::post('payouts', [PayoutController::class, 'requestPayout'])->name('merchant.payouts');
         });
     });
 
@@ -589,6 +656,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::patch('/{merchant}/approve', [AdminMerchantController::class, 'approve'])->name('approve');
             Route::patch('/{merchant}/reject', [AdminMerchantController::class, 'reject'])->name('reject');
             Route::patch('/{id}/toggle-status', [AdminMerchantController::class, 'toggleStatus'])->name('toggle-status');
+            Route::patch('/{id}/status', [AdminMerchantController::class, 'changeStatus'])->name('change-status');
             Route::get('/{id}/statistics', [AdminMerchantController::class, 'statistics'])->name('statistics');
         });
 
@@ -646,15 +714,23 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
         });
 
-        // ===== CONTENT REPORTS (MOVED FROM OUTSIDE) =====
+        // ===== CONTENT REPORTS =====
         Route::prefix('reports')->name('reports.')->group(function () {
             Route::get('/', [ContentReportController::class, 'index'])->name('index');
+            Route::get('/statistics', [ContentReportController::class, 'statistics'])->name('statistics');
             Route::get('/export-pdf', [ContentReportController::class, 'exportPdf'])->name('export-pdf');
             Route::get('/{id}', [ContentReportController::class, 'show'])->name('show');
             Route::get('/{id}/export-pdf', [ContentReportController::class, 'exportReportDetailPdf'])->name('exportReportDetailPdf');
             Route::put('/{id}', [ContentReportController::class, 'update'])->name('update');
             Route::patch('/{id}/review', [ContentReportController::class, 'review'])->name('review');
             Route::delete('/{id}', [ContentReportController::class, 'destroy'])->name('destroy');
+
+            // ✅ NEW: Unified moderation action
+            Route::post('/{id}/take-action', [ContentReportController::class, 'takeAction'])->name('take-action');
+
+            // ✅ NEW: Appeals management (admin view)
+            Route::get('/{reportId}/appeals', [AdminReportAppealController::class, 'index'])->name('appeals.index');
+            Route::patch('/{reportId}/appeals/{appealId}/review', [AdminReportAppealController::class, 'review'])->name('appeals.review');
         });
 
         // Report Reasons
@@ -672,6 +748,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::prefix('products')->name('products.')->group(function () {
             Route::get('/', [ProductController::class, 'adminIndex'])->name('index');
             Route::delete('/{id}', [ProductController::class, 'adminDestroy'])->name('destroy');
+        });
+
+        // ===== PLATFORM SETTINGS =====
+        Route::prefix('settings')->name('settings.')->group(function () {
+            Route::get('/shipping', [AdminSettingsController::class, 'shippingIndex'])->name('shipping.index');
+            Route::put('/shipping', [AdminSettingsController::class, 'shippingUpdate'])->name('shipping.update');
+            Route::get('/payment-fees', [AdminSettingsController::class, 'paymentFeesIndex'])->name('payment-fees.index');
+            Route::put('/payment-fees/{id}', [AdminSettingsController::class, 'paymentFeeUpdate'])->name('payment-fees.update');
         });
     });
 });

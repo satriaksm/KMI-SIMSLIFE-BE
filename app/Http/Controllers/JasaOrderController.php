@@ -316,12 +316,31 @@ class JasaOrderController extends Controller
             ->orderByDesc('created_at')
             ->paginate($perPage);
 
-        $data = $orders->map(function ($order) {
+        $data = $orders->map(function ($order) use ($customerId) {
             // Auto-expire if deadline passed (source of truth: orders table)
             $this->autoExpireOrder($order);
 
             $jasaItem = $order->jasaItems->first();
             $payment = $order->payment;
+
+            $review = null;
+            if ($jasaItem) {
+                // Primary check: order_id + jasa_order_item_id + user_id
+                $review = Rating::where('order_id', $order->id)
+                    ->where('jasa_order_item_id', $jasaItem->id)
+                    ->where('user_id', $customerId)
+                    ->first();
+
+                // Fallback check: jasa_order_item_id + user_id
+                if (!$review) {
+                    $review = Rating::where('jasa_order_item_id', $jasaItem->id)
+                        ->where('user_id', $customerId)
+                        ->first();
+                }
+            }
+            $isReviewed = $review !== null;
+            $canReview = in_array($order->status, ['completed', 'selesai']) && !$isReviewed;
+            $canUpdateReview = $isReviewed && ($review->update_count ?? 0) < 1;
 
             // Use snapshot data (prioritize snapshot over live data)
             $merchantName = $order->merchant_name_snapshot ?? $order->merchant?->name ?? 'Merchant';
@@ -441,12 +460,20 @@ class JasaOrderController extends Controller
                         'jasa_order_item_id' => $ev->jasa_order_item_id,
                         'file_path' => $ev->file_path,
                         'file_url' => $ev->file_url,
+                        'image_url' => $ev->file_url,
+                        'url' => $ev->file_url,
                         'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
                         'note' => $ev->note ?? null,
                         'created_at' => $ev->created_at?->toISOString(),
                     ];
                 })?->toArray() ?? [],
                 'completion_note' => $jasaItem?->completion_note ?? null,
+                'review' => $review ? $review->toArray() : null,
+                'is_reviewed' => $isReviewed,
+                'can_review' => $canReview,
+                'can_update_review' => $canUpdateReview,
+                'review_updated_count' => $review ? ($review->update_count ?? 0) : 0,
+                'is_review_updated' => $review && ($review->update_count ?? 0) >= 1,
                 'created_at' => $order->created_at->toISOString(),
             ];
         });
@@ -502,6 +529,25 @@ class JasaOrderController extends Controller
         $this->autoExpireOrder($order);
 
         $jasaItem = $order->jasaItems->first();
+
+        $review = null;
+        if ($jasaItem) {
+            // Primary check: order_id + jasa_order_item_id + user_id
+            $review = Rating::with(['media'])->where('order_id', $order->id)
+                ->where('jasa_order_item_id', $jasaItem->id)
+                ->where('user_id', $customerId)
+                ->first();
+
+            // Fallback check: jasa_order_item_id + user_id
+            if (!$review) {
+                $review = Rating::with(['media'])->where('jasa_order_item_id', $jasaItem->id)
+                    ->where('user_id', $customerId)
+                    ->first();
+            }
+        }
+        $isReviewed = $review !== null;
+        $canReview = in_array($order->status, ['completed', 'selesai']) && !$isReviewed;
+        $canUpdateReview = $isReviewed && ($review->update_count ?? 0) < 1;
 
         // Use snapshot data (prioritize snapshot over live data)
         $merchantName = $order->merchant_name_snapshot ?? $order->merchant?->name ?? 'Merchant';
@@ -566,21 +612,21 @@ class JasaOrderController extends Controller
         $totalPrice = $totalPayment;
 
         // Transform completion evidences from jasa_order_items relation
-        $completionEvidences = collect();
-        if ($jasaItem) {
-            $jasaItem->load('completionEvidences');
-            $completionEvidences = $jasaItem->completionEvidences->map(function ($ev) {
-                return [
-                    'id' => $ev->id,
-                    'jasa_order_item_id' => $ev->jasa_order_item_id,
-                    'file_path' => $ev->file_path,
-                    'file_url' => $ev->file_url,
-                    'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
-                    'note' => $ev->note ?? null,
-                    'created_at' => $ev->created_at?->toISOString(),
-                ];
-            });
-        }
+        $completionEvidences = $order->jasaItems->flatMap(function ($item) {
+            return $item->completionEvidences;
+        })->map(function ($ev) {
+            return [
+                'id' => $ev->id,
+                'jasa_order_item_id' => $ev->jasa_order_item_id,
+                'file_path' => $ev->file_path,
+                'file_url' => $ev->file_url,
+                'image_url' => $ev->file_url,
+                'url' => $ev->file_url,
+                'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
+                'note' => $ev->note ?? null,
+                'created_at' => $ev->created_at?->toISOString(),
+            ];
+        });
 
         return ApiResponse::success([
             'id' => $order->id,
@@ -665,6 +711,14 @@ class JasaOrderController extends Controller
                 'payment_method' => $paymentMethod,
                 'payment_channel' => $paymentChannel,
             ] : null,
+            'completion_evidences' => $completionEvidences->toArray(),
+            'completion_note' => $jasaItem?->completion_note ?? null,
+            'review' => $review ? $review->toArray() : null,
+            'is_reviewed' => $isReviewed,
+            'can_review' => $canReview,
+            'can_update_review' => $canUpdateReview,
+            'review_updated_count' => $review ? ($review->update_count ?? 0) : 0,
+            'is_review_updated' => $review && ($review->update_count ?? 0) >= 1,
             'created_at' => $order->created_at->toISOString(),
         ], 'Order detail fetched');
     }
@@ -961,7 +1015,10 @@ class JasaOrderController extends Controller
 
         // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
         // Use snapshot accessors instead: $jasaItem->jasa_title
-        $query = Order::with(['jasaItems:id,order_id,jasa_id,jasa_title_snapshot'])
+        $query = Order::with([
+            'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,completion_note',
+            'jasaItems.completionEvidences'
+        ])
             ->where('merchant_id', $merchant->id)
             ->where('order_type', 'jasa');
 
@@ -1014,8 +1071,21 @@ class JasaOrderController extends Controller
                 'completed_at' => $order->completed_at?->toISOString(),
                 'completed_by' => $order->completed_by,
                 'auto_completed_at' => $order->auto_completed_at?->toISOString(),
-                'expired_at' => $order->expired_at?->toISOString(),
-                'has_evidence' => false, // completionEvidences not loaded
+                'completion_evidences' => ($jasaItem?->completionEvidences ?? collect())->map(function ($ev) {
+                    return [
+                        'id' => $ev->id,
+                        'jasa_order_item_id' => $ev->jasa_order_item_id,
+                        'file_path' => $ev->file_path,
+                        'file_url' => $ev->file_url,
+                        'image_url' => $ev->file_url,
+                        'url' => $ev->file_url,
+                        'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
+                        'note' => $ev->note ?? null,
+                        'created_at' => $ev->created_at?->toISOString(),
+                    ];
+                })->toArray(),
+                'completion_note' => $jasaItem?->completion_note ?? null,
+                'has_evidence' => $jasaItem?->completionEvidences?->isNotEmpty() ?? false,
                 'created_at' => $order->created_at?->toISOString(),
             ];
         });
@@ -1104,13 +1174,18 @@ class JasaOrderController extends Controller
                 ]);
             }
 
-            // Handle completion evidence uploads when marking as menunggu_konfirmasi_selesai
-            if ($newStatus === 'menunggu_konfirmasi_selesai' && $jasaItem) {
+            // Handle completion evidence uploads when marking as menunggu_konfirmasi_selesai or selesai
+            if (($newStatus === 'menunggu_konfirmasi_selesai' || $newStatus === 'selesai') && $jasaItem) {
                 // SLA: customer harus konfirmasi dalam durasi yang dikonfigurasi
-                $order->update([
-                    'completion_submitted_at' => now(),
-                    'completion_deadline_at' => now()->addHours((int) config('sla.customer_confirm_hours', 24)),
-                ]);
+                $orderUpdateData = [];
+                if ($newStatus === 'menunggu_konfirmasi_selesai') {
+                    $orderUpdateData['completion_submitted_at'] = now();
+                    $orderUpdateData['completion_deadline_at'] = now()->addHours((int) config('sla.customer_confirm_hours', 24));
+                }
+                if (count($orderUpdateData) > 0) {
+                    $order->update($orderUpdateData);
+                }
+
                 $files = $request->file('evidences', []);
                 foreach ($files as $index => $file) {
                     $error = \App\Models\ServiceCompletionEvidence::validateFile($file);
@@ -1128,6 +1203,8 @@ class JasaOrderController extends Controller
 
                     \App\Models\ServiceCompletionEvidence::create([
                         'jasa_order_item_id' => $jasaItem->id,
+                        'order_id' => $order->id,
+                        'service_order_id' => null,
                         'file_name' => $file->getClientOriginalName(),
                         'file_path' => $path,
                         // file_url generated by accessor from file_path
@@ -1145,7 +1222,11 @@ class JasaOrderController extends Controller
             }
         });
 
-        event(new OrderStatusUpdated($order->fresh(), $newStatus));
+        $freshOrder = $order->fresh(['jasaItems.completionEvidences']);
+        $freshJasaItem = $freshOrder?->jasaItems->first();
+        $freshEvidences = $freshJasaItem?->completionEvidences ?? collect();
+
+        event(new OrderStatusUpdated($freshOrder, $newStatus));
 
         Log::info('[JasaOrderController] Status updated', [
             'order_id' => $order->id,
@@ -1153,9 +1234,24 @@ class JasaOrderController extends Controller
         ]);
 
         return ApiResponse::success([
-            'id' => $order->id,
-            'order_id' => $order->id,
-            'status' => $newStatus,
+            'id' => $freshOrder->id,
+            'order_id' => $freshOrder->id,
+            'jasa_order_item_id' => $freshJasaItem?->id,
+            'status' => $freshOrder->status,
+            'completion_note' => $freshJasaItem?->completion_note,
+            'completion_evidences' => $freshEvidences->map(function ($ev) {
+                return [
+                    'id' => $ev->id,
+                    'jasa_order_item_id' => $ev->jasa_order_item_id,
+                    'file_path' => $ev->file_path,
+                    'file_url' => $ev->file_url,
+                    'image_url' => $ev->file_url,
+                    'url' => $ev->file_url,
+                    'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
+                    'note' => $ev->note ?? null,
+                    'created_at' => $ev->created_at?->toISOString(),
+                ];
+            })->toArray(),
         ], 'Status pesanan berhasil diupdate');
     }
 
@@ -1168,179 +1264,48 @@ class JasaOrderController extends Controller
      */
     public function submitReview(Request $request, int $orderId)
     {
-        // Validate request fields
-        $data = $request->validate([
-            'rating' => 'required|integer|min:1|max:5',
-            'title' => 'nullable|string|max:80',
-            'comment' => 'required|string|min:10|max:500',
-            'is_anonymous' => 'nullable',
-            'media' => 'nullable',
-            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,avi,mov,mkv|max:10240',
-        ]);
-
-        $customerId = Auth::id();
-
-        // Find order — customer must own it
-        $order = Order::with(['merchant', 'jasaItems.jasa'])
-            ->where('id', $orderId)
-            ->where('user_id', $customerId)
-            ->where('order_type', 'jasa')
-            ->first();
-
+        // Get order and its first jasa item
+        $order = Order::with('jasaItems')->find($orderId);
         if (!$order) {
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
-
-        // Get jasa_order_item
         $jasaItem = $order->jasaItems->first();
-
         if (!$jasaItem) {
             return ApiResponse::error('Detail pesanan tidak ditemukan', 404);
         }
 
-        $jasaId = $jasaItem->jasa_id;
-        $merchantId = $order->merchant_id;
-        $jasa = $jasaItem->jasa;
+        // Merge rateable fields to request so RatingController can process it
+        $request->merge([
+            'order_id' => $orderId,
+            'rateable_id' => $jasaItem->jasa_id,
+            'rateable_type' => 'App\\Models\\Jasa',
+            'merchant_id' => $order->merchant_id,
+        ]);
 
-        // VALIDATION: Order must be 'selesai'
-        if ($order->status !== 'selesai') {
-            return ApiResponse::error(
-                'Pesanan harus selesai terlebih dahulu sebelum memberikan review',
-                400
-            );
+        // Resolve and call RatingController@store
+        $storeResponse = app(\App\Http\Controllers\RatingController::class)->store($request);
+
+        // If RatingController returns an error response, return it directly
+        if ($storeResponse->getStatusCode() >= 400) {
+            return $storeResponse;
         }
 
-        // VALIDATION: Not already reviewed
-        $existingReview = Rating::where('jasa_order_item_id', $jasaItem->id)
-            ->where('user_id', $customerId)
-            ->first();
+        // Otherwise, RatingController was successful and created the rating.
+        // Let's get the created rating object from the storeResponse
+        $storeData = json_decode($storeResponse->getContent(), true);
+        $reviewData = $storeData['data'] ?? [];
 
-        if ($existingReview) {
-            return ApiResponse::error('Anda sudah memberikan review untuk pesanan ini', 409);
-        }
+        // Build the FE-compatible response expected by the Jasa order review view
+        $responseData = [
+            'id' => $order->id, // PRIMARY ID
+            'order_id' => $order->id,
+            'jasa_order_item_id' => $jasaItem->id,
+            'rating' => $reviewData['rating'] ?? $request->input('rating'),
+            'review' => $reviewData,
+            'media' => $reviewData['media'] ?? [],
+        ];
 
-        try {
-            DB::beginTransaction();
-
-            // Handle is_anonymous from FormData (string '0'/'1' or boolean)
-            $isAnonymous = false;
-            if (isset($data['is_anonymous'])) {
-                $val = $data['is_anonymous'];
-                if (is_bool($val)) {
-                    $isAnonymous = $val;
-                } elseif (is_string($val)) {
-                    $isAnonymous = in_array(strtolower($val), ['1', 'true', 'yes']);
-                } else {
-                    $isAnonymous = (bool) $val;
-                }
-            }
-
-            // Create rating for the jasa
-            $ratingData = [
-                'user_id' => $customerId,
-                'merchant_id' => $merchantId,
-                'jasa_order_item_id' => $jasaItem->id,
-                'rateable_id' => $jasaId,
-                'rateable_type' => Jasa::class,
-                'rating' => (int) $data['rating'],
-                'title' => $data['title'] ?? null,
-                'comment' => $data['comment'] ?? null,
-                'is_anonymous' => $isAnonymous,
-            ];
-
-            Log::info('[JasaOrderController] submitReview - Creating rating:', $ratingData);
-
-            $review = Rating::create($ratingData);
-
-            Log::info('[JasaOrderController] submitReview - Rating created:', ['id' => $review->id]);
-
-            // Handle media uploads
-            if ($request->hasFile('media')) {
-                $mediaFiles = $request->file('media');
-
-                if (!is_array($mediaFiles) && $mediaFiles instanceof \Illuminate\Http\UploadedFile) {
-                    $mediaFiles = [$mediaFiles];
-                }
-
-                Log::info('[JasaOrderController] submitReview - Processing media files:', [
-                    'count' => count($mediaFiles),
-                ]);
-
-                $basePath = 'reviews';
-                if (!Storage::disk('public')->exists($basePath)) {
-                    Storage::disk('public')->makeDirectory($basePath);
-                }
-
-                foreach ($mediaFiles as $index => $file) {
-                    try {
-                        $extension = $file->getClientOriginalExtension();
-                        $mimeType = $file->getMimeType();
-                        $isImage = str_starts_with($mimeType, 'image/');
-                        $type = $isImage ? 'images' : 'videos';
-                        $dateFolder = now()->format('Y/m/d');
-                        $newFileName = uniqid() . '_' . time() . '_' . $index . '.' . $extension;
-
-                        $file->storeAs("{$basePath}/{$type}/{$dateFolder}", $newFileName, ['disk' => 'public']);
-
-                        $storedPath = "{$basePath}/{$type}/{$dateFolder}/{$newFileName}";
-
-                        ReviewMedia::create([
-                            'review_id' => $review->id,
-                            'file_path' => $storedPath,
-                            'file_url' => Storage::url($storedPath),
-                            'file_type' => $isImage ? 'image' : 'video',
-                            'mime_type' => $mimeType,
-                            'original_name' => $file->getClientOriginalName(),
-                            'file_size' => $file->getSize(),
-                            'display_order' => $index,
-                        ]);
-
-                        Log::info('[JasaOrderController] submitReview - Media saved:', [
-                            'index' => $index,
-                            'path' => $storedPath,
-                        ]);
-                    } catch (\Exception $mediaException) {
-                        Log::error('[JasaOrderController] submitReview - Media save failed:', [
-                            'index' => $index,
-                            'error' => $mediaException->getMessage(),
-                        ]);
-                    }
-                }
-            }
-
-            // Mark jasa_order_item as reviewed
-            $jasaItem->update([
-                'is_reviewed' => true,
-                'review_id' => $review->id,
-            ]);
-
-            DB::commit();
-
-            // Load relationships for response
-            $review->load(['user', 'media']);
-
-            Log::info('[JasaOrderController] submitReview - Success:', ['review_id' => $review->id]);
-
-            // Build FE-compatible response
-            $responseData = [
-                'id' => $order->id, // PRIMARY ID
-                'order_id' => $order->id,
-                'jasa_order_item_id' => $jasaItem->id,
-                'rating' => $review->rating,
-                'review' => $review,
-                'media' => $review->media ?? [],
-            ];
-
-            return ApiResponse::success($responseData, 'Review berhasil dikirim. Terima kasih atas ulasan Anda!');
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('[JasaOrderController] submitReview - Error:', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            return ApiResponse::error('Gagal mengirim review: ' . $e->getMessage(), 500);
-        }
+        return ApiResponse::success($responseData, 'Review berhasil dikirim. Terima kasih atas ulasan Anda!');
     }
 
     /**

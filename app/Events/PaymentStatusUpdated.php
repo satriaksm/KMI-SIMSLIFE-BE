@@ -17,52 +17,36 @@ class PaymentStatusUpdated implements ShouldBroadcastNow
     {
     }
 
-    /**
-     * Get the channels the event should broadcast on.
-     *
-     * @return array<int, \Illuminate\Broadcasting\Channel>
-     */
     public function broadcastOn(): array
     {
         $order = $this->payment->order;
         $channels = [];
 
         if ($order) {
-            // Channel untuk order spesifik
             $channels[] = new PrivateChannel('orders.' . $order->id);
 
-            // Channel untuk user (customer)
             if ($order->user_id) {
                 $channels[] = new PrivateChannel('users.' . $order->user_id . '.orders');
             }
 
-            // Channel untuk merchant
             if ($order->merchant_id) {
                 $channels[] = new PrivateChannel('merchants.' . $order->merchant_id . '.orders');
             }
         }
 
-        // Broadcast payment status to merchant channel
-        if ($this->payment->order_id) {
+        // Broadcast payment status to payment channel
+        if ($this->payment->id) {
             $channels[] = new PrivateChannel('payments.' . $this->payment->id);
         }
 
         return $channels;
     }
 
-    /**
-     * The event's broadcast name.
-     */
     public function broadcastAs(): string
     {
         return 'payment.status.updated';
     }
 
-    /**
-     * Get the data to broadcast.
-     *
-     * @return array<string, mixed>
-     */
     public function broadcastWith(): array
     {
         $order = $this->payment->order;

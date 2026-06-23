@@ -2,44 +2,40 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProductOrderItem extends Model
 {
-    use HasFactory;
-
-    protected $table = 'product_order_items';
-
     protected $fillable = [
         'order_id',
         'product_id',
         'product_variant_id',
+        'product_name_snapshot',
+        'product_variant_snapshot',
+        'sku_snapshot',
+        'image_snapshot_path',
         'quantity',
-        'price',
-        'subtotal',
-        'note',
+        'unit_price_snapshot',
+        'subtotal_snapshot',
     ];
 
-    protected $casts = [
-        'quantity' => 'integer',
-        'price' => 'decimal:2',
-        'subtotal' => 'decimal:2',
-    ];
-
-    public function order(): BelongsTo
+    public function order()
     {
         return $this->belongsTo(Order::class);
     }
 
-    public function product(): BelongsTo
+    public function product()
     {
         return $this->belongsTo(Product::class);
     }
 
-    public function variant(): BelongsTo
+    public function variant()
     {
         return $this->belongsTo(ProductVariant::class, 'product_variant_id');
+    }
+
+    public function addons()
+    {
+        return $this->hasMany(ProductOrderItemAddon::class);
     }
 }

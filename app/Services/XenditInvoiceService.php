@@ -7,29 +7,10 @@ use App\Models\Payment;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-/**
- * XenditInvoiceService
- *
- * Service untuk membuat dan mengelola invoice Xendit.
- * HANYA mendukung Order (produk/kuliner dan jasa).
- *
- * NOTE: ServiceOrder sudah deprecated, gunakan Order + JasaOrderItem sebagai gantinya.
- */
 class XenditInvoiceService
 {
-    /**
-     * Base URL untuk Xendit API
-     */
     protected string $baseUrl;
-
-    /**
-     * Secret key untuk Xendit
-     */
     protected string $secretKey;
-
-    /**
-     * Callback token untuk validasi webhook
-     */
     protected string $callbackToken;
 
     public function __construct()
@@ -39,21 +20,23 @@ class XenditInvoiceService
         $this->callbackToken = (string) config('services.xendit.callback_token', '');
     }
 
-    /**
-     * Create atau get existing pending invoice untuk sebuah order.
-     * Idempotent - jika invoice sudah ada dan pending, return yang ada.
-     *
-     * @param Order $order
-     * @return Payment
-     */
     public function createOrGetPendingInvoice(Order $order): Payment
     {
-        // Generate external ID
-        $externalId = $this->generateExternalId($order);
+        // For product/kuliner orders, validate status is pending.
+        // For jasa orders, checkout status might be pending as well.
+        if ($order->order_type !== 'jasa' && $order->status !== 'pending') {
+            throw new \RuntimeException('Order tidak valid atau sudah diproses');
+        }
 
-        // Cek apakah sudah ada payment pending untuk order ini
-        $existingPayment = $this->findExistingPendingPayment($order, $externalId);
-        if ($existingPayment && $existingPayment->xendit_invoice_id) {
+        $externalId = 'order-' . $order->id;
+
+        $existingPayment = Payment::query()
+            ->where('order_id', $order->id)
+            ->where('status', 'pending')
+            ->latest('id')
+            ->first();
+
+        if ($existingPayment instanceof Payment) {
             Log::info('[XenditInvoiceService] Reusing existing invoice', [
                 'payment_id' => $existingPayment->id,
                 'external_id' => $externalId,
@@ -61,66 +44,64 @@ class XenditInvoiceService
             return $existingPayment;
         }
 
-        // Buat invoice baru
         return $this->createInvoice($order, $externalId);
     }
 
-    /**
-     * Generate external ID untuk order.
-     * Format: order-{id}
-     *
-     * @param Order $order
-     * @return string
-     */
-    protected function generateExternalId(Order $order): string
-    {
-        return 'order-' . $order->id;
-    }
-
-    /**
-     * Find existing pending payment untuk order.
-     *
-     * @param Order $order
-     * @param string $externalId
-     * @return Payment|null
-     */
-    protected function findExistingPendingPayment(Order $order, string $externalId): ?Payment
-    {
-        return Payment::where('order_id', $order->id)
-            ->where('status', 'pending')
-            ->first();
-    }
-
-    /**
-     * Create invoice baru di Xendit.
-     *
-     * @param Order $order
-     * @param string $externalId
-     * @return Payment
-     */
     protected function createInvoice(Order $order, string $externalId): Payment
     {
-        $amount = $this->getOrderAmount($order);
-        $description = $this->getOrderDescription($order);
-        $customer = $this->getOrderCustomer($order);
-        $successUrl = $this->getSuccessUrl($order);
-        $failureUrl = $this->getFailureUrl($order);
+        $amount = (int) ($order->total_payment_snapshot ?? $order->gross_amount ?? $order->total ?? $order->total_price ?? 0);
+        if ($amount <= 0) {
+            $amount = 1;
+        }
+
+        if ($order->order_type === 'jasa') {
+            $order->loadMissing('jasaItems.jasa');
+            $jasaItem = $order->jasaItems->first();
+            $serviceName = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa?->title ?? 'Layanan Jasa';
+            $description = "Pembayaran Layanan: {$serviceName}";
+        } else {
+            $description = 'Order #' . ($order->order_code ?? $order->id);
+        }
+
+        $invoiceDuration = (int) config('services.xendit.invoice_duration', 7200);
+        if ($invoiceDuration < 300) {
+            $invoiceDuration = 7200;
+        }
+
+        $frontendUrl = rtrim((string) config('services.xendit.frontend_url', config('app.frontend_url', 'http://localhost:5173')), '/');
+        if ($order->order_type === 'jasa') {
+            $successUrl = $frontendUrl . '/jasa-history';
+            $failureUrl = $frontendUrl . '/jasa-history';
+        } else {
+            $successUrl = $frontendUrl . '/orders/' . $order->id . '?payment=success';
+            $failureUrl = $frontendUrl . '/orders/' . $order->id . '?payment=failed';
+        }
 
         $payload = [
             'external_id' => $externalId,
             'amount' => $amount,
             'description' => $description,
             'currency' => 'IDR',
-            'invoice_duration' => $this->getInvoiceDuration(),
+            'invoice_duration' => $invoiceDuration,
             'success_redirect_url' => $successUrl,
             'failure_redirect_url' => $failureUrl,
         ];
 
-        // Add customer info if available
-        if (!empty($customer['email'])) {
+        // Add payment methods if matches
+        $paymentMethodsList = [
+            'BCA', 'BNI', 'BRI', 'MANDIRI', 'PERMATA', 'CIMB', 'SAHABAT_SAMPOERNA',
+            'ALFAMART', 'INDOMARET', 'OVO', 'DANA', 'SHOPEEPAY', 'LINKAJA', 'QRIS'
+        ];
+        $method = strtoupper($order->payment_method ?? '');
+        if (in_array($method, $paymentMethodsList)) {
+            $payload['payment_methods'] = [$method];
+        }
+
+        // Add customer info
+        if ($order->user?->email) {
             $payload['customer'] = [
-                'email' => $customer['email'],
-                'given_name' => $customer['name'] ?? 'Customer',
+                'email' => $order->user->email,
+                'given_name' => $order->nama ?? $order->user->name ?? 'Customer',
             ];
         }
 
@@ -140,168 +121,24 @@ class XenditInvoiceService
                 'status' => $response->status(),
                 'body' => $response->json(),
             ]);
-            throw new \Exception('Failed to create Xendit invoice: ' . $response->body());
+            throw new \RuntimeException($response->json('message') ?: 'Gagal membuat invoice Xendit');
         }
 
-        $invoiceData = $response->json();
+        $invoice = $response->json();
 
-        // Parse expiry datetime
-        $expiredAt = null;
-        if (!empty($invoiceData['expiry_date'])) {
-            $expiredAt = \Carbon\Carbon::parse($invoiceData['expiry_date']);
-        }
-
-        // Create or update payment record
-        $payment = $this->createPaymentRecord($order, $externalId, $invoiceData, $expiredAt);
-
-        Log::info('[XenditInvoiceService] Invoice created successfully', [
-            'payment_id' => $payment->id,
-            'invoice_id' => $invoiceData['id'],
-            'invoice_url' => $invoiceData['invoice_url'] ?? null,
+        return Payment::query()->create([
+            'order_id'          => $order->id,
+            'external_id'       => $externalId,
+            'xendit_invoice_id' => $invoice['id'] ?? null,
+            'invoice_url'       => $invoice['invoice_url'] ?? null,
+            'payment_method'    => null,
+            'expired_at'        => now()->addSeconds($invoiceDuration),
+            'amount'            => $amount,
+            'status'            => 'pending',
+            'raw_response'      => $invoice,
         ]);
-
-        return $payment;
     }
 
-    /**
-     * Create payment record di database.
-     *
-     * @param Order $order
-     * @param string $externalId
-     * @param array $invoiceData
-     * @param \Carbon\Carbon|null $expiredAt
-     * @return Payment
-     */
-    protected function createPaymentRecord(
-        Order $order,
-        string $externalId,
-        array $invoiceData,
-        ?\Carbon\Carbon $expiredAt = null
-    ): Payment {
-        return Payment::updateOrCreate(
-            [
-                'external_id' => $externalId,
-            ],
-            [
-                'order_id' => $order->id,
-                'xendit_invoice_id' => $invoiceData['id'] ?? null,
-                'invoice_url' => $invoiceData['invoice_url'] ?? null,
-                'status' => 'pending',
-                'amount' => $invoiceData['amount'] ?? 0,
-                'expired_at' => $expiredAt,
-            ]
-        );
-    }
-
-    /**
-     * Get order amount untuk invoice.
-     *
-     * @param Order $order
-     * @return int
-     */
-    protected function getOrderAmount(Order $order): int
-    {
-        // Prioritas: total_payment_snapshot (subtotal + platform_fee) > total_price
-        // total_payment_snapshot selalu di-set saat order dibuat
-        return (int) ($order->total_payment_snapshot ?? $order->total_price ?? 0);
-    }
-
-    /**
-     * Get order description untuk invoice.
-     *
-     * @param Order $order
-     * @return string
-     */
-    protected function getOrderDescription(Order $order): string
-    {
-        // Cek tipe order
-        if ($order->order_type === 'jasa') {
-            // Untuk jasa - gunakan jasa_order_items
-            $order->loadMissing('jasaItems.jasa');
-            $jasaItem = $order->jasaItems->first();
-            $serviceName = $jasaItem?->jasa?->title ?? 'Layanan Jasa';
-            return "Pembayaran Layanan: {$serviceName}";
-        }
-
-        // Untuk produk/kuliner - gunakan product_order_items
-        $order->loadMissing('items');
-        $items = $order->items ?? collect();
-        $itemCount = $items->count();
-
-        if ($itemCount > 0) {
-            $names = $items->take(3)->map(fn($item) => $item->product_name_snapshot ?? 'Produk')->implode(', ');
-            $remaining = $itemCount - 3;
-            if ($remaining > 0) {
-                return "Pembayaran {$names} dan {$remaining} item lainnya";
-            }
-            return "Pembayaran {$names}";
-        }
-
-        return 'Pembayaran Pesanan';
-    }
-
-    /**
-     * Get customer info untuk invoice.
-     *
-     * @param Order $order
-     * @return array
-     */
-    protected function getOrderCustomer(Order $order): array
-    {
-        $user = $order->user;
-        return [
-            'email' => $user?->email,
-            'name' => $order->nama ?? $user?->name ?? 'Customer',
-        ];
-    }
-
-    /**
-     * Get success redirect URL.
-     *
-     * @return string
-     */
-    protected function getSuccessUrl(?\App\Models\Order $order = null): string
-    {
-        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
-        // Jasa orders redirect to service history
-        if ($order && $order->order_type === 'jasa') {
-            return $base . '/jasa-history';
-        }
-        return $base . '/orders';
-    }
-
-    /**
-     * Get failure redirect URL.
-     *
-     * @return string
-     */
-    protected function getFailureUrl(?\App\Models\Order $order = null): string
-    {
-        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
-        // Jasa orders redirect to service history
-        if ($order && $order->order_type === 'jasa') {
-            return $base . '/jasa-history';
-        }
-        return $base . '/orders';
-    }
-
-    /**
-     * Get invoice duration dalam detik (default 24 jam).
-     *
-     * @return int
-     */
-    protected function getInvoiceDuration(): int
-    {
-        $hours = (int) config('app.xendit_invoice_duration_hours', 24);
-        return $hours * 3600;
-    }
-
-    /**
-     * Get invoice status dari Xendit.
-     *
-     * @param string $invoiceId
-     * @return array|null
-     */
     public function getInvoiceStatus(string $invoiceId): ?array
     {
         try {
@@ -328,12 +165,6 @@ class XenditInvoiceService
         }
     }
 
-    /**
-     * Validate callback token dari webhook.
-     *
-     * @param string|null $token
-     * @return bool
-     */
     public function validateCallbackToken(?string $token): bool
     {
         if (empty($this->callbackToken)) {
