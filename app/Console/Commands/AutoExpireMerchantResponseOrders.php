@@ -32,9 +32,9 @@ class AutoExpireMerchantResponseOrders extends Command
 
         $expiredOrders = Order::where('order_type', 'jasa')
             ->where('status', 'menunggu_konfirmasi_merchant')
-            ->whereNotNull('merchant_response_deadline')
+            ->whereNotNull('confirm_deadline')
             ->whereNull('merchant_responded_at')
-            ->where('merchant_response_deadline', '<=', now())
+            ->where('confirm_deadline', '<=', now())
             ->get();
 
         $this->info("Found {$expiredOrders->count()} orders to expire.");

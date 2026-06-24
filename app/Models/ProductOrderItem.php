@@ -19,6 +19,12 @@ class ProductOrderItem extends Model
         'subtotal_snapshot',
     ];
 
+    protected $appends = [
+        'is_reviewed',
+        'can_review',
+        'can_update_review',
+    ];
+
     public function order()
     {
         return $this->belongsTo(Order::class);
@@ -37,5 +43,48 @@ class ProductOrderItem extends Model
     public function addons()
     {
         return $this->hasMany(ProductOrderItemAddon::class);
+    }
+
+    public function review()
+    {
+        return $this->hasOne(Rating::class, 'order_item_id');
+    }
+
+    public function getIsReviewedAttribute(): bool
+    {
+        return $this->relationLoaded('review')
+            ? $this->review !== null
+            : $this->review()->exists();
+    }
+
+    public function getCanReviewAttribute(): bool
+    {
+        $status = null;
+        if ($this->relationLoaded('order') && $this->order) {
+            $status = $this->order->status;
+        } elseif ($this->order_id) {
+            $status = \Illuminate\Support\Facades\DB::table('orders')
+                ->where('id', $this->order_id)
+                ->value('status');
+        }
+
+        if (!$status) {
+            return false;
+        }
+        $status = strtolower($status);
+        $isCompleted = in_array($status, ['completed', 'selesai']);
+        return $isCompleted && !$this->is_reviewed;
+    }
+
+    public function getCanUpdateReviewAttribute(): bool
+    {
+        $review = $this->relationLoaded('review')
+            ? $this->review
+            : $this->review()->first();
+
+        if (!$review) {
+            return false;
+        }
+        return method_exists($review, 'canUpdate') ? $review->canUpdate() : (int)($review->update_count ?? 0) < 1;
     }
 }

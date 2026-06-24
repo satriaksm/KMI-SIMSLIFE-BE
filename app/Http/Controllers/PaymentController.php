@@ -51,6 +51,31 @@ class PaymentController extends Controller
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
+        // Update payment method & channel if provided in request payload (e.g. from checkout redirect or retry)
+        if ($request->has('payment_method') || $request->has('payment_channel') || $request->has('channel_code')) {
+            $reqMethod = strtoupper($request->input('payment_method') ?? '');
+            $reqChannel = strtoupper($request->input('payment_channel') ?? $request->input('channel_code') ?? '');
+            
+            $genericMethods = ['XENDIT', 'ONLINE', 'ONLINE_XENDIT', 'TRANSFER'];
+            if (in_array($reqMethod, $genericMethods) && $reqChannel !== '') {
+                $reqMethod = $reqChannel;
+            }
+            
+            $updates = [];
+            if ($reqMethod !== '') {
+                $updates['payment_method'] = $reqMethod;
+                $updates['payment_method_snapshot'] = $reqMethod;
+            }
+            if ($reqChannel !== '') {
+                $updates['payment_channel'] = $reqChannel;
+                $updates['payment_channel_snapshot'] = $reqChannel;
+            }
+            
+            if (!empty($updates)) {
+                $order->update($updates);
+            }
+        }
+
         // Pastikan order belum dibayar
         if ($order->payment_status === 'PAID' || $order->status === 'paid') {
             return ApiResponse::error('Pesanan sudah dibayar', 400);
@@ -147,6 +172,15 @@ class PaymentController extends Controller
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
+        $payment = Payment::where('order_id', $orderId)->latest()->first();
+        if ($payment) {
+            Log::info('Payment matched', [
+                'external_id' => $payment->external_id,
+                'payment_id' => $payment->id,
+                'order_id' => $payment->order_id,
+            ]);
+        }
+
         // If already PAID, return immediately
         if ($order->payment_status === 'PAID') {
             return ApiResponse::success([
@@ -229,8 +263,8 @@ class PaymentController extends Controller
 
         if ($isJasa) {
             $orderUpdate['status'] = 'menunggu_konfirmasi_merchant';
-            $orderUpdate['merchant_response_deadline'] = now()->addHours(24);
-            $orderUpdate['confirm_deadline'] = null; // Do not use confirm_deadline for jasa
+            $orderUpdate['confirm_deadline'] = now()->addMinutes(60);
+            $orderUpdate['merchant_response_deadline'] = now()->addMinutes(60);
         } else {
             $orderUpdate['status'] = 'paid';
             $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
@@ -238,6 +272,13 @@ class PaymentController extends Controller
         }
 
         $order->update($orderUpdate);
+
+        Log::info('Order updated after paid', [
+            'order_id' => $order->id,
+            'order_type' => $order->order_type,
+            'status' => $order->status,
+            'payment_status' => $order->payment_status,
+        ]);
 
         // Update Payment record
         $payment = Payment::where('order_id', $order->id)->first();

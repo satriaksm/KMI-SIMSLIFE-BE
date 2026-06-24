@@ -46,9 +46,6 @@ class OrderController extends Controller
         $activeOrders = Order::query()
             ->where('user_id', $user->id)
             ->whereIn('status', ['pending', 'paid'])
-            ->where(function ($q) {
-                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
-            })
             ->with(['payment'])
             ->get();
 
@@ -58,9 +55,6 @@ class OrderController extends Controller
 
         $query = Order::query()
             ->where('user_id', $user->id)
-            ->where(function ($q) {
-                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
-            })
             ->with([
                 'merchant',
                 'items.addons.addon',
@@ -119,7 +113,6 @@ class OrderController extends Controller
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
-                'items.review',
                 'payment',
             ]),
             'Order fetched'
@@ -214,16 +207,9 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
-        if ($merchant->segmentation_id === 3) {
-            return app(\App\Http\Controllers\JasaOrderController::class)->merchantOrders($request, $merchant->slug);
-        }
-
         $activeOrders = Order::query()
             ->where('merchant_id', $merchant->id)
             ->whereIn('status', ['pending', 'paid'])
-            ->where(function ($q) {
-                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
-            })
             ->with(['payment'])
             ->get();
 
@@ -233,9 +219,6 @@ class OrderController extends Controller
 
         $query = Order::query()
             ->where('merchant_id', $merchant->id)
-            ->where(function ($q) {
-                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
-            })
             ->with([
                 'items.addons.addon',
                 'payment'
@@ -258,17 +241,13 @@ class OrderController extends Controller
             $query->whereBetween('created_at', [$startDate, $endDate]);
         }
 
-        $waitingReviewStatuses = ['paid', 'sudah_bayar'];
-        $pendingReviewStatuses = ['pending', 'menunggu_konfirmasi', 'menunggu_konfirmasi_merchant', 'processing_payment'];
-
         if ($request->filled('status') && $request->input('status') !== 'all') {
             $reqStatus = $request->input('status');
             if ($reqStatus === 'waiting_review') {
-                $query->where(function ($q) use ($waitingReviewStatuses, $pendingReviewStatuses) {
-                    $q->whereIn('status', $waitingReviewStatuses)
-                      ->orWhere('payment_status', 'PAID')
-                      ->orWhere(function ($q2) use ($pendingReviewStatuses) {
-                          $q2->whereIn('status', $pendingReviewStatuses)->where('payment_method', 'COD');
+                $query->where(function ($q) {
+                    $q->where('status', 'paid')
+                      ->orWhere(function ($q2) {
+                          $q2->where('status', 'pending')->where('payment_method', 'COD');
                       });
                 });
             } elseif ($reqStatus === 'processing') {
@@ -281,8 +260,8 @@ class OrderController extends Controller
                 $query->where('status', $reqStatus);
             }
         } else {
-            $query->where(function ($qBuilder) use ($pendingReviewStatuses) {
-                $qBuilder->whereNotIn('status', $pendingReviewStatuses)
+            $query->where(function ($qBuilder) {
+                $qBuilder->where('status', '!=', 'pending')
                   ->orWhere('payment_method', 'COD');
             });
         }
@@ -303,24 +282,14 @@ class OrderController extends Controller
         $counts = [
             'waiting_review' => Order::where('merchant_id', $merchant->id)
                 ->where(function ($q) {
-                    $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
-                })
-                ->where(function ($q) use ($waitingReviewStatuses, $pendingReviewStatuses) {
-                    $q->whereIn('status', $waitingReviewStatuses)
-                      ->orWhere('payment_status', 'PAID')
-                      ->orWhere(function ($q2) use ($pendingReviewStatuses) {
-                          $q2->whereIn('status', $pendingReviewStatuses)->where('payment_method', 'COD');
+                    $q->where('status', 'paid')
+                      ->orWhere(function ($q2) {
+                          $q2->where('status', 'pending')->where('payment_method', 'COD');
                       });
                 })->count(),
             'processing' => Order::where('merchant_id', $merchant->id)
-                ->where(function ($q) {
-                    $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
-                })
                 ->whereIn('status', ['responsed', 'accepted'])->count(),
             'delivered' => Order::where('merchant_id', $merchant->id)
-                ->where(function ($q) {
-                    $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
-                })
                 ->where('status', 'delivered')->count(),
         ];
 
@@ -353,30 +322,7 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
-        \Illuminate\Support\Facades\Log::info('Merchant order detail', [
-            'merchant' => $merchant->id ?? null,
-            'order_id' => $order->id ?? null,
-            'order_type' => $order->order_type ?? null,
-        ]);
-
-        $isJasaOrder = ($order->order_type === 'jasa' || $order->jasaItems()->exists() || $merchant->segmentation_id === 3);
-
-        if ($isJasaOrder) {
-            \Illuminate\Support\Facades\Log::info('Delegating order detail to JasaOrderController', [
-                'order_id' => $order->id,
-            ]);
-            return app(\App\Http\Controllers\JasaOrderController::class)->merchantShow(request(), $merchant->slug, $order->id);
-        }
-
-        \Illuminate\Support\Facades\Log::info('Handling order detail as product order', [
-            'order_id' => $order->id,
-        ]);
-
         if ((int) $order->merchant_id !== (int) $merchant->id) {
-            \Illuminate\Support\Facades\Log::warning('Order merchant mismatch', [
-                'order_merchant_id' => $order->merchant_id,
-                'request_merchant_id' => $merchant->id,
-            ]);
             return ApiResponse::error('Order tidak ditemukan', 404);
         }
 
@@ -390,7 +336,6 @@ class OrderController extends Controller
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
-                'items.review',
                 'payment',
                 'user'
             ]),
@@ -409,10 +354,6 @@ class OrderController extends Controller
      */
     public function updateStatus(Request $request, Merchant $merchant, Order $order)
     {
-        if ($merchant->segmentation_id === 3) {
-            return app(\App\Http\Controllers\JasaOrderController::class)->updateStatus($request, $merchant->slug, $order->id);
-        }
-
         $request->validate([
             'status' => 'required|in:responsed,accepted,rejected,delivered,completed,cancelled,undelivered',
             'proof_image' => 'nullable|image|max:5120',
@@ -715,7 +656,6 @@ class OrderController extends Controller
                 $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
 
                 $order = Order::query()->create([
-                    'order_type'              => 'product',
                     'address_id'              => $address?->id,
                     'user_id'                 => $user->id,
                     'merchant_id'             => $cart->merchant_id,
@@ -819,13 +759,6 @@ class OrderController extends Controller
                 return ApiResponse::error('Gagal membuat order', 500);
             }
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('Checkout 500 error:', [
-                'request' => $request->all(),
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
-            ]);
             return ApiResponse::error('Gagal checkout order', 500, [
                 'error' => $e->getMessage(),
             ]);

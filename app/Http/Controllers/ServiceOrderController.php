@@ -475,15 +475,14 @@ class ServiceOrderController extends Controller
 
         try {
             // Find order in orders table
-            // NOTE: 'address' is NOT a DB column on merchants.
-            // Must eager-load primaryAddress relationship.
-            // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
-            // Use snapshot accessors instead: $jasaItem->jasa_title, $jasaItem->jasa_image_url
             $order = Order::with([
+                'user:id,name,phone,email',
                 'merchant:id,name,slug,logo_path,segmentation_id,phone',
                 'merchant.primaryAddress',
                 'payment',
                 'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,customer_latitude,customer_longitude,is_reviewed,review_id,customer_confirmed,customer_confirmed_at',
+                'jasaItems.jasa:id,service_type,cara_pemesanan,image',
+                'jasaItems.jasa.categories',
                 'jasaItems.review.media',
                 'jasaItems.review.histories',
                 'jasaItems.completionEvidences',
@@ -522,7 +521,7 @@ class ServiceOrderController extends Controller
         $merchantAddress = $primaryAddress?->detail ?? null;
 
         // Determine display address based on service type
-        $serviceType = $jasaItem?->service_type;
+        $serviceType = $jasaItem?->service_type ?: ($jasaItem?->jasa?->service_type ?? null);
         $displayAddress = match ($serviceType) {
             'online' => 'Online',
             'di_tempat_umkm', 'at_location' => $merchantAddress ?? 'Lokasi UMKM',
@@ -586,40 +585,80 @@ class ServiceOrderController extends Controller
         // Completion Evidences
         $completionEvidences = $jasaItem?->completionEvidences ?? collect();
 
-        // Service type label
-        $serviceTypeMap = [
+        // Determine service type and fallback
+        $serviceTypeClean = strtolower(trim($serviceType ?? ''));
+        $serviceTypeLabel = match ($serviceTypeClean) {
+            'di_tempat_umkm', 'at_location' => 'Di Tempat UMKM',
+            'ke_rumah_pelanggan', 'on_site' => 'Ke Rumah Pelanggan',
             'online' => 'Online',
-            'di_tempat_umkm' => 'Di Tempat UMKM',
-            'at_location' => 'Di Tempat UMKM',
-            'ke_rumah_pelanggan' => 'Ke Rumah Pelanggan',
-            'on_site' => 'Ke Rumah Pelanggan',
-        ];
-        $serviceTypeLabel = $serviceTypeMap[$serviceType] ?? ucfirst($serviceType ?? '-');
+            default => !empty($serviceType) ? ucfirst(str_replace('_', ' ', $serviceType)) : '-',
+        };
 
-        // Order method label
-        $orderMethodMap = [
-            'booking' => 'Booking (Pilih Tanggal & Jam)',
-            'keranjang' => 'Tanpa Jadwal',
-            'walk_in' => 'Walk-in',
-            'konsultasi' => 'Konsultasi',
-        ];
-        $orderMethodLabel = $orderMethodMap[$jasaItem?->order_method] ?? $jasaItem?->order_method ?? '';
+        // Determine order method / cara pemesanan and fallback
+        $orderMethod = $jasaItem?->order_method ?: ($jasaItem?->jasa?->cara_pemesanan ?? null);
+        $orderMethodClean = strtolower(trim($orderMethod ?? ''));
+        $orderMethodLabel = match ($orderMethodClean) {
+            'cart', 'keranjang', 'checkout', 'tanpa_jadwal' => 'Checkout Tanpa Jadwal',
+            'booking', 'scheduled' => 'Booking Jadwal',
+            'consultation', 'konsultasi' => 'Hasil Konsultasi',
+            default => !empty($orderMethod) ? ucfirst(str_replace('_', ' ', $orderMethod)) : '-',
+        };
+
+        // Fallback for Date and Time
+        $bookingDateStr = null;
+        if ($jasaItem?->booking_date) {
+            if ($jasaItem->booking_date instanceof \Carbon\Carbon || method_exists($jasaItem->booking_date, 'format')) {
+                $bookingDateStr = $jasaItem->booking_date->format('Y-m-d');
+            } else {
+                $bookingDateStr = (string) $jasaItem->booking_date;
+            }
+        } elseif ($order->scheduled_at) {
+            $bookingDateStr = $order->scheduled_at->format('Y-m-d');
+        } else {
+            $bookingDateStr = $order->created_at->format('Y-m-d');
+        }
+
+        $bookingTimeStr = $jasaItem?->booking_time 
+            ?? ($order->scheduled_at ? $order->scheduled_at->format('H:i') : $order->created_at->format('H:i'));
+
+        // Image fallback resolution
+        $serviceImageRaw = $jasaItem?->jasa_image_snapshot
+            ?? ($jasaItem?->jasa?->image_url
+            ?? ($jasaItem?->jasa?->image
+            ?? ($jasaItem?->jasa?->coverImage?->url ?? null)));
+
+        $serviceImage = null;
+        if ($serviceImageRaw) {
+            if (str_starts_with($serviceImageRaw, 'http')) {
+                $serviceImage = $serviceImageRaw;
+            } else {
+                $serviceImage = asset('storage/' . ltrim($serviceImageRaw, '/'));
+            }
+        } else {
+            $serviceImage = asset('images/placeholder-service.png');
+        }
 
         return [
             'id' => $order->id,
             'jasa_order_item_id' => $jasaItem?->id,
-            'order_number' => 'SO-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            'order_number' => $order->order_code ?? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT)),
+            'invoice' => $order->order_code ?? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT)),
+            'nomor_pesanan' => $order->order_code ?? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT)),
             // Customer Info - gunakan SNAPSHOT accessor
             'customer_name' => $order->customer_name,
             'customer_phone' => $order->customer_phone,
+            'customer_email' => $order->user?->email ?? null,
             'customer_address' => $jasaItem?->service_location_address,
-            'booking_date' => $jasaItem?->booking_date,
-            'booking_time' => $jasaItem?->booking_time,
+            'booking_date' => $bookingDateStr,
+            'booking_time' => $bookingTimeStr,
+            'scheduled_at' => $order->scheduled_at ? $order->scheduled_at->toIso8601String() : null,
             'payment_method' => $paymentMethod,
             'payment_method_display' => $paymentMethodDisplay,
             'payment_status' => $paymentStatus,
             'payment_status_display' => $paymentStatusDisplay,
             'payment_channel' => $paymentChannel,
+            'payment_channel_snapshot' => $order->payment_channel_snapshot,
+            'payment_method_snapshot' => $order->payment_method_snapshot,
             'paid_channel' => $order->paid_channel,
             'is_payment_completed' => $isPaymentCompleted,
             'payment' => $paymentRelation ? [
@@ -631,21 +670,31 @@ class ServiceOrderController extends Controller
                 'xendit_invoice_id' => $paymentRelation->xendit_invoice_id,
             ] : null,
             'total_price' => $totalPrice,
+            'subtotal' => (float) ($order->subtotal ?? $order->total_price),
+            'admin_fee' => (float) ($order->platform_fee ?? 0),
+            'service_fee' => (float) ($order->platform_fee ?? 0),
+            'platform_fee' => (float) ($order->platform_fee ?? 0),
             'service_type' => $serviceType,
             'service_type_label' => $serviceTypeLabel,
+            'tipe_layanan' => $serviceTypeLabel,
             // Service Info - gunakan SNAPSHOT accessor
             'service_name' => $jasaItem?->jasa_title,
-            'service_image' => $jasaItem?->jasa_image_url,
-            'order_method' => $jasaItem?->order_method,
+            'service_name_snapshot' => $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa_title,
+            'service_image' => $serviceImage,
+            'service_image_snapshot' => $jasaItem?->jasa_image_snapshot ?? $serviceImage,
+            'order_method' => $orderMethod,
             'order_method_label' => $orderMethodLabel,
+            'cara_pemesanan' => $orderMethodLabel,
             'order_type' => $order->order_type,
-            'mekanisme_pemesanan' => $jasaItem?->order_method,
+            'mekanisme_pemesanan' => $orderMethod,
             'order_status' => $order->status,
             'status' => $status,
             'status_label' => $statusLabel,
+            'is_expired' => $order->status === 'expired' || $order->status === 'kadaluarsa' || ($order->merchant_response_deadline && $order->merchant_response_deadline->isPast() && in_array($order->status, ['pending', 'menunggu_konfirmasi_merchant'], true)),
             'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
             'created_at' => $order->created_at?->toIso8601String(),
             'updated_at' => $order->updated_at?->toIso8601String(),
+            'merchant_response_deadline' => $order->merchant_response_deadline ? $order->merchant_response_deadline->toIso8601String() : null,
             // Merchant Info - gunakan SNAPSHOT accessor
             'merchant' => [
                 'id' => $orderArray['merchant']['id'] ?? null,
@@ -657,20 +706,27 @@ class ServiceOrderController extends Controller
             'jasa' => [
                 'id' => $jasaItem?->jasa_id,
                 'title' => $jasaItem?->jasa_title, // snapshot > live
-                'image' => $jasaItem?->jasa_image_snapshot, // snapshot raw
-                'image_url' => $jasaItem?->jasa_image_url, // snapshot with asset()
+                'image' => $jasaItem?->jasa_image_snapshot ?: ($jasaItem?->jasa?->image ?? null), // snapshot raw
+                'image_url' => $serviceImage,
             ],
+            'category_name_snapshot' => $jasaItem?->jasa?->categories?->first()?->name ?? null,
             'review' => $review ? array_merge($review->toArray(), [
+                'merchant_reply' => $review->merchant_reply,
                 'media' => $review->media->map(function ($media) {
                     $arr = $media->toArray();
-                    if (!isset($arr['file_url']) || $arr['file_url'] === '') {
-                        $arr['file_url'] = $media->file_url;
-                    }
+                    $arr['file_url'] = $media->media_url ?? ($media->file_path ? asset('storage/' . $media->file_path) : null);
                     return $arr;
                 })->toArray()
             ]) : null,
+            'merchant_reply' => $review?->merchant_reply,
             'is_reviewed' => $isReviewed,
-            'completion_note' => $jasaItem?->completion_note,
+            'completion_evidence' => $completionEvidences->first() ? [
+                'id' => $completionEvidences->first()->id,
+                'file_path' => $completionEvidences->first()->file_path,
+                'file_url' => $completionEvidences->first()->file_url,
+                'file_type' => $completionEvidences->first()->file_type ?? ($completionEvidences->first()->is_video ? 'video' : 'image'),
+                'note' => $completionEvidences->first()->note,
+            ] : null,
             'completion_evidences' => $completionEvidences->map(function ($evidence) {
                 return [
                     'id' => $evidence->id,
@@ -684,12 +740,19 @@ class ServiceOrderController extends Controller
                     'created_at' => $evidence->created_at?->toIso8601String(),
                 ];
             })->toArray(),
-            'display_address' => $displayAddress,
-            'address_label' => match ($serviceType) {
-                'online' => 'Lokasi',
-                'di_tempat_umkm', 'at_location' => 'Lokasi UMKM',
-                default => 'Alamat',
-            },
+            // SLA & Action Timestamps
+            'merchant_responded_at' => $order->merchant_responded_at ? $order->merchant_responded_at->toIso8601String() : null,
+            'completion_submitted_at' => $order->completion_submitted_at ? $order->completion_submitted_at->toIso8601String() : null,
+            'completion_deadline_at' => $order->completion_deadline_at ? $order->completion_deadline_at->toIso8601String() : null,
+            'completed_at' => $order->completed_at ? $order->completed_at->toIso8601String() : null,
+            'completed_by' => $order->completed_by,
+            'auto_completed_at' => $order->auto_completed_at ? $order->auto_completed_at->toIso8601String() : null,
+            'cancelled_by' => $order->cancelled_by,
+            'rejected_by' => $order->rejected_by,
+            'expired_at' => $order->expired_at ? $order->expired_at->toIso8601String() : null,
+            'rejection_reason' => $order->rejection_reason,
+            'merchant_address' => $merchantAddress,
+            'service_location_address' => $jasaItem?->service_location_address,
         ];
     }
 
@@ -891,11 +954,11 @@ class ServiceOrderController extends Controller
             return false;
         }
 
-        if (!$order->merchant_response_deadline) {
+        if (!$order->confirm_deadline) {
             return false;
         }
 
-        if ($order->merchant_response_deadline->isFuture()) {
+        if ($order->confirm_deadline->isFuture()) {
             return false;
         }
 
@@ -911,7 +974,7 @@ class ServiceOrderController extends Controller
 
         Log::info('[autoExpireOrder] Order expired', [
             'order_id' => $order->id,
-            'deadline' => $order->merchant_response_deadline->toISOString(),
+            'deadline' => $order->confirm_deadline->toISOString(),
         ]);
 
         return true;
@@ -1082,6 +1145,7 @@ class ServiceOrderController extends Controller
             'jasaItems.review.media',
             'jasaItems.review.histories',
             'jasaItems.completionEvidences',
+            'payment'
         ])
             ->where('merchant_id', $merchant->id)
             ->where('order_type', 'jasa')
@@ -1145,6 +1209,27 @@ class ServiceOrderController extends Controller
             // Completion Evidences - dari jasa_order_items (PRIMARY)
             $completionEvidences = $jasaItem?->completionEvidences ?? collect();
 
+            $paymentMethod = $order->payment_method;
+            $paymentChannel = $order->payment_channel ?? $order->paid_channel;
+
+            $isGeneric = in_array(strtoupper($paymentMethod ?? ''), ['XENDIT', 'ONLINE', 'ONLINE_XENDIT', 'TRANSFER', 'BANK', 'ONLINE_PAYMENT']);
+            if (($isGeneric || empty($paymentMethod)) && $order->payment) {
+                $pm = $order->payment->payment_method ?? null;
+                $raw = $order->payment->raw_response;
+                $pc = null;
+                if (is_array($raw)) {
+                    $pc = $raw['payment_channel'] ?? $raw['channel_code'] ?? $raw['payment_method'] ?? null;
+                }
+                $pc = $pc ?? $order->payment->payment_method ?? null;
+
+                if ($pm) {
+                    $paymentMethod = $pm;
+                }
+                if ($pc) {
+                    $paymentChannel = $pc;
+                }
+            }
+
             // Debug logging
             Log::info('[getMerchantOrders] Evidence debug', [
                 'order_id' => $order->id,
@@ -1177,9 +1262,11 @@ class ServiceOrderController extends Controller
                 ],
 
                 // Payment Info
-                'payment_method' => $order->payment_method,
+                'payment_method' => $paymentMethod,
                 'payment_status' => $order->payment_status,
-                'payment_channel' => $order->payment_channel ?? $order->paid_channel,
+                'payment_channel' => $paymentChannel,
+                'payment_method_snapshot' => $order->payment_method_snapshot,
+                'payment_channel_snapshot' => $order->payment_channel_snapshot,
 
                 // Service/Jasa Info - gunakan SNAPSHOT accessor, fallback ke live jasas.service_type
                 'service_name' => $jasaItem?->jasa_title, // snapshot > live
@@ -1321,6 +1408,11 @@ class ServiceOrderController extends Controller
      */
     public function getMerchantOrderDetail(Request $request, Merchant $merchant, int $id)
     {
+        Log::info('Merchant order detail Jasa entered', [
+            'merchant' => $merchant->id ?? null,
+            'order_id' => $id,
+        ]);
+
         if ($merchant->user_id !== Auth::id()) {
             return ApiResponse::error('Tidak memiliki akses', 403);
         }
@@ -1328,14 +1420,14 @@ class ServiceOrderController extends Controller
         // Find order in orders table
         // Use snapshot accessors as primary source, fallback to live jasa.service_type.
         $order = Order::with([
-            'user:id,name,phone',
+            'user:id,name,phone,email',
             'merchant.primaryAddress',
             'merchant.primaryAddress.province',
             'merchant.primaryAddress.city',
             'merchant.primaryAddress.district',
             'merchant.primaryAddress.village',
             'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,jasa_image_snapshot,booking_date,booking_time,booking_note,service_type,order_method,service_location_address,completion_note,customer_latitude,customer_longitude,is_reviewed,review_id',
-            'jasaItems.jasa:id,service_type',
+            'jasaItems.jasa:id,service_type,cara_pemesanan,image',
             'jasaItems.jasa.categories',
             'jasaItems.review.media',
             'jasaItems.review.histories',
@@ -1346,6 +1438,10 @@ class ServiceOrderController extends Controller
             ->find($id);
 
         if (!$order) {
+            Log::warning('Merchant order detail Jasa: Order not found', [
+                'merchant' => $merchant->id ?? null,
+                'order_id' => $id,
+            ]);
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
@@ -1363,119 +1459,7 @@ class ServiceOrderController extends Controller
      */
     private function transformMerchantOrderOnly(Order $order, ?JasaOrderItem $jasaItem): array
     {
-        $orderArray = $order->toArray();
-
-        // STATUS
-        $status = $order->status;
-        $statusLabel = $this->getServiceStatusLabel($order->status);
-
-        // PAYMENT
-        $paymentStatus = $order->payment_status;
-        $paymentMethod = $order->payment_method;
-        $totalPrice = (float) $order->total_price;
-
-        // COMPLETION EVIDENCES
-        $completionEvidences = $jasaItem?->completionEvidences ?? collect();
-
-        // REVIEW
-        $review = $jasaItem?->review;
-        $isReviewed = $jasaItem?->is_reviewed === true;
-
-        return [
-            'id' => $order->id,
-            'jasa_order_item_id' => $jasaItem?->id,
-            'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-            // Customer Info - gunakan SNAPSHOT accessor
-            'customer_name' => $order->customer_name, // snapshot > user > nama
-            'customer_phone' => $order->customer_phone, // snapshot > user > tel
-            'customer_address' => $this->getCustomerAddress($order, $jasaItem),
-            'customer_latitude' => $jasaItem?->customer_latitude ?? null,
-            'customer_longitude' => $jasaItem?->customer_longitude ?? null,
-            'booking_date' => $jasaItem?->booking_date,
-            'booking_time' => $jasaItem?->booking_time,
-            'booking_note' => $jasaItem?->booking_note ?? $jasaItem?->note,
-            'payment_method' => $paymentMethod,
-            'payment_channel' => $order->payment_channel ?? $order->paid_channel,
-            'payment_status' => $paymentStatus,
-            'total_price' => $totalPrice,
-            'service_type' => $jasaItem?->service_type ?? $jasaItem?->jasa?->service_type,
-            'service_type_label' => $this->getServiceTypeLabel($jasaItem?->service_type ?? $jasaItem?->jasa?->service_type),
-            'category_name' => $jasaItem?->jasa?->categories?->first()?->name,
-            // Service Info - gunakan SNAPSHOT accessor
-            'service_name' => $jasaItem?->jasa_title, // snapshot > live
-            'service_image' => $jasaItem?->jasa_image_url, // snapshot > live
-            'order_type' => $order->order_type,
-            'mekanisme_pemesanan' => $jasaItem?->order_method,
-            'cara_pemesanan' => $jasaItem?->order_method,
-            'cara_pemesanan_label' => $this->getOrderMethodLabel($jasaItem?->order_method),
-            'status' => $status,
-            'status_label' => $statusLabel,
-            'completion_note' => $jasaItem?->completion_note,
-            'rejection_reason' => $order->rejection_reason,
-            // Address snapshots
-            'merchant_address' => $this->getMerchantFullAddress($order),
-            'service_location_address' => $this->getServiceLocationAddress(
-                $jasaItem?->service_type ?? $jasaItem?->jasa?->service_type,
-                $order,
-                $jasaItem
-            ),
-            // SLA timestamps
-            'merchant_response_deadline' => $order->merchant_response_deadline?->toIso8601String(),
-            'merchant_responded_at' => $order->merchant_responded_at?->toIso8601String(),
-            'completion_submitted_at' => $order->completion_submitted_at?->toIso8601String(),
-            'completion_deadline_at' => $order->completion_deadline_at?->toIso8601String(),
-            'completed_at' => $order->completed_at?->toIso8601String(),
-            'completed_by' => $order->completed_by,
-            'auto_completed_at' => $order->auto_completed_at?->toIso8601String(),
-            'cancelled_by' => $order->cancelled_by,
-            'rejected_by' => $order->rejected_by,
-            'expired_at' => $order->expired_at?->toIso8601String(),
-            // Completion note from merchant's evidence upload
-            'completion_note' => $jasaItem?->completion_note ?? null,
-            'created_at' => $order->created_at?->toIso8601String(),
-            'updated_at' => $order->updated_at?->toIso8601String(),
-            // Customer detail - gunakan SNAPSHOT accessor
-            'customer' => [
-                'id' => $orderArray['user']['id'] ?? null,
-                'name' => $order->customer_name, // snapshot > user > nama
-                'phone' => $order->customer_phone, // snapshot > user > tel
-            ],
-            // Merchant Info - gunakan SNAPSHOT accessor, fallback ke live primaryAddress + province/city/district/village
-            'merchant' => [
-                'id' => $order->merchant_id,
-                'name' => $order->merchant_name, // snapshot > live
-                'phone' => $order->merchant_phone, // snapshot > live
-                'address' => $this->getMerchantFullAddress($order), // snapshot > live primaryAddress
-            ],
-            // Jasa Info - gunakan SNAPSHOT accessor
-            'jasa' => [
-                'id' => $jasaItem?->jasa_id,
-                'title' => $jasaItem?->jasa_title, // snapshot > live
-                'image' => $jasaItem?->jasa_image_snapshot, // snapshot raw
-                'image_url' => $jasaItem?->jasa_image_url, // snapshot with asset()
-            ],
-            'review' => $review ? array_merge($review->toArray(), [
-                'media' => $review->media->map(function ($media) {
-                    $arr = $media->toArray();
-                    $arr['file_url'] = $media->media_url ?? ($media->file_path ? asset('storage/' . $media->file_path) : null);
-                    return $arr;
-                })->toArray()
-            ]) : null,
-            'is_reviewed' => $isReviewed,
-            'completion_evidences' => $completionEvidences->map(function ($evidence) {
-                return [
-                    'id' => $evidence->id,
-                    'jasa_order_item_id' => $evidence->jasa_order_item_id,
-                    'file_path' => $evidence->file_path,
-                    'file_url' => $evidence->file_url,
-                    'image_url' => $evidence->file_url,
-                    'url' => $evidence->file_url,
-                    'file_type' => $evidence->file_type ?? ($evidence->is_video ? 'video' : 'image'),
-                    'note' => $evidence->note ?? null,
-                    'created_at' => $evidence->created_at?->toIso8601String(),
-                ];
-            })->toArray(),
-        ];
+        return $this->transformOrderForCustomerOnly($order, $jasaItem);
     }
 
     /**

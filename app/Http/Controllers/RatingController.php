@@ -156,6 +156,8 @@ class RatingController extends Controller
             'comment' => 'required|string|min:10|max:2000',
             'is_anonymous' => 'nullable|boolean',
             'order_id' => 'required|integer|exists:orders,id',
+            'order_item_id' => 'nullable|integer',
+            'jasa_order_item_id' => 'nullable|integer',
             // media is nullable — can be single UploadedFile or array of files
             // Normalize to array in controller logic (see below)
             'media' => 'nullable',
@@ -176,33 +178,63 @@ class RatingController extends Controller
             return response()->json(['message' => 'Pesanan harus diselesaikan terlebih dahulu sebelum memberikan ulasan'], 422);
         }
 
-        $orderItemId = null;
-        $jasaOrderItemId = null;
+        $orderItemId = $data['order_item_id'] ?? null;
+        $jasaOrderItemId = $data['jasa_order_item_id'] ?? null;
 
         // Resolve item from order and check if already reviewed
         if ($data['rateable_type'] === 'App\\Models\\Product') {
-            $productItem = ProductOrderItem::where('order_id', $order->id)
-                ->where('product_id', $data['rateable_id'])
-                ->first();
-
-            if (!$productItem) {
-                return response()->json(['message' => 'Produk tidak ditemukan dalam pesanan ini'], 404);
+            if ($jasaOrderItemId !== null) {
+                return response()->json(['message' => 'jasa_order_item_id harus null untuk rating produk'], 422);
             }
 
-            $orderItemId = $productItem->id;
+            if ($orderItemId !== null) {
+                // Validate exists in product_order_items and belongs to this order
+                $productItem = ProductOrderItem::where('id', $orderItemId)
+                    ->where('order_id', $order->id)
+                    ->first();
+                if (!$productItem) {
+                    return response()->json(['message' => 'Item pesanan produk tidak valid atau tidak sesuai dengan order_id'], 422);
+                }
+            } else {
+                // Fallback guard: resolve item from order_id + product_id (rateable_id)
+                $productItem = ProductOrderItem::where('order_id', $order->id)
+                    ->where('product_id', $data['rateable_id'])
+                    ->first();
+
+                if (!$productItem) {
+                    return response()->json(['message' => 'Produk tidak ditemukan dalam pesanan ini'], 422);
+                }
+
+                $orderItemId = $productItem->id;
+            }
 
             $existingRating = Rating::where('order_item_id', $orderItemId)
                 ->exists();
         } else {
-            $jasaItem = JasaOrderItem::where('order_id', $order->id)
-                ->where('jasa_id', $data['rateable_id'])
-                ->first();
-
-            if (!$jasaItem) {
-                return response()->json(['message' => 'Jasa tidak ditemukan dalam pesanan ini'], 404);
+            if ($orderItemId !== null) {
+                return response()->json(['message' => 'order_item_id harus null untuk rating jasa'], 422);
             }
 
-            $jasaOrderItemId = $jasaItem->id;
+            if ($jasaOrderItemId !== null) {
+                // Validate exists in jasa_order_items and belongs to this order
+                $jasaItem = JasaOrderItem::where('id', $jasaOrderItemId)
+                    ->where('order_id', $order->id)
+                    ->first();
+                if (!$jasaItem) {
+                    return response()->json(['message' => 'Item pesanan jasa tidak valid atau tidak sesuai dengan order_id'], 422);
+                }
+            } else {
+                // Fallback guard: resolve item from order_id + jasa_id (rateable_id)
+                $jasaItem = JasaOrderItem::where('order_id', $order->id)
+                    ->where('jasa_id', $data['rateable_id'])
+                    ->first();
+
+                if (!$jasaItem) {
+                    return response()->json(['message' => 'Jasa tidak ditemukan dalam pesanan ini'], 422);
+                }
+
+                $jasaOrderItemId = $jasaItem->id;
+            }
 
             $existingRating = Rating::where('order_id', $order->id)
                 ->where('jasa_order_item_id', $jasaOrderItemId)

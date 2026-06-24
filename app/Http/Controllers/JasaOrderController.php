@@ -304,7 +304,7 @@ class JasaOrderController extends Controller
 
         $orders = Order::with([
             'merchant:id,name,slug,logo_path,segmentation_id',
-            'jasaItems:id,order_id,jasa_id,service_type,order_method',
+            'jasaItems',
             'jasaItems.jasa:id,title,image,service_type',
             'jasaItems.jasa.categories',
             'jasaItems.review',
@@ -348,7 +348,10 @@ class JasaOrderController extends Controller
             $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa?->image_url ?? null;
             $totalPrice = $order->total_payment_snapshot ?? $order->total_price ?? 0;
             $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
-            $serviceType = $jasaItem?->service_type_snapshot ?? $jasaItem?->service_type ?? null;
+            $serviceType = $jasaItem?->service_type_snapshot 
+                ?? $jasaItem?->service_type 
+                ?? $jasaItem?->jasa?->service_type 
+                ?? null;
             $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
             $orderMethod = $jasaItem?->order_method ?? null;
             $orderMethodLabel = $this->getOrderMethodLabel($orderMethod);
@@ -398,6 +401,7 @@ class JasaOrderController extends Controller
             return [
                 'id' => $order->id,
                 'order_id' => $order->id,
+                'order_type' => 'jasa',
                 'jasa_order_item_id' => $jasaItem?->id,
                 'status' => $order->status,
                 'order_status' => $order->status,
@@ -511,7 +515,7 @@ class JasaOrderController extends Controller
             'merchant.primaryAddress.city',
             'merchant.primaryAddress.district',
             'merchant.primaryAddress.village',
-            'jasaItems.jasa:id,title,image,description',
+            'jasaItems.jasa:id,title,image,description,service_type',
             'jasaItems.jasa.categories',
             'jasaItems.review',
             'jasaItems.completionEvidences',
@@ -565,7 +569,10 @@ class JasaOrderController extends Controller
         $customerNote = $jasaItem?->customer_note_snapshot ?? $jasaItem?->booking_note ?? null;
         $offerNote = $jasaItem?->offer_note_snapshot ?? null;
         $agreedAt = $jasaItem?->agreed_at?->toISOString() ?? null;
-        $serviceType = $jasaItem?->service_type_snapshot ?? $jasaItem?->service_type ?? null;
+        $serviceType = $jasaItem?->service_type_snapshot 
+            ?? $jasaItem?->service_type 
+            ?? $jasaItem?->jasa?->service_type 
+            ?? null;
         $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
         $orderMethod = $jasaItem?->order_method ?? null;
         $categoryName = $jasaItem?->jasa?->categories?->first()?->name ?? null;
@@ -631,7 +638,10 @@ class JasaOrderController extends Controller
         return ApiResponse::success([
             'id' => $order->id,
             'order_id' => $order->id,
+            'order_type' => 'jasa',
+            'invoice' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            'nomor_pesanan' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'jasa_order_item_id' => $jasaItem?->id,
             'status' => $order->status,
             'order_status' => $order->status,
@@ -646,9 +656,11 @@ class JasaOrderController extends Controller
             'subtotal' => $subtotal,
             'payment_fee' => $paymentFee,
             'platform_fee' => $platformFee,
+            'admin_fee' => $platformFee,
             'is_cod' => $isCod,
             'total_price' => $totalPrice,
             'total_payment' => $totalPayment,
+            'total' => $totalPayment,
             'paid_at' => $order->paid_at?->toISOString(),
             'confirm_deadline' => $order->confirm_deadline?->toISOString(),
             'cancelled_at' => $order->cancelled_at?->toISOString(),
@@ -664,11 +676,19 @@ class JasaOrderController extends Controller
             // Customer info
             'customer_name' => $customerName,
             'customer_phone' => $customerPhone,
+            'customer' => [
+                'id' => $order->user_id,
+                'name' => $customerName,
+                'phone' => $customerPhone,
+                'email' => $order->user?->email ?? '',
+                'profile_picture' => $order->user?->profile_picture ?? null,
+            ],
             // Service info (flat + inside jasa_order_item)
             'service_name' => $serviceTitle,
             'category_name' => $categoryName,
             'service_type' => $serviceType,
             'service_type_label' => $serviceTypeLabel,
+            'tipe_layanan' => $serviceTypeLabel,
             'service_location_address' => $serviceLocationAddress,
             'service_image' => $serviceImage,
             // Booking
@@ -686,6 +706,34 @@ class JasaOrderController extends Controller
                 'slug' => $order->merchant?->slug,
             ],
             'service_description' => $serviceDescription,
+            'items' => [
+                [
+                    'id' => $jasaItem?->id,
+                    'jasa_order_item_id' => $jasaItem?->id,
+                    'name' => $serviceTitle,
+                    'service_name' => $serviceTitle,
+                    'service_name_snapshot' => $serviceTitle,
+                    'image_url' => $serviceImage,
+                    'service_image_snapshot' => $serviceImage,
+                    'image' => $serviceImage,
+                    'price' => $subtotal,
+                    'total_price' => $totalPrice,
+                    'qty' => 1,
+                    'quantity' => 1,
+                    'category' => $categoryName,
+                    'category_name' => $categoryName,
+                    'category_name_snapshot' => $categoryName,
+                    'subtotal' => $subtotal,
+                ]
+            ],
+            'amounts' => [
+                'subtotal' => $subtotal,
+                'discount' => 0,
+                'shipping' => 0,
+                'platform_fee' => $platformFee,
+                'admin_fee' => $platformFee,
+                'total' => $totalPayment,
+            ],
             'jasa_order_item' => [
                 'id' => $jasaItem?->id,
                 'service_type' => $serviceType,
@@ -1013,10 +1061,10 @@ class JasaOrderController extends Controller
         $perPage = $request->get('per_page', 20);
         $status = $request->get('status');
 
-        // NOTE: Load jasaItems WITHOUT eager-loading jasa relation to avoid live data reads.
-        // Use snapshot accessors instead: $jasaItem->jasa_title
+        // NOTE: Load jasaItems with snapshot fields and fallbacks.
         $query = Order::with([
-            'jasaItems:id,order_id,jasa_id,jasa_title_snapshot,completion_note',
+            'jasaItems',
+            'jasaItems.jasa:id,title,image,service_type',
             'jasaItems.completionEvidences'
         ])
             ->where('merchant_id', $merchant->id)
@@ -1034,11 +1082,33 @@ class JasaOrderController extends Controller
 
             $jasaItem = $order->jasaItems->first();
 
-            // Use snapshot accessors: jasa_title (snapshot > live)
-            // Use customer_name (snapshot > user > nama)
+            $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
+            $paymentChannel = $order->payment_channel_snapshot ?? $order->payment_channel;
+
+            $serviceType = $jasaItem?->service_type_snapshot 
+                ?? $jasaItem?->service_type 
+                ?? $jasaItem?->jasa?->service_type;
+            $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
+
+            $orderMethod = $jasaItem?->order_method ?? null;
+            $orderMethodLabel = $this->getOrderMethodLabel($orderMethod);
+
+            $serviceTitle = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa_title ?? 'Layanan';
+            $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa_image_url ?? null;
+            
+            // Standard/unified fields
+            $invoice = $order->order_code ?? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT));
+            $customerName = $order->customer_name_snapshot ?? $order->nama ?? 'Pelanggan';
+            $customerPhone = $order->customer_phone_snapshot ?? $order->tel ?? '-';
+
             return [
                 'id' => $order->id,
                 'order_id' => $order->id,
+                'order_type' => 'jasa',
+                'invoice' => $invoice,
+                'order_number' => $invoice,
+                'formatted_order_number' => $invoice,
+                'nomor_pesanan' => $invoice,
                 'jasa_order_item_id' => $jasaItem?->id,
                 'status' => $order->status,
                 'order_status' => $order->status,
@@ -1047,23 +1117,46 @@ class JasaOrderController extends Controller
                 'rejected_by' => $order->rejected_by,
                 'rejection_reason' => $order->rejection_reason,
                 'payment_status' => $order->payment_status,
-                'payment_method' => $order->payment_method,
-                'total_price' => $order->total_price,
-                // Customer info dari SNAPSHOT
-                'customer_name' => $order->customer_name,
-                'customer_phone' => $order->customer_phone,
-                // Jasa info dari SNAPSHOT (jasa_title accessor: snapshot > live)
+                'payment_method' => $paymentMethod,
+                'payment_channel' => $paymentChannel,
+                'total_price' => (float) $order->total_price,
+                'total' => (float) $order->total_price,
+                'subtotal' => (float) ($order->subtotal_snapshot ?? $order->total_price),
+                'platform_fee' => (float) ($order->platform_fee_snapshot ?? 0),
+                'admin_fee' => (float) ($order->platform_fee_snapshot ?? 0),
+
+                // Customer info
+                'customer_name' => $customerName,
+                'customer_phone' => $customerPhone,
+                'customer_address' => $jasaItem?->service_location_address,
+                'customer' => [
+                    'id' => $order->user_id,
+                    'name' => $customerName,
+                    'phone' => $customerPhone,
+                ],
+
+                // Jasa info
                 'jasa' => [
                     'id' => $jasaItem?->jasa_id,
-                    'title' => $jasaItem?->jasa_title,
+                    'title' => $serviceTitle,
                     'image' => $jasaItem?->jasa_image_snapshot,
-                    'image_url' => $jasaItem?->jasa_image_url,
+                    'image_url' => $serviceImage,
                 ],
-                // Booking info dari SNAPSHOT accessors
+                'service_name' => $serviceTitle,
+                'service_image' => $serviceImage,
+                'service_type' => $serviceType,
+                'service_type_label' => $serviceTypeLabel,
+                'tipe_layanan' => $serviceTypeLabel,
+                
+                // Booking / Order method
                 'booking_date' => $jasaItem?->booking_date_snapshot ?? $jasaItem?->booking_date,
                 'booking_time' => $jasaItem?->booking_time_snapshot ?? $jasaItem?->booking_time,
+                'cara_pemesanan' => $orderMethod,
+                'cara_pemesanan_label' => $orderMethodLabel,
+                'order_method' => $orderMethod,
+                'order_method_label' => $orderMethodLabel,
+
                 'confirm_deadline' => $order->confirm_deadline?->toISOString(),
-                // SLA timestamps
                 'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
                 'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
                 'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
@@ -1098,6 +1191,253 @@ class JasaOrderController extends Controller
                 'last_page' => $orders->lastPage(),
             ],
         ]);
+    }
+
+    /**
+     * Get single service order detail (for merchant)
+     *
+     * @param Request $request
+     * @param string $merchantSlug
+     * @param int $orderId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function merchantShow(Request $request, string $merchantSlug, int $orderId)
+    {
+        if (!$orderId || $orderId === 0) {
+            return ApiResponse::error('ID pesanan tidak valid', 400);
+        }
+
+        $user = Auth::user();
+
+        $merchant = \App\Models\Merchant::where('slug', $merchantSlug)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$merchant) {
+            return ApiResponse::error('Merchant tidak ditemukan', 404);
+        }
+
+        $order = Order::with([
+            'user:id,name,phone,email',
+            'merchant:id,name,slug,logo_path,phone,segmentation_id',
+            'merchant.primaryAddress',
+            'merchant.primaryAddress.province',
+            'merchant.primaryAddress.city',
+            'merchant.primaryAddress.district',
+            'merchant.primaryAddress.village',
+            'jasaItems.jasa:id,title,image,description,service_type',
+            'jasaItems.jasa.categories',
+            'jasaItems.review',
+            'jasaItems.completionEvidences',
+        ])
+            ->where('id', $orderId)
+            ->where('merchant_id', $merchant->id)
+            ->where('order_type', 'jasa')
+            ->first();
+
+        if (!$order) {
+            return ApiResponse::error('Pesanan tidak ditemukan', 404);
+        }
+
+        // Auto-expire if deadline passed (source of truth: orders table)
+        $this->autoExpireOrder($order);
+
+        $jasaItem = $order->jasaItems->first();
+
+        $review = null;
+        if ($jasaItem) {
+            // Primary check: order_id + jasa_order_item_id
+            $review = Rating::with(['media'])->where('order_id', $order->id)
+                ->where('jasa_order_item_id', $jasaItem->id)
+                ->first();
+
+            // Fallback check: jasa_order_item_id
+            if (!$review) {
+                $review = Rating::with(['media'])->where('jasa_order_item_id', $jasaItem->id)
+                    ->first();
+            }
+        }
+        $isReviewed = $review !== null;
+        $canReview = false; // Merchant cannot submit review
+        $canUpdateReview = false;
+
+        // Use snapshot data (prioritize snapshot over live data)
+        $merchantName = $order->merchant_name_snapshot ?? $order->merchant?->name ?? 'Merchant';
+        $merchantPhone = $order->merchant_phone_snapshot ?? $order->merchant?->phone ?? null;
+        $customerName = $order->customer_name_snapshot ?? $order->user?->name ?? '-';
+        $customerPhone = $order->customer_phone_snapshot ?? $order->user?->phone ?? '-';
+        $serviceTitle = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa?->title ?? $jasaItem?->jasa?->name ?? null;
+        $serviceDescription = $jasaItem?->jasa_description_snapshot ?? $jasaItem?->jasa?->description ?? null;
+        $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa?->image_url ?? null;
+        $totalPrice = $order->total_payment_snapshot ?? $order->total_price ?? 0;
+        $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
+        $paymentChannel = $order->payment_channel_snapshot ?? $order->payment_channel ?? null;
+        $bookingDate = $jasaItem?->booking_date_snapshot ?? $jasaItem?->booking_date ?? null;
+        $bookingTime = $jasaItem?->booking_time_snapshot ?? $jasaItem?->booking_time ?? null;
+        $customerNote = $jasaItem?->customer_note_snapshot ?? $jasaItem?->booking_note ?? null;
+        $offerNote = $jasaItem?->offer_note_snapshot ?? null;
+        $agreedAt = $jasaItem?->agreed_at?->toISOString() ?? null;
+        $serviceType = $jasaItem?->service_type_snapshot 
+            ?? $jasaItem?->service_type 
+            ?? $jasaItem?->jasa?->service_type 
+            ?? null;
+        $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
+        $orderMethod = $jasaItem?->order_method ?? null;
+        $categoryName = $jasaItem?->jasa?->categories?->first()?->name ?? null;
+        $merchantAddress = $this->getMerchantFullAddress($order);
+        $serviceLocationAddress = $this->getServiceLocationAddress($serviceType, $order, $jasaItem);
+        // Get payment info
+        $payment = Payment::where('order_id', $orderId)->first();
+
+        // ─── Fee breakdown ────────────────────────────────────────────────────
+        // Use saved snapshots if available; otherwise derive for legacy orders
+        $isCod = strtoupper($paymentMethod) === 'COD';
+        $savedSubtotal = (float) ($order->subtotal_snapshot ?? 0);
+        $savedPlatformFee = (float) ($order->platform_fee_snapshot ?? 0);
+        $savedTotalPayment = (float) ($order->total_payment_snapshot ?? 0);
+        $savedPaymentFee = (float) ($order->payment_fee_snapshot ?? 0);
+
+        if ($savedSubtotal > 0 && $savedTotalPayment > 0) {
+            // New order: use saved snapshots
+            $subtotal = $savedSubtotal;
+            $platformFee = $isCod ? 0 : $savedPlatformFee;
+            $paymentFee = $savedPaymentFee;
+            $totalPayment = $savedTotalPayment;
+        } elseif ($savedTotalPayment > 0) {
+            // Legacy order: subtotal_snapshot is null, but total_payment_snapshot is set
+            // Try to derive service price from jasaOrderItem snapshots
+            $legacySubtotal = (float) ($jasaItem?->original_price_snapshot ?? 0);
+            if ($legacySubtotal <= 0) {
+                $legacySubtotal = (float) ($jasaItem?->jasa_price_snapshot ?? $order->total_price ?? 0);
+            }
+            $subtotal = $legacySubtotal;
+            $totalPayment = $savedTotalPayment;
+            $paymentFee = max($totalPayment - $subtotal, 0);
+            $platformFee = $isCod ? 0 : (
+                $savedPlatformFee > 0 ? $savedPlatformFee : $paymentFee
+            );
+        } else {
+            // Fully legacy order: no snapshots at all
+            $subtotal = (float) ($jasaItem?->original_price_snapshot ?? $order->total_price ?? 0);
+            $totalPayment = (float) ($order->total_price ?? 0);
+            $paymentFee = 0;
+            $platformFee = 0;
+        }
+        // Kept for response compatibility
+        $totalPrice = $totalPayment;
+
+        // Transform completion evidences from jasa_order_items relation
+        $completionEvidences = $order->jasaItems->flatMap(function ($item) {
+            return $item->completionEvidences;
+        })->map(function ($ev) {
+            return [
+                'id' => $ev->id,
+                'jasa_order_item_id' => $ev->jasa_order_item_id,
+                'file_path' => $ev->file_path,
+                'file_url' => $ev->file_url,
+                'image_url' => $ev->file_url,
+                'url' => $ev->file_url,
+                'file_type' => $ev->file_type ?? ($ev->is_video ? 'video' : 'image'),
+                'note' => $ev->note ?? null,
+                'created_at' => $ev->created_at?->toISOString(),
+            ];
+        });
+
+        return ApiResponse::success([
+            'id' => $order->id,
+            'order_id' => $order->id,
+            'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            'invoice' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            'nomor_pesanan' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            'jasa_order_item_id' => $jasaItem?->id,
+            'status' => $order->status,
+            'order_status' => $order->status,
+            'status_label' => $this->getServiceStatusLabel($order->status),
+            'cancelled_by' => $order->cancelled_by,
+            'rejected_by' => $order->rejected_by,
+            'rejection_reason' => $order->rejection_reason,
+            'payment_status' => $order->payment_status,
+            'payment_method' => $paymentMethod,
+            'payment_channel' => $paymentChannel,
+            // Fee breakdown
+            'subtotal' => $subtotal,
+            'payment_fee' => $paymentFee,
+            'platform_fee' => $platformFee,
+            'is_cod' => $isCod,
+            'total_price' => $totalPrice,
+            'total_payment' => $totalPayment,
+            'paid_at' => $order->paid_at?->toISOString(),
+            'confirm_deadline' => $order->confirm_deadline?->toISOString(),
+            'cancelled_at' => $order->cancelled_at?->toISOString(),
+            // SLA timestamps
+            'merchant_response_deadline' => $order->merchant_response_deadline?->toISOString(),
+            'merchant_responded_at' => $order->merchant_responded_at?->toISOString(),
+            'completion_submitted_at' => $order->completion_submitted_at?->toISOString(),
+            'completion_deadline_at' => $order->completion_deadline_at?->toISOString(),
+            'completed_at' => $order->completed_at?->toISOString(),
+            'completed_by' => $order->completed_by,
+            'auto_completed_at' => $order->auto_completed_at?->toISOString(),
+            'expired_at' => $order->expired_at?->toISOString(),
+            // Customer info
+            'customer_name' => $customerName,
+            'customer_phone' => $customerPhone,
+            // Service info (flat + inside jasa_order_item)
+            'service_name' => $serviceTitle,
+            'category_name' => $categoryName,
+            'service_type' => $serviceType,
+            'service_type_label' => $serviceTypeLabel,
+            'service_location_address' => $serviceLocationAddress,
+            'service_image' => $serviceImage,
+            // Booking
+            'booking_date' => $bookingDate,
+            'booking_time' => $bookingTime,
+            // Cara pemesanan
+            'cara_pemesanan' => $orderMethod,
+            'cara_pemesanan_label' => $this->getOrderMethodLabel($orderMethod),
+            // Merchant info
+            'merchant' => [
+                'id' => $order->merchant?->id,
+                'name' => $merchantName,
+                'phone' => $merchantPhone,
+                'address' => $merchantAddress,
+                'slug' => $order->merchant?->slug,
+            ],
+            'service_description' => $serviceDescription,
+            'jasa_order_item' => [
+                'id' => $jasaItem?->id,
+                'service_type' => $serviceType,
+                'service_type_label' => $serviceTypeLabel,
+                'booking_date' => $bookingDate,
+                'booking_time' => $bookingTime,
+                'booking_note' => $customerNote,
+                'offer_note' => $offerNote,
+                'agreed_at' => $agreedAt,
+                'service_location_address' => $serviceLocationAddress,
+                'customer_confirmed' => $jasaItem?->customer_confirmed,
+                'is_reviewed' => $jasaItem?->is_reviewed,
+                'completion_evidences' => $completionEvidences->toArray(),
+            ],
+            'payment' => $payment ? [
+                'id' => $payment->id,
+                'status' => $payment->status,
+                'invoice_url' => $payment->invoice_url,
+                'expired_at' => $payment->expired_at?->toISOString(),
+                'subtotal' => $subtotal,
+                'payment_fee' => $paymentFee,
+                'total_payment' => $totalPayment,
+                'payment_method' => $paymentMethod,
+                'payment_channel' => $paymentChannel,
+            ] : null,
+            'completion_evidences' => $completionEvidences->toArray(),
+            'completion_note' => $jasaItem?->completion_note ?? null,
+            'review' => $review ? $review->toArray() : null,
+            'is_reviewed' => $isReviewed,
+            'can_review' => $canReview,
+            'can_update_review' => $canUpdateReview,
+            'review_updated_count' => $review ? ($review->update_count ?? 0) : 0,
+            'is_review_updated' => $review && ($review->update_count ?? 0) >= 1,
+            'created_at' => $order->created_at->toISOString(),
+        ], 'Order detail fetched');
     }
 
     /**

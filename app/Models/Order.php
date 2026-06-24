@@ -438,4 +438,72 @@ class Order extends Model
             ?? $this->total
             ?? null;
     }
+
+    /**
+     * Accessor for gross_amount with Jasa fallback.
+     */
+    public function getGrossAmountAttribute($value)
+    {
+        if ($this->order_type === 'jasa') {
+            return (float) ($this->total_payment_snapshot ?? $this->total_price ?? $value ?? 0);
+        }
+        return (float) ($value ?? 0);
+    }
+
+    /**
+     * Accessor for platform_fee with Jasa fallback.
+     */
+    public function getPlatformFeeAttribute($value)
+    {
+        if ($this->order_type === 'jasa') {
+            return (float) ($this->platform_fee_snapshot ?? $this->platform_fee ?? $this->payment_fee_snapshot ?? $this->payment_fee ?? $value ?? 0);
+        }
+        return (float) ($value ?? 0);
+    }
+
+    /**
+     * Accessor for net_amount with Jasa fallback.
+     */
+    public function getNetAmountAttribute($value)
+    {
+        if ($this->order_type === 'jasa') {
+            $gross = $this->gross_amount;
+            $fee = $this->platform_fee;
+            return (float) ($gross - $fee);
+        }
+        return (float) ($value ?? 0);
+    }
+
+    /**
+     * Accessor for order_code with Jasa fallback.
+     */
+    public function getOrderCodeAttribute($value)
+    {
+        if ($this->order_type === 'jasa') {
+            return $value ?: 'SO-' . str_pad($this->id, 6, '0', STR_PAD_LEFT);
+        }
+        return $value;
+    }
+
+    /**
+     * Accessor for user_name_snapshot with Jasa fallback.
+     */
+    public function getUserNameSnapshotAttribute($value)
+    {
+        if ($this->order_type === 'jasa') {
+            return $value ?: ($this->customer_name_snapshot ?? $this->nama ?? 'Pelanggan');
+        }
+        return $value;
+    }
+
+    /**
+     * Accessor for delivery_type with Jasa fallback.
+     */
+    public function getDeliveryTypeAttribute($value)
+    {
+        if ($this->order_type === 'jasa') {
+            return 'Jasa';
+        }
+        return $value;
+    }
 }

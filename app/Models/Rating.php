@@ -163,7 +163,7 @@ class Rating extends Model
         return $query->where('order_item_id', $orderItemId);
     }
 
-    public function scopeWithRating($query, int $minRating = null, int $maxRating = null)
+    public function scopeWithRating($query, ?int $minRating = null, ?int $maxRating = null)
     {
         if ($minRating !== null) {
             $query->where('rating', '>=', $minRating);

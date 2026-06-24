@@ -69,13 +69,8 @@ class XenditInvoiceService
         }
 
         $frontendUrl = rtrim((string) config('services.xendit.frontend_url', config('app.frontend_url', 'http://localhost:5173')), '/');
-        if ($order->order_type === 'jasa') {
-            $successUrl = $frontendUrl . '/jasa-history';
-            $failureUrl = $frontendUrl . '/jasa-history';
-        } else {
-            $successUrl = $frontendUrl . '/orders/' . $order->id . '?payment=success';
-            $failureUrl = $frontendUrl . '/orders/' . $order->id . '?payment=failed';
-        }
+        $successUrl = $frontendUrl . '/orders/' . $order->id . '?payment=success';
+        $failureUrl = $frontendUrl . '/orders/' . $order->id . '?payment=failed';
 
         $payload = [
             'external_id' => $externalId,
@@ -92,9 +87,20 @@ class XenditInvoiceService
             'BCA', 'BNI', 'BRI', 'MANDIRI', 'PERMATA', 'CIMB', 'SAHABAT_SAMPOERNA',
             'ALFAMART', 'INDOMARET', 'OVO', 'DANA', 'SHOPEEPAY', 'LINKAJA', 'QRIS'
         ];
-        $method = strtoupper($order->payment_method ?? '');
-        if (in_array($method, $paymentMethodsList)) {
-            $payload['payment_methods'] = [$method];
+        
+        // Resolve target channel code from payment_channel, payment_channel_snapshot, or payment_method
+        $channel = strtoupper(
+            $order->payment_channel ??
+            $order->payment_channel_snapshot ??
+            $order->payment_method ??
+            ''
+        );
+        
+        // Clean up common variations (e.g. BNI_VA or BNI VA -> BNI)
+        $channel = str_replace(['_VA', ' VA'], '', $channel);
+        
+        if (in_array($channel, $paymentMethodsList)) {
+            $payload['payment_methods'] = [$channel];
         }
 
         // Add customer info

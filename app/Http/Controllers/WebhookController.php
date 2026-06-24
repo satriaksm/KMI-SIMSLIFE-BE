@@ -54,6 +54,8 @@ class WebhookController extends Controller
             return ApiResponse::error('Invalid payload', 400);
         }
 
+        Log::info('Xendit webhook received', $data);
+
         Log::info('[WebhookController] Received webhook', [
             'external_id' => $externalId,
             'status' => $data['status'] ?? null,
@@ -98,6 +100,12 @@ class WebhookController extends Controller
             return ApiResponse::error('Payment not found', 404);
         }
 
+        Log::info('Payment matched', [
+            'external_id' => $externalId,
+            'payment_id' => $payment->id,
+            'order_id' => $payment->order_id,
+        ]);
+
         // ❗ IDEMPOTENCY (ANTI DOUBLE TRIGGER)
         $processedStatusMap = [
             'paid' => 'PAID',
@@ -133,7 +141,7 @@ class WebhookController extends Controller
         // Handle based on status
         if ($status === 'PAID') {
             $allowedStatuses = $order->order_type === 'jasa'
-                ? ['menunggu_konfirmasi', 'menunggu_konfirmasi_merchant']
+                ? ['pending', 'menunggu_konfirmasi', 'menunggu_konfirmasi_merchant']
                 : ['pending'];
 
             if (!in_array($order->status, $allowedStatuses, true)) {
@@ -193,8 +201,8 @@ class WebhookController extends Controller
 
             if ($isJasa) {
                 $orderUpdate['status'] = 'menunggu_konfirmasi_merchant';
-                $orderUpdate['merchant_response_deadline'] = now()->addHours(24);
-                $orderUpdate['confirm_deadline'] = null; // Do not use confirm_deadline for jasa
+                $orderUpdate['confirm_deadline'] = now()->addMinutes(60);
+                $orderUpdate['merchant_response_deadline'] = now()->addMinutes(60);
             } else {
                 $orderUpdate['status'] = 'paid';
                 $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
@@ -202,6 +210,13 @@ class WebhookController extends Controller
             }
 
             $order->update($orderUpdate);
+
+            Log::info('Order updated after paid', [
+                'order_id' => $order->id,
+                'order_type' => $order->order_type,
+                'status' => $order->status,
+                'payment_status' => $order->payment_status,
+            ]);
 
             // 3. For product orders, increment balance_pending and record wallet history
             if (!$isJasa) {

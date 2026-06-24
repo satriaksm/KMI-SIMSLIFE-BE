@@ -495,8 +495,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
             // ===== MERCHANT ORDERS (JASA) =====
             // Get merchant orders from orders table + jasa_order_items
-            Route::get('orders', [ServiceOrderController::class, 'getMerchantOrders'])->name('orders.index');
-            Route::get('orders/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('orders.show');
             Route::match(['patch', 'post'], 'orders/{id}/status', [ServiceOrderController::class, 'updateMerchantOrderStatus'])->name('orders.update-status');
 
             // ===== MERCHANT REVIEWS (RATINGS) - Merchant reply to customer reviews =====
@@ -584,8 +582,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             });
 
             Route::prefix('orders')->group(function () {
-                Route::get('', [OrderController::class, 'merchantIndex']);
-                Route::get('/{order}', [OrderController::class, 'merchantShow']);
+                Route::get('', [OrderController::class, 'merchantIndex'])->name('orders.index');
+                Route::get('/{order}', [OrderController::class, 'merchantShow'])->name('orders.show');
                 Route::post('/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
             });
 

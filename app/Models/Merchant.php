@@ -301,10 +301,70 @@ class Merchant extends Model
     }
 
     /**
+     * Get balance_available with Jasa override
+     */
+    public function getBalanceAvailableAttribute($value)
+    {
+        if ((int) $this->segmentation_id === 3) {
+            // For Jasa, calculate dynamically from completed orders:
+            // sum of net_amount of completed ('selesai') Jasa orders, plus any payout adjustments (which are stored as negative numbers in the balance_available column because of decrements).
+            $completedOrdersNet = \App\Models\Order::where('merchant_id', $this->id)
+                ->where('order_type', 'jasa')
+                ->where(function ($q) {
+                    $q->where(function ($inner) {
+                        $inner->where('payment_method', 'COD')
+                            ->where('status', 'selesai');
+                    })->orWhere(function ($inner) {
+                        $inner->where('payment_method', '!=', 'COD')
+                            ->where('status', 'selesai')
+                            ->where('payment_status', 'PAID');
+                    });
+                })
+                ->get()
+                ->sum('net_amount');
+
+            // Add the column value (which tracks any payout adjustments)
+            return (float) ($completedOrdersNet + ($value ?? 0));
+        }
+        return (float) ($value ?? 0);
+    }
+
+    /**
+     * Get balance_pending with Jasa override
+     */
+    public function getBalancePendingAttribute($value)
+    {
+        if ((int) $this->segmentation_id === 3) {
+            // For Jasa, balance_pending in reports is mapped to completed orders within the last 24 hours
+            return (float) $this->balance_held;
+        }
+        return (float) ($value ?? 0);
+    }
+
+    /**
      * Get balance that is currently held (completed within the last 24 hours)
      */
     public function getBalanceHeldAttribute()
     {
+        if ((int) $this->segmentation_id === 3) {
+            // For Jasa, calculate held balance dynamically from completed orders in the last 24 hours
+            return (float) \App\Models\Order::where('merchant_id', $this->id)
+                ->where('order_type', 'jasa')
+                ->where('updated_at', '>', now()->subHours(24))
+                ->where(function ($q) {
+                    $q->where(function ($inner) {
+                        $inner->where('payment_method', 'COD')
+                            ->where('status', 'selesai');
+                    })->orWhere(function ($inner) {
+                        $inner->where('payment_method', '!=', 'COD')
+                            ->where('status', 'selesai')
+                            ->where('payment_status', 'PAID');
+                    });
+                })
+                ->get()
+                ->sum('net_amount');
+        }
+
         return \App\Models\MerchantWalletHistory::where('merchant_id', $this->id)
             ->where('type', 'release')
             ->where('reference_type', 'order')
