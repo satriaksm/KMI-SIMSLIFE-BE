@@ -13,6 +13,7 @@ class Order extends Model
         'user_id',
         'merchant_id',
         'voucher_id',
+        'order_type',
         'order_code',
         'subtotal',
         'discount_total',
