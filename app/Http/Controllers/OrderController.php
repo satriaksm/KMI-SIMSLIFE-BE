@@ -437,17 +437,11 @@ class OrderController extends Controller
                 $path = $request->file('proof_image')->store('orders/proofs', 'public');
                 $order->proof_image_path = $path;
             }
-            if ($request->filled('failed_reason')) {
-                $order->failed_reason = $request->input('failed_reason');
-            }
             
             // Release funds for undelivered as the UMKM has prepared and tried to deliver
             $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'unpicked') {
             $order->unpicked_at = now();
-            if ($request->filled('failed_reason')) {
-                $order->failed_reason = $request->input('failed_reason');
-            }
             $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'completed') {
             $order->completed_at = now();
@@ -459,6 +453,13 @@ class OrderController extends Controller
         } elseif ($newStatus === 'cancelled') {
             $order->cancelled_at = now();
             $this->refundBalancePendingIfNeeded($order);
+        }
+        
+        // Simpan alasan pembatalan/penolakan jika ada
+        if (in_array($newStatus, ['rejected', 'cancelled', 'undelivered', 'unpicked'])) {
+            if ($request->filled('failed_reason')) {
+                $order->failed_reason = $request->input('failed_reason');
+            }
         }
         
         $order->save();
