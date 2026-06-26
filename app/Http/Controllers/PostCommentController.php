@@ -28,8 +28,8 @@ class PostCommentController extends Controller
 
         // Only load top-level comments with their direct replies
         $query = $post->topLevelComments()->with([
-            'user:id,name,profile_picture_path',
-            'replies.user:id,name,profile_picture_path',
+            'user:id,name,profile_picture_path,updated_at',
+            'replies.user:id,name,profile_picture_path,updated_at',
             'replies.replyToUser:id,name', 
         ]);
 
@@ -167,7 +167,7 @@ class PostCommentController extends Controller
                 'comment_content' => trim($request->comment_content),
             ]);
 
-            $comment->load(['user:id,name,profile_picture_path', 'replyToUser:id,name']);
+            $comment->load(['user:id,name,profile_picture_path,updated_at', 'replyToUser:id,name']);
 
             return response()->json($this->formatCommentResource($comment), 201);
         } catch (\Exception $e) {
@@ -275,7 +275,7 @@ class PostCommentController extends Controller
 
         $perPage = min($request->get('per_page', 10), 50);
         $replies = $comment->replies()
-            ->with(['user:id,name,profile_picture_path', 'replyToUser:id,name'])
+            ->with(['user:id,name,profile_picture_path,updated_at', 'replyToUser:id,name'])
             ->oldest('created_at')
             ->paginate($perPage);
 
@@ -305,7 +305,7 @@ class PostCommentController extends Controller
         $perPage = min($request->get('per_page', 15), 100);
 
         $comments = PostComment::with([
-            'user:id,name,profile_picture_path',
+            'user:id,name,profile_picture_path,updated_at',
             'post:id,post_title,post_slug',
             'replyToUser:id,name'
         ])
@@ -348,6 +348,7 @@ class PostCommentController extends Controller
                 'id' => $comment->user->id,
                 'name' => $comment->user->name,
                 'profile_picture' => $comment->user->profile_picture,
+                'profile_picture_urls' => $comment->user->profile_picture_urls,
             ],
         ];
 

@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\MerchantApprovalMail;
 use App\Mail\MerchantRejectionMail;
+use Illuminate\Validation\Rule;
+use App\Services\ImageOptimizationService;
 
 class AdminMerchantController extends Controller
 {
@@ -833,29 +835,34 @@ class AdminMerchantController extends Controller
      */
     public function showLogo(Request $request, Merchant $merchant)
     {
+        $size = $request->query('size', 'original');
         // Support signed URL for secure access
         if ($request->hasValidSignature()) {
-            return $this->streamMerchantLogo($merchant);
+            return $this->streamMerchantLogo($merchant, $size);
         }
 
         // Public access for now (you can add auth checks later)
-        return $this->streamMerchantLogo($merchant);
+        return $this->streamMerchantLogo($merchant, $size);
     }
 
     /**
      * Private method to stream merchant logo
      */
-    private function streamMerchantLogo(Merchant $merchant)
+    private function streamMerchantLogo(Merchant $merchant, string $size = 'original')
     {
         if (empty($merchant->logo_path)) {
             abort(404);
         }
 
         $disk = 'public';
-        $path = ltrim($merchant->logo_path, '/');
+        $originalPath = ltrim($merchant->logo_path, '/');
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath;
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
