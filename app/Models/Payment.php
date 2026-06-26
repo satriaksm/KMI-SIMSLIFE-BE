@@ -10,11 +10,13 @@ class Payment extends Model
         'order_id',
         'external_id',
         'xendit_invoice_id',
+        'xendit_refund_id',
         'invoice_url',
         'payment_method',
         'expired_at',
         'amount',
         'status',
+        'refund_status',
         'paid_at',
         'raw_response',
     ];

@@ -13,6 +13,7 @@ class Order extends Model
         'user_id',
         'merchant_id',
         'voucher_id',
+        'order_type',
         'order_code',
         'subtotal',
         'discount_total',
@@ -25,13 +26,14 @@ class Order extends Model
         'notes',
 
         'status',
-        'responsed_at',
         'accepted_at',
         'rejected_at',
         'paid_at',
         'delivered_at',
         'completed_at',
         'cancelled_at',
+        'ready_to_pickup_at',
+        'unpicked_at',
         'confirm_deadline',
 
         'proof_image_path',
@@ -49,13 +51,14 @@ class Order extends Model
     ];
 
     protected $casts = [
-        'responsed_at' => 'datetime',
         'accepted_at' => 'datetime',
         'rejected_at' => 'datetime',
         'paid_at' => 'datetime',
         'delivered_at' => 'datetime',
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'ready_to_pickup_at' => 'datetime',
+        'unpicked_at' => 'datetime',
         'confirm_deadline' => 'datetime',
     ];
 

@@ -142,6 +142,12 @@ class DashboardController extends Controller
          */
         $ordersToday = \App\Models\Order::where('merchant_id', $merchantId)
             ->whereDate('created_at', today())
+            ->where(function ($q) {
+                $q->where('status', '!=', 'pending')
+                  ->orWhere(function ($sq) {
+                      $sq->where('status', 'pending')->where('payment_method', 'COD');
+                  });
+            })
             ->count();
 
         $ordersPending = \App\Models\Order::where('merchant_id', $merchantId)
