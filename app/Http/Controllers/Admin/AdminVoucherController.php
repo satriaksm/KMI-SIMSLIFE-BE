@@ -106,7 +106,16 @@ class AdminVoucherController extends Controller
                 'voucher_name' => 'required|string|max:100|unique:vouchers,voucher_name', // ✅ ADD unique
                 'voucher_description' => 'nullable|string',
                 'voucher_type' => 'required|in:percent,fixed',
-                'value' => 'required|numeric|min:1',
+                'value' => [
+                    'required',
+                    'numeric',
+                    'min:1',
+                    function ($attribute, $value, $fail) use ($request) {
+                        if ($request->input('voucher_type') === 'percent' && $value > 100) {
+                            $fail('Jika persentase, nilai tidak boleh lebih dari 100');
+                        }
+                    },
+                ],
                 'voucher_status' => 'required|in:active,inactive',
                 'voucher_start_date' => 'required|date',
                 'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',

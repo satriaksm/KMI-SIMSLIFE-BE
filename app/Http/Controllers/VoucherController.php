@@ -21,7 +21,8 @@ class VoucherController extends Controller
     public function index(Request $request)
     {
         $query = Voucher::with(['merchant:id,name,logo_path', 'event:id,event_name'])
-            ->active();
+            ->active()
+            ->where('is_hidden', false);
 
         // Filter by merchant
         if ($request->has('merchant_id')) {
@@ -57,6 +58,7 @@ class VoucherController extends Controller
         $validator = Validator::make($request->all(), [
             'voucher_code' => 'required|string|exists:vouchers,voucher_code',
             'order_amount' => 'required|numeric|min:0',
+            'merchant_id' => 'required|exists:merchants,id',
         ]);
 
         if ($validator->fails()) {
@@ -66,7 +68,17 @@ class VoucherController extends Controller
             ], 422);
         }
 
+        $merchantId = $request->merchant_id;
+        $acceptedEventIds = DB::table('event_merchants')
+            ->select('event_id')
+            ->where('merchant_id', $merchantId)
+            ->where('status', 'accepted');
+
         $voucher = Voucher::where('voucher_code', $request->voucher_code)
+            ->where(function ($q) use ($merchantId, $acceptedEventIds) {
+                $q->where('merchant_id', $merchantId)
+                    ->orWhereIn('event_id', $acceptedEventIds);
+            })
             ->active()
             ->first();
 
@@ -165,6 +177,7 @@ class VoucherController extends Controller
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'nullable|integer|min:1',
+            'is_hidden' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -183,6 +196,7 @@ class VoucherController extends Controller
             'voucher_end_date' => $request->voucher_end_date,
             'usage_limit_per_user' => $request->usage_limit_per_user,
             'usage_limit' => $request->usage_limit,
+            'is_hidden' => $request->is_hidden ?? false,
         ]);
 
         return response()->json([
@@ -287,13 +301,23 @@ class VoucherController extends Controller
             'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
             'voucher_description' => 'nullable|string',
             'voucher_type' => 'required|in:percent,fixed',
-            'value' => 'required|numeric|min:0',
+            'value' => [
+                'required',
+                'numeric',
+                'min:0',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('voucher_type') === 'percent' && $value > 100) {
+                        $fail('Maksimal persentase adalah 100');
+                    }
+                },
+            ],
             'voucher_start_date' => 'required|date',
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
             'max_discount_amount' => 'nullable|numeric|min:0',
             'min_purchase_amount' => 'nullable|numeric|min:0',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'nullable|integer|min:1',
+            'is_hidden' => 'nullable|boolean',
         ]);
 
         return $merchant->vouchers()->create($data);
@@ -462,13 +486,23 @@ class VoucherController extends Controller
             'voucher_code' => 'required|string|max:255',
             'voucher_description' => 'required|string',
             'voucher_type' => 'required|in:percent,fixed',
-            'value' => 'required|numeric|min:1',
+            'value' => [
+                'required',
+                'numeric',
+                'min:1',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('voucher_type') === 'percent' && $value > 100) {
+                        $fail('Maksimal persentase adalah 100');
+                    }
+                },
+            ],
             'voucher_start_date' => 'required|date',
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
             'min_purchase_amount' => 'required|numeric|min:0',
             'max_discount_amount' => 'nullable|numeric|min:0|required_if:voucher_type,percent',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'required|integer|min:0',
+            'is_hidden' => 'nullable|boolean',
         ]);
 
         // Jika tidak dikirim, set null
@@ -630,6 +664,7 @@ class VoucherController extends Controller
                     ->orWhereIn('event_id', $acceptedEventIds);
             })
             ->active()
+            ->where('is_hidden', false)
 
             // ⬅️ hitung total pemakaian
             ->withCount('usages')
@@ -732,6 +767,7 @@ class VoucherController extends Controller
                     ->orWhereIn('event_id', $acceptedEventIds);
             })
             ->active()
+            ->where('is_hidden', false)
             ->withCount('usages');
 
         // Filter by minimum purchase amount if provided

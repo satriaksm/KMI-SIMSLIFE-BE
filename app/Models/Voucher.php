@@ -15,6 +15,7 @@ class Voucher extends Model
         'voucher_name',
         'voucher_code',
         'voucher_status',
+        'is_hidden',
         'voucher_type',
         'voucher_description',
         'voucher_start_date',
@@ -32,6 +33,7 @@ class Voucher extends Model
         'value' => 'decimal:2',
         'max_discount_amount' => 'decimal:2',
         'min_purchase_amount' => 'decimal:2',
+        'is_hidden' => 'boolean',
     ];
 
     public function merchant()
