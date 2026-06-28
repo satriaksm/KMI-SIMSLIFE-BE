@@ -199,6 +199,37 @@ class WebhookController extends Controller
                 'paid_channel' => $paymentChannel,
             ];
 
+            // Recalculate platform fee based on actual payment channel used on Xendit
+            if ($paymentChannel) {
+                $feeCode = 'VA'; // Default
+                $vaMethods = ['BCA', 'BNI', 'BRI', 'MANDIRI', 'PERMATA', 'CIMB'];
+                $ewallet15 = ['OVO', 'DANA', 'LINKAJA'];
+                
+                $upperChannel = strtoupper($paymentChannel);
+                if ($upperChannel === 'QRIS') {
+                    $feeCode = 'QRIS';
+                } elseif (in_array($upperChannel, $ewallet15)) {
+                    $feeCode = 'EWALLET';
+                } elseif ($upperChannel === 'SHOPEEPAY') {
+                    $feeCode = 'SHOPEEPAY';
+                } elseif ($upperChannel === 'ALFAMART' || $upperChannel === 'INDOMARET') {
+                    $feeCode = 'RETAIL';
+                }
+
+                $feeConfig = \App\Models\PaymentFee::where('method_code', $feeCode)->first();
+                if ($feeConfig) {
+                    $baseGross = max(0, (float) $order->subtotal - (float) $order->discount_total + (float) $order->delivery_fee_snapshot);
+                    if ($feeConfig->type === 'percentage') {
+                        $actualPlatformFee = (int) ceil($baseGross * ($feeConfig->value / 100));
+                    } else {
+                        $actualPlatformFee = (int) $feeConfig->value;
+                    }
+                    $orderUpdate['platform_fee'] = $actualPlatformFee;
+                    // Note: Since gross_amount is fixed by the invoice paid, we adjust net_amount
+                    $orderUpdate['net_amount'] = max(0, (float) $order->gross_amount - $actualPlatformFee);
+                }
+            }
+
             if ($isJasa) {
                 $orderUpdate['status'] = 'menunggu_konfirmasi_merchant';
                 $orderUpdate['confirm_deadline'] = now()->addMinutes(60);

@@ -24,9 +24,9 @@ class ShippingController extends Controller
 
         if (!$setting) {
             return ApiResponse::success([
-                'base_cost' => 0,
-                'cost_per_km' => 0,
-            ], 'No active shipping setting');
+                'base_cost' => 15000,
+                'cost_per_km' => 5000,
+            ], 'Using default active shipping setting');
         }
 
         return ApiResponse::success([
@@ -97,8 +97,8 @@ class ShippingController extends Controller
         }
 
         $setting = ShippingSetting::query()->where('status', 'active')->first();
-        $baseCost = $setting ? (float) $setting->base_cost : 0;
-        $costPerKm = $setting ? (float) $setting->cost_per_km : 0;
+        $baseCost = $setting ? (float) $setting->base_cost : 15000;
+        $costPerKm = $setting ? (float) $setting->cost_per_km : 5000;
 
         $distanceKm = self::haversineDistance(
             (float) $merchantAddress->latitude,

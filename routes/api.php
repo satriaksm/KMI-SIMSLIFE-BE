@@ -98,6 +98,10 @@ Route::prefix('public')->name('public.')->group(function () {
 
     Route::prefix('products')->name('products.')->group(function () {
 
+        Route::get('/{productId}', [ProductController::class, 'publicShowById'])
+            ->where('productId', '^[0-9]+$')
+            ->name('show.id');
+
         Route::get('/{product:slug}', [ProductController::class, 'publicShow'])
             ->where('slug', '^[A-Za-z0-9-]+$')
             ->name('show');

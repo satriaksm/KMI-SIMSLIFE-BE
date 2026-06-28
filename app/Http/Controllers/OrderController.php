@@ -121,7 +121,7 @@ class OrderController extends Controller
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
-                'items.review',
+                'items.review.media',
                 'payment',
             ]),
             'Order fetched'
@@ -883,10 +883,9 @@ class OrderController extends Controller
         if (!$customerAddress->latitude || !$customerAddress->longitude) return 0;
 
         $setting = ShippingSetting::query()->where('status', 'active')->first();
-        if (!$setting) return 0;
-
-        $baseCost  = (float) $setting->base_cost;
-        $costPerKm = (float) $setting->cost_per_km;
+        
+        $baseCost  = $setting ? (float) $setting->base_cost : 15000;
+        $costPerKm = $setting ? (float) $setting->cost_per_km : 5000;
 
         $distanceKm = ShippingController::haversineDistance(
             (float) $merchantAddress->latitude,

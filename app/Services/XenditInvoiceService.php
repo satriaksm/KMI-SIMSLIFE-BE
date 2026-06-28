@@ -122,6 +122,25 @@ class XenditInvoiceService
             ->post($this->baseUrl . '/v2/invoices', $payload);
 
         if (!$response->successful()) {
+            $errBody = $response->json();
+            $errCode = $errBody['error_code'] ?? '';
+            
+            // If the specific payment method is unavailable/unsupported on this Xendit account,
+            // fallback to general invoice (without restricting payment methods) and try again.
+            if ($errCode === 'UNAVAILABLE_PAYMENT_METHOD_ERROR' && isset($payload['payment_methods'])) {
+                Log::warning('[XenditInvoiceService] Payment method unsupported, retrying without payment_methods filter', [
+                    'external_id' => $externalId,
+                    'unsupported_method' => $payload['payment_methods'],
+                ]);
+                unset($payload['payment_methods']);
+                
+                $response = Http::withBasicAuth($this->secretKey, '')
+                    ->acceptJson()
+                    ->post($this->baseUrl . '/v2/invoices', $payload);
+            }
+        }
+
+        if (!$response->successful()) {
             Log::error('[XenditInvoiceService] Xendit API error', [
                 'external_id' => $externalId,
                 'status' => $response->status(),
