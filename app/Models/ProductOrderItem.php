@@ -23,6 +23,7 @@ class ProductOrderItem extends Model
         'is_reviewed',
         'can_review',
         'can_update_review',
+        'price',
     ];
 
     public function order()
@@ -33,6 +34,11 @@ class ProductOrderItem extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function service()
+    {
+        return $this->belongsTo(Jasa::class, 'product_id');
     }
 
     public function variant()
@@ -48,6 +54,11 @@ class ProductOrderItem extends Model
     public function review()
     {
         return $this->hasOne(Rating::class, 'order_item_id');
+    }
+
+    public function getPriceAttribute($value)
+    {
+        return $value !== null ? (float)$value : (float)($this->unit_price_snapshot ?? 0);
     }
 
     public function getIsReviewedAttribute(): bool

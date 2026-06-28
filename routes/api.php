@@ -509,6 +509,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             // ===== JASA ORDERS (MERCHANT) =====
             Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
                 Route::get('/', [JasaOrderController::class, 'merchantOrders'])->name('merchant-history');
+                Route::get('/{orderId}', [JasaOrderController::class, 'merchantShow'])->name('show');
                 Route::patch('/{orderId}/status', [JasaOrderController::class, 'updateStatus'])->name('update-status');
             });
 

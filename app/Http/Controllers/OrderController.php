@@ -63,6 +63,7 @@ class OrderController extends Controller
             })
             ->with([
                 'merchant',
+                'orderItems.product',
                 'items.addons.addon',
                 'payment',
             ])
@@ -116,6 +117,7 @@ class OrderController extends Controller
                 'merchant.primaryAddress.district',
                 'merchant.primaryAddress.city',
                 'merchant.primaryAddress.province',
+                'orderItems.product',
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
@@ -237,6 +239,7 @@ class OrderController extends Controller
                 $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
             })
             ->with([
+                'orderItems.product',
                 'items.addons.addon',
                 'payment'
             ]);
@@ -387,6 +390,7 @@ class OrderController extends Controller
         return ApiResponse::success(
             $order->load([
                 'merchant.primaryAddress',
+                'orderItems.product',
                 'items.product',
                 'items.variant',
                 'items.addons.addon',

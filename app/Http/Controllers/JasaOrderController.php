@@ -519,6 +519,7 @@ class JasaOrderController extends Controller
             'jasaItems.jasa.categories',
             'jasaItems.review',
             'jasaItems.completionEvidences',
+            'payment',
         ])
             ->where('id', $orderId)
             ->where('user_id', $customerId)
@@ -1013,6 +1014,45 @@ class JasaOrderController extends Controller
             return false;
         }
 
+        // 1. Pending payment expired (Transfer belum bayar - batas waktu 2 jam)
+        if (strtoupper($order->payment_method ?? '') !== 'COD') {
+            // Check if related payment has expired
+            if ($order->payment && $order->payment->expired_at && now()->greaterThan($order->payment->expired_at)) {
+                $order->update([
+                    'status' => 'batal',
+                    'cancelled_at' => now(),
+                ]);
+                $order->status = 'batal';
+                $order->cancelled_at = now();
+
+                $order->payment->update(['status' => 'EXPIRED']);
+
+                Log::info('[JasaOrderController] Order payment expired, auto-cancelled (2 hours)', [
+                    'order_id' => $order->id,
+                    'payment_id' => $order->payment->id,
+                    'expired_at' => $order->payment->expired_at->toISOString(),
+                ]);
+                return true;
+            }
+
+            // Check if no payment record but order created more than 2 hours ago
+            if (!$order->payment && now()->diffInHours($order->created_at) >= 2) {
+                $order->update([
+                    'status' => 'batal',
+                    'cancelled_at' => now(),
+                ]);
+                $order->status = 'batal';
+                $order->cancelled_at = now();
+
+                Log::info('[JasaOrderController] Order has no payment and is > 2 hours old, auto-cancelled', [
+                    'order_id' => $order->id,
+                    'created_at' => $order->created_at->toISOString(),
+                ]);
+                return true;
+            }
+        }
+
+        // 2. Merchant response deadline passed (UMKM tidak konfirmasi)
         if (!$order->merchant_response_deadline) {
             return false;
         }
@@ -1031,7 +1071,7 @@ class JasaOrderController extends Controller
         $order->status = 'expired';
         $order->expired_at = now();
 
-        Log::info('[JasaOrderController] Order auto-expired', [
+        Log::info('[JasaOrderController] Order response deadline passed, auto-expired', [
             'order_id' => $order->id,
             'deadline' => $order->merchant_response_deadline->toISOString(),
         ]);
@@ -1229,6 +1269,8 @@ class JasaOrderController extends Controller
             'jasaItems.jasa.categories',
             'jasaItems.review',
             'jasaItems.completionEvidences',
+            'orderItems.service',
+            'payment',
         ])
             ->where('id', $orderId)
             ->where('merchant_id', $merchant->id)
