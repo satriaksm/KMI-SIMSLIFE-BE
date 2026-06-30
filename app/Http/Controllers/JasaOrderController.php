@@ -862,7 +862,7 @@ class JasaOrderController extends Controller
         }
 
         // Only allow cancel from cancellable statuses
-        $cancellableStatuses = ['pending', 'menunggu_konfirmasi_merchant'];
+        $cancellableStatuses = ['pending', 'menunggu_konfirmasi_merchant', 'menunggu_konfirmasi'];
         if (!in_array($order->status, $cancellableStatuses)) {
             return ApiResponse::error(
                 "Pesanan dengan status '{$order->status}' tidak dapat dibatalkan.",
