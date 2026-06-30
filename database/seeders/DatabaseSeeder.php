@@ -9,16 +9,16 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([
-            MasterDataSeeder::class,
+            // MasterDataSeeder::class,
             CategorySeeder::class,
             RoleSeeder::class,
             UserSeeder::class,
             SegmentationSeeder::class,
-            // MerchantSeeder::class,
-                // JasaSeeder::class,
-                // ProductSeeder::class,
-                // VoucherSeeder::class,
-                // PaguyubanSeeder::class,
+            MerchantSeeder::class,
+            // JasaSeeder::class,
+            // ProductSeeder::class,
+            // VoucherSeeder::class,
+            // PaguyubanSeeder::class,
                 // CommunityPostSeeder::class,
                 // PostCommentSeeder::class,
             ReportReasonSeeder::class,
