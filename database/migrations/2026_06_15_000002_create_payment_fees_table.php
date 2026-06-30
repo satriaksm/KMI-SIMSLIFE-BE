@@ -2,46 +2,46 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('payment_fees', function (Blueprint $table) {
-            $table->id();
-            $table->string('method_code', 50)->comment('VA, QRIS, EWALLET, SHOPEEPAY, RETAIL');
-            $table->string('method_name', 100)->comment('Nama lengkap metode pembayaran');
-            $table->enum('type', ['percentage', 'fixed'])->default('fixed');
-            $table->decimal('value', 10, 2)->comment('Fee value: percentage (2.5) or fixed amount (4440)');
-            $table->text('description')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->timestamps();
+        if (!Schema::hasTable('payment_fees')) {
+            Schema::create('payment_fees', function (Blueprint $table) {
+                $table->id();
+                $table->string('method_code', 50)->comment('VA, QRIS, EWALLET, SHOPEEPAY, RETAIL');
+                $table->string('method_name', 100)->comment('Nama lengkap metode pembayaran');
+                $table->enum('type', ['percentage', 'flat'])->default('flat');
+                $table->decimal('value', 10, 2)->comment('Fee value: percentage (2.5) or flat amount (4440)');
+                $table->text('description')->nullable();
+                $table->boolean('is_active')->default(true);
+                $table->timestamps();
 
-            $table->unique('method_code', 'payment_fees_method_code_unique');
-            $table->index('is_active');
-        });
+                $table->unique('method_code', 'payment_fees_method_code_unique');
+                $table->index('is_active');
+            });
+        } else {
+            DB::statement("ALTER TABLE payment_fees MODIFY type ENUM('percentage', 'flat') NOT NULL DEFAULT 'flat'");
+        }
 
-        // Seed default payment fees
         $this->seedDefaultFees();
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('payment_fees');
+        // No-op: table payment_fees sudah dibuat oleh migration 2026_05_29_000000_create_payment_fees_table
     }
 
-    /**
-     * Seed default payment fees berdasarkan staging-ta reference.
-     */
     protected function seedDefaultFees(): void
     {
-        // Default fees berdasarkan konfigurasi umum Xendit
         $fees = [
             [
                 'method_code' => 'VA',
                 'method_name' => 'Virtual Account',
-                'type' => 'fixed',
+                'type' => 'flat',
                 'value' => 4440,
                 'description' => 'Biaya admin Virtual Account (BCA, BNI, BRI, Mandiri, dll)',
                 'is_active' => true,
@@ -73,7 +73,7 @@ return new class extends Migration
             [
                 'method_code' => 'RETAIL',
                 'method_name' => 'Convenience Store',
-                'type' => 'fixed',
+                'type' => 'flat',
                 'value' => 5000,
                 'description' => 'Biaya admin Convenience Store (Alfamart, Indomaret)',
                 'is_active' => true,
@@ -81,9 +81,12 @@ return new class extends Migration
         ];
 
         foreach ($fees as $fee) {
-            \DB::table('payment_fees')->updateOrInsert(
+            DB::table('payment_fees')->updateOrInsert(
                 ['method_code' => $fee['method_code']],
-                $fee
+                array_merge($fee, [
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ])
             );
         }
     }

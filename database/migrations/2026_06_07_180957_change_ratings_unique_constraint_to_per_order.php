@@ -26,6 +26,7 @@ return new class extends Migration
         }
 
         // Tambah unique constraint baru: 1 user hanya bisa rating 1x per ORDER per produk
+        // Sehingga jika user order produk yang sama 2x dari order berbeda, bisa review keduanya
         try {
             Schema::table('ratings', function (Blueprint $table) {
                 $table->unique(
@@ -57,5 +58,3 @@ return new class extends Migration
         }
     }
 };
-
-

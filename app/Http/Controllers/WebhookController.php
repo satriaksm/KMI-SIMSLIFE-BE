@@ -5,12 +5,12 @@ namespace App\Http\Controllers;
 use App\Events\OrderStatusUpdated;
 use App\Events\PaymentStatusUpdated;
 use App\Helpers\ApiResponse;
+use App\Models\MerchantWalletHistory;
 use App\Models\Order;
 use App\Models\Payment;
-use App\Models\MerchantWalletHistory;
 use App\Models\Payout;
-use App\Services\XenditInvoiceService;
 use App\Services\WebPushService;
+use App\Services\XenditInvoiceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -26,8 +26,7 @@ class WebhookController extends Controller
     public function __construct(
         private readonly XenditInvoiceService $xenditInvoiceService,
         private readonly WebPushService $webPushService
-    ) {
-    }
+    ) {}
 
     /**
      * Handle Xendit callback/webhook.
@@ -43,6 +42,7 @@ class WebhookController extends Controller
             Log::warning('[WebhookController] Invalid callback token', [
                 'ip' => $request->ip(),
             ]);
+
             return ApiResponse::error('Unauthorized', 403);
         }
 
@@ -51,6 +51,7 @@ class WebhookController extends Controller
 
         if (!$externalId) {
             Log::warning('[WebhookController] Missing external_id');
+
             return ApiResponse::error('Invalid payload', 400);
         }
 
@@ -91,12 +92,15 @@ class WebhookController extends Controller
             return ApiResponse::error('Invalid payload', 400);
         }
 
-        $payment = Payment::query()->where('external_id', $externalId)->first();
+        $payment = Payment::query()
+            ->where('external_id', $externalId)
+            ->first();
 
         if (!$payment) {
             Log::warning('[WebhookController] Payment not found', [
                 'external_id' => $externalId,
             ]);
+
             return ApiResponse::error('Payment not found', 404);
         }
 
@@ -112,11 +116,13 @@ class WebhookController extends Controller
             'expired' => 'EXPIRED',
             'failed' => 'FAILED',
         ];
+
         $currentStatus = strtolower((string) $payment->status);
         if (isset($processedStatusMap[$currentStatus])) {
             if ($processedStatusMap[$currentStatus] === $status) {
                 return ApiResponse::success(null, 'Already processed');
             }
+
             if ($currentStatus === 'paid') {
                 return ApiResponse::success(null, 'Ignored');
             }
@@ -127,6 +133,7 @@ class WebhookController extends Controller
             Log::warning('[WebhookController] Order not found', [
                 'external_id' => $externalId,
             ]);
+
             return ApiResponse::error('Order not found', 404);
         }
 
@@ -135,6 +142,7 @@ class WebhookController extends Controller
                 'callback_amount' => $amount,
                 'payment_amount' => $payment->amount,
             ]);
+
             return ApiResponse::error('Invalid amount', 400);
         }
 
@@ -149,6 +157,7 @@ class WebhookController extends Controller
                     'order_id' => $order->id,
                     'status' => $order->status,
                 ]);
+
                 return ApiResponse::error('Invalid order state', 400);
             }
 
@@ -202,13 +211,12 @@ class WebhookController extends Controller
             // Recalculate platform fee based on actual payment channel used on Xendit
             if ($paymentChannel) {
                 $feeCode = 'VA'; // Default
-                $vaMethods = ['BCA', 'BNI', 'BRI', 'MANDIRI', 'PERMATA', 'CIMB'];
                 $ewallet15 = ['OVO', 'DANA', 'LINKAJA'];
-                
+
                 $upperChannel = strtoupper($paymentChannel);
                 if ($upperChannel === 'QRIS') {
                     $feeCode = 'QRIS';
-                } elseif (in_array($upperChannel, $ewallet15)) {
+                } elseif (in_array($upperChannel, $ewallet15, true)) {
                     $feeCode = 'EWALLET';
                 } elseif ($upperChannel === 'SHOPEEPAY') {
                     $feeCode = 'SHOPEEPAY';
@@ -218,14 +226,19 @@ class WebhookController extends Controller
 
                 $feeConfig = \App\Models\PaymentFee::where('method_code', $feeCode)->first();
                 if ($feeConfig) {
-                    $baseGross = max(0, (float) $order->subtotal - (float) $order->discount_total + (float) $order->delivery_fee_snapshot);
+                    $baseGross = max(
+                        0,
+                        (float) $order->subtotal - (float) $order->discount_total + (float) $order->delivery_fee_snapshot
+                    );
+
                     if ($feeConfig->type === 'percentage') {
                         $actualPlatformFee = (int) ceil($baseGross * ($feeConfig->value / 100));
                     } else {
                         $actualPlatformFee = (int) $feeConfig->value;
                     }
+
                     $orderUpdate['platform_fee'] = $actualPlatformFee;
-                    // Note: Since gross_amount is fixed by the invoice paid, we adjust net_amount
+                    // Since gross_amount is fixed by the invoice paid, adjust net_amount.
                     $orderUpdate['net_amount'] = max(0, (float) $order->gross_amount - $actualPlatformFee);
                 }
             }
@@ -302,7 +315,7 @@ class WebhookController extends Controller
         $isJasa = $order->order_type === 'jasa';
         $cancelStatus = $isJasa ? 'dibatalkan' : 'cancelled';
 
-        if (in_array($order->status, ['pending', 'menunggu_konfirmasi_merchant'])) {
+        if (in_array($order->status, ['pending', 'menunggu_konfirmasi_merchant'], true)) {
             $order->update([
                 'status' => $cancelStatus,
                 'cancelled_at' => now(),
@@ -357,7 +370,9 @@ class WebhookController extends Controller
             return ApiResponse::error('Invalid payload', 400);
         }
 
-        $payout = Payout::query()->where('external_id', $externalId)->first();
+        $payout = Payout::query()
+            ->where('external_id', $externalId)
+            ->first();
 
         if (!$payout) {
             return ApiResponse::error('Payout not found', 404);
@@ -370,7 +385,7 @@ class WebhookController extends Controller
 
         // 🔹 SUCCESS
         if ($status === 'COMPLETED') {
-            DB::transaction(function () use ($payout, $data) {
+            DB::transaction(function () use ($payout) {
                 $payout = Payout::query()
                     ->where('id', $payout->id)
                     ->lockForUpdate()
@@ -397,7 +412,7 @@ class WebhookController extends Controller
                     ->lockForUpdate()
                     ->first();
 
-                if (!$payout || in_array($payout->status, ['success', 'failed'])) {
+                if (!$payout || in_array($payout->status, ['success', 'failed'], true)) {
                     return;
                 }
 

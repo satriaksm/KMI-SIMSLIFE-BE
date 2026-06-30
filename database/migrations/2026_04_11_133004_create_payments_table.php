@@ -16,6 +16,7 @@ return new class extends Migration {
 
             $table->string('external_id')->unique(); // order-123
             $table->string('xendit_invoice_id')->nullable();
+            $table->string('xendit_refund_id')->nullable();
             $table->string('invoice_url')->nullable();
             $table->string('payment_method')->nullable(); // VA, QRIS, dll
             $table->timestamp('expired_at')->nullable();
@@ -27,6 +28,8 @@ return new class extends Migration {
                 'expired',
                 'failed'
             ])->default('pending');
+
+            $table->string('refund_status')->nullable()->comment('processing, succeeded, failed, resolved');
 
             $table->timestamp('paid_at')->nullable();
 

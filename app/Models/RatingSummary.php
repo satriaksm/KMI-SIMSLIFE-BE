@@ -122,6 +122,9 @@ class RatingSummary extends Model
     /**
      * Update polymorphic rating summary for a specific model (Jasa, Product, Merchant)
      */
+    /**
+     * Update polymorphic rating summary for a specific model (Jasa, Product, Merchant)
+     */
     public static function updatePolymorphicSummary($model, ?int $merchantId = null)
     {
         $modelClass = get_class($model);
@@ -136,32 +139,36 @@ class RatingSummary extends Model
         $sum = $ratings->sum('rating');
         $average = $total > 0 ? round($sum / $total, 2) : 0;
 
-        // Additive resolution: query by either summaryable or rateable columns to prevent duplicates
-        $summary = self::where(function($q) use ($modelId, $modelClass) {
+        // Cari summary dari format baru atau legacy agar tidak membuat duplicate
+        $summary = self::where(function ($q) use ($modelId, $modelClass) {
             $q->where('summaryable_id', $modelId)
-              ->where('summaryable_type', $modelClass);
-        })->orWhere(function($q) use ($modelId, $modelClass) {
+                ->where('summaryable_type', $modelClass);
+        })->orWhere(function ($q) use ($modelId, $modelClass) {
             $q->where('rateable_id', $modelId)
-              ->where('rateable_type', $modelClass);
+                ->where('rateable_type', $modelClass);
         })->first();
 
         if (!$summary) {
             $summary = new self();
-            $summary->summaryable_id = $modelId;
-            $summary->summaryable_type = $modelClass;
-            $summary->rateable_id = $modelId;
-            $summary->rateable_type = $modelClass;
         }
 
+        // Isi kedua format supaya kompatibel dengan query lama dan baru
         $summary->merchant_id = $merchantId;
+        $summary->summaryable_id = $modelId;
+        $summary->summaryable_type = $modelClass;
+        $summary->rateable_id = $modelId;
+        $summary->rateable_type = $modelClass;
+
         $summary->average_rating = $average;
         $summary->total_reviews = $total;
         $summary->total_ratings = $total;
+
         $summary->rating_5_count = $ratings->where('rating', 5)->count();
         $summary->rating_4_count = $ratings->where('rating', 4)->count();
         $summary->rating_3_count = $ratings->where('rating', 3)->count();
         $summary->rating_2_count = $ratings->where('rating', 2)->count();
         $summary->rating_1_count = $ratings->where('rating', 1)->count();
+
         $summary->save();
 
         return $summary;

@@ -17,7 +17,7 @@ return new class extends Migration
     {
         Schema::table('orders', function (Blueprint $table) {
             // Customer snapshot
-            $table->string('customer_name_snapshot')->nullable()->after('catatan_alamat');
+            $table->string('customer_name_snapshot')->nullable()->after('address_detail_snapshot');
             $table->string('customer_phone_snapshot')->nullable()->after('customer_name_snapshot');
             $table->text('customer_address_snapshot')->nullable()->after('customer_phone_snapshot');
 

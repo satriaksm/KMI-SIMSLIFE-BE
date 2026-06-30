@@ -7,7 +7,7 @@ use Illuminate\Database\Seeder;
 
 class PaymentFeeSeeder extends Seeder
 {
-    public function run()
+    public function run(): void
     {
         $fees = [
             [
@@ -16,6 +16,7 @@ class PaymentFeeSeeder extends Seeder
                 'type' => 'percentage',
                 'value' => 0.7,
                 'description' => 'QRIS (GoPay, Dana, OVO, dll via QR)',
+                'is_active' => true,
             ],
             [
                 'method_code' => 'VA',
@@ -23,6 +24,7 @@ class PaymentFeeSeeder extends Seeder
                 'type' => 'flat',
                 'value' => 4440,
                 'description' => 'Virtual Account Bank',
+                'is_active' => true,
             ],
             [
                 'method_code' => 'EWALLET',
@@ -30,6 +32,7 @@ class PaymentFeeSeeder extends Seeder
                 'type' => 'percentage',
                 'value' => 1.5,
                 'description' => 'E-Wallet langsung',
+                'is_active' => true,
             ],
             [
                 'method_code' => 'SHOPEEPAY',
@@ -37,6 +40,7 @@ class PaymentFeeSeeder extends Seeder
                 'type' => 'percentage',
                 'value' => 2.0,
                 'description' => 'ShopeePay',
+                'is_active' => true,
             ],
             [
                 'method_code' => 'RETAIL',
@@ -44,6 +48,7 @@ class PaymentFeeSeeder extends Seeder
                 'type' => 'flat',
                 'value' => 5550,
                 'description' => 'Pembayaran di gerai retail',
+                'is_active' => true,
             ],
             [
                 'method_code' => 'COD',
@@ -51,6 +56,7 @@ class PaymentFeeSeeder extends Seeder
                 'type' => 'flat',
                 'value' => 0,
                 'description' => 'Bayar di tempat',
+                'is_active' => true,
             ],
             [
                 'method_code' => 'PAYOUT',
@@ -58,6 +64,7 @@ class PaymentFeeSeeder extends Seeder
                 'type' => 'flat',
                 'value' => 4440,
                 'description' => 'Biaya transfer ke rekening UMKM',
+                'is_active' => true,
             ],
         ];
 

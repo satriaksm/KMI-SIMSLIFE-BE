@@ -770,8 +770,3 @@ Route::middleware(['auth', 'verified'])->group(function () {
 // Xendit authenticates using callback token in header 'x-callback-token'
 Route::post('/payment/xendit/webhook', [WebhookController::class, 'callback'])
     ->name('xendit.webhook');
-
-// Refresh payment status from Xendit (fallback when webhook hasn't been received)
-Route::get('/payment/xendit/refresh/{orderId}', [WebhookController::class, 'refreshPaymentStatus'])
-    ->name('xendit.refresh')
-    ->where('orderId', '[0-9]+');

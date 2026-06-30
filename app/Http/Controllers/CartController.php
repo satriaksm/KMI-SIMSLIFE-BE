@@ -392,7 +392,12 @@ class CartController extends Controller
             /** ===============================
              * 1. AMBIL PRODUCT (LIVE)
              * =============================== */
-            $product = Product::findOrFail($request->product_id);
+            $product = Product::with('merchant')->findOrFail($request->product_id);
+
+            // Pencegahan: User tidak boleh membeli produk dari tokonya sendiri
+            if ($product->merchant && $product->merchant->user_id === Auth::id()) {
+                return ApiResponse::error('Anda tidak dapat membeli atau memasukkan produk dari toko Anda sendiri ke keranjang.', 403);
+            }
 
             /** ===============================
              * 2. CART PER MERCHANT

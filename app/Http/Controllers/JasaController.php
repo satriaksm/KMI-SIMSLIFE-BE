@@ -246,8 +246,8 @@ class JasaController extends Controller
                 // Kompatibel dengan dua skema status: status ('published' / 'active') atau flag is_active
                 $q->whereIn('status', ['published', 'active'])
                     ->orWhere(function ($sub) {
-                    $sub->whereNull('status')->where('is_active', true);
-                });
+                        $sub->whereNull('status')->where('is_active', true);
+                    });
             });
 
         // Filter by merchant
@@ -717,8 +717,9 @@ class JasaController extends Controller
         // Block re-publishing jasa that has active admin violation (archive_service)
         if (isset($data['status']) && in_array($data['status'], ['published', 'active'])) {
             $hasServiceSanction = \App\Models\ContentReport::whereIn('reportable_type', [
-                    $jasa->getMorphClass(), get_class($jasa)
-                ])
+                $jasa->getMorphClass(),
+                get_class($jasa)
+            ])
                 ->where('reportable_id', $jasa->id)
                 ->whereIn('action_taken', ['archive_service', 'archive_product'])
                 ->whereDoesntHave('appeals', fn($q) => $q->where('status', 'accepted'))
@@ -1048,7 +1049,7 @@ class JasaController extends Controller
         // Muat relasi yang dipakai di Indexjasa.vue
         $jasa->load(['categories', 'images']);
         $this->attachCategoryAliases($jasa);
-        
+
         // Tambahkan cover_img dengan API URL
         $isPublic = in_array($jasa->status, ['published', 'active', 'archived'], true)
             || ($jasa->status === null && (bool) $jasa->is_active);

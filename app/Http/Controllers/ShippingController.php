@@ -76,6 +76,7 @@ class ShippingController extends Controller
             $user->getMorphClass(),
             get_class($user),
         ]));
+
         if ($request->filled('address_id')) {
             $customerAddress = Address::query()
                 ->where('id', $request->integer('address_id'))
@@ -96,7 +97,10 @@ class ShippingController extends Controller
             ], 'Shipping cost calculated');
         }
 
-        $setting = ShippingSetting::query()->where('status', 'active')->first();
+        $setting = ShippingSetting::query()
+            ->where('status', 'active')
+            ->first();
+
         $baseCost = $setting ? (float) $setting->base_cost : 15000;
         $costPerKm = $setting ? (float) $setting->cost_per_km : 5000;
 
@@ -108,7 +112,8 @@ class ShippingController extends Controller
         );
 
         $deliveryFee = $baseCost + ($costPerKm * $distanceKm);
-        // Round to nearest 500
+
+        // Round up to nearest 500
         $deliveryFee = ceil($deliveryFee / 500) * 500;
 
         return ApiResponse::success([

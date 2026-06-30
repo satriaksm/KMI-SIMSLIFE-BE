@@ -7,24 +7,34 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Run the migrations.
+     * Make legacy product order item fields nullable.
      */
     public function up(): void
     {
         Schema::table('product_order_items', function (Blueprint $table) {
-            $table->decimal('price', 12, 2)->nullable()->change();
-            $table->decimal('subtotal', 12, 2)->nullable()->change();
+            if (Schema::hasColumn('product_order_items', 'price')) {
+                $table->decimal('price', 12, 2)->nullable()->change();
+            }
+
+            if (Schema::hasColumn('product_order_items', 'subtotal')) {
+                $table->decimal('subtotal', 12, 2)->nullable()->change();
+            }
         });
     }
 
     /**
-     * Reverse the migrations.
+     * Reverse the migration.
      */
     public function down(): void
     {
         Schema::table('product_order_items', function (Blueprint $table) {
-            $table->decimal('price', 12, 2)->nullable(false)->change();
-            $table->decimal('subtotal', 12, 2)->nullable(false)->change();
+            if (Schema::hasColumn('product_order_items', 'price')) {
+                $table->decimal('price', 12, 2)->nullable(false)->change();
+            }
+
+            if (Schema::hasColumn('product_order_items', 'subtotal')) {
+                $table->decimal('subtotal', 12, 2)->nullable(false)->change();
+            }
         });
     }
 };

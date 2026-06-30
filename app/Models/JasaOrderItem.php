@@ -252,7 +252,7 @@ class JasaOrderItem extends Model
     public function getServiceTypeAttribute(): ?string
     {
         return $this->service_type_snapshot
-            ?? $this->service_type
+            ?? ($this->attributes['service_type'] ?? null)
             ?? null;
     }
 
@@ -262,7 +262,7 @@ class JasaOrderItem extends Model
     public function getBookingTypeAttribute(): ?string
     {
         return $this->booking_type_snapshot
-            ?? $this->booking_type
+            ?? ($this->attributes['booking_type'] ?? null)
             ?? null;
     }
 
@@ -272,7 +272,7 @@ class JasaOrderItem extends Model
     public function getBookingDateAttribute(): ?string
     {
         return $this->booking_date_snapshot
-            ?? $this->booking_date
+            ?? ($this->attributes['booking_date'] ?? null)
             ?? null;
     }
 
@@ -282,7 +282,7 @@ class JasaOrderItem extends Model
     public function getBookingTimeAttribute(): ?string
     {
         return $this->booking_time_snapshot
-            ?? $this->booking_time
+            ?? ($this->attributes['booking_time'] ?? null)
             ?? null;
     }
 

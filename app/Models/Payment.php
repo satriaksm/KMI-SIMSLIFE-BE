@@ -13,9 +13,11 @@ class Payment extends Model
         'order_id',
         'external_id',
         'xendit_invoice_id',
+        'xendit_refund_id',
         'invoice_url',
         'payment_method',
         'status',
+        'refund_status',
         'amount',
         'paid_at',
         'paid_channel',
@@ -24,9 +26,9 @@ class Payment extends Model
     ];
 
     protected $casts = [
+        'amount' => 'decimal:2',
         'paid_at' => 'datetime',
         'expired_at' => 'datetime',
-        'amount' => 'decimal:2',
         'raw_response' => 'array',
     ];
 
@@ -37,22 +39,20 @@ class Payment extends Model
 
     public function isPaid(): bool
     {
-        return $this->status === 'PAID';
+        return strtoupper((string) $this->status) === 'PAID';
     }
 
     public function isPending(): bool
     {
-        return $this->status === 'PENDING';
+        return strtoupper((string) $this->status) === 'PENDING';
     }
 
     public function getDisplayMethod(): string
     {
-        if ($this->status === 'PAID' && $this->payment_method) {
-            return 'Xendit - ' . $this->payment_method;
-        }
         if ($this->payment_method) {
             return 'Xendit - ' . $this->payment_method;
         }
+
         return 'Xendit';
     }
 }

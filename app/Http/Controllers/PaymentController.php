@@ -2,34 +2,31 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\OrderStatusUpdated;
+use App\Events\PaymentStatusUpdated;
+use App\Helpers\ApiResponse;
 use App\Models\Order;
 use App\Models\Payment;
-use App\Models\JasaOrderItem;
 use App\Models\User;
-use App\Helpers\ApiResponse;
-use App\Events\PaymentStatusUpdated;
-use App\Events\OrderStatusUpdated;
 use App\Services\XenditInvoiceService;
 use App\Services\WebPushService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /**
  * PaymentController
  *
- * Handles Xendit payment integration for ALL orders (produk/kuliner AND jasa).
- * Menggunakan Order + JasaOrderItem sebagai struktur utama.
+ * Handles Xendit payment integration for product/kuliner and jasa orders.
  */
 class PaymentController extends Controller
 {
     public function __construct(
         private readonly XenditInvoiceService $xenditInvoiceService,
         private readonly WebPushService $webPushService
-    ) {
-    }
+    ) {}
 
     /**
      * Create Xendit invoice untuk order yang sudah ada.
@@ -38,29 +35,30 @@ class PaymentController extends Controller
     public function createInvoice(Request $request, $orderId)
     {
         $user = Auth::user();
-        if (!$user) {
+        if (!$user instanceof User) {
             return ApiResponse::error('Unauthorized', 401);
         }
 
-        $order = Order::with(['merchant', 'items'])
+        $order = Order::with(['user', 'merchant', 'items', 'jasaItems'])
             ->where('id', $orderId)
             ->where('user_id', $user->id)
             ->first();
 
-        if (!$order) {
+        if (!$order instanceof Order) {
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
-        // Update payment method & channel if provided in request payload (e.g. from checkout redirect or retry)
+        // Update payment method & channel if provided in request payload
+        // e.g. from checkout redirect or retry payment flow.
         if ($request->has('payment_method') || $request->has('payment_channel') || $request->has('channel_code')) {
-            $reqMethod = strtoupper($request->input('payment_method') ?? '');
-            $reqChannel = strtoupper($request->input('payment_channel') ?? $request->input('channel_code') ?? '');
-            
+            $reqMethod = strtoupper((string) ($request->input('payment_method') ?? ''));
+            $reqChannel = strtoupper((string) ($request->input('payment_channel') ?? $request->input('channel_code') ?? ''));
+
             $genericMethods = ['XENDIT', 'ONLINE', 'ONLINE_XENDIT', 'TRANSFER'];
-            if (in_array($reqMethod, $genericMethods) && $reqChannel !== '') {
+            if (in_array($reqMethod, $genericMethods, true) && $reqChannel !== '') {
                 $reqMethod = $reqChannel;
             }
-            
+
             $updates = [];
             if ($reqMethod !== '') {
                 $updates['payment_method'] = $reqMethod;
@@ -70,27 +68,27 @@ class PaymentController extends Controller
                 $updates['payment_channel'] = $reqChannel;
                 $updates['payment_channel_snapshot'] = $reqChannel;
             }
-            
+
             if (!empty($updates)) {
                 $order->update($updates);
             }
         }
 
-        // Pastikan order belum dibayar
+        // Pastikan order belum dibayar / belum selesai diproses.
         if ($order->payment_status === 'PAID' || $order->status === 'paid') {
             return ApiResponse::error('Pesanan sudah dibayar', 400);
         }
 
-        // COD tidak perlu invoice Xendit
-        if (strtoupper($order->payment_method ?? '') === 'COD') {
+        // COD tidak perlu invoice Xendit.
+        if (strtoupper((string) ($order->payment_method ?? '')) === 'COD') {
             return ApiResponse::error('Pesanan COD tidak memerlukan invoice', 400);
         }
 
         try {
-            // Use XenditInvoiceService (idempotent)
+            // Use XenditInvoiceService (idempotent).
             $payment = $this->xenditInvoiceService->createOrGetPendingInvoice($order);
 
-            // Update order payment status
+            // Update order payment status.
             $order->update([
                 'payment_status' => 'WAITING_CONFIRMATION',
                 'payment_reference' => $payment->xendit_invoice_id,
@@ -103,29 +101,29 @@ class PaymentController extends Controller
                 'invoice_url' => $payment->invoice_url,
                 'payment_status' => $payment->status,
                 'expired_at' => $payment->expired_at?->toISOString(),
-                // Fee breakdown
-                'subtotal' => (float) ($order->subtotal_snapshot ?? $order->total_price ?? 0),
-                'payment_fee' => (float) ($order->payment_fee_snapshot ?? $order->platform_fee_snapshot ?? 0),
-                'total_payment' => (float) ($order->total_payment_snapshot ?? $order->total_price ?? 0),
+                'subtotal' => (float) ($order->subtotal_snapshot ?? $order->subtotal ?? $order->total_price ?? 0),
+                'payment_fee' => (float) ($order->payment_fee_snapshot ?? $order->platform_fee_snapshot ?? $order->platform_fee ?? 0),
+                'total_payment' => (float) ($order->total_payment_snapshot ?? $order->gross_amount ?? $order->total_price ?? 0),
                 'payment_channel' => $order->payment_channel_snapshot ?? $order->payment_channel ?? null,
             ], 'Invoice berhasil dibuat');
-
         } catch (\Throwable $e) {
             Log::error('[PaymentController] Failed to create invoice', [
                 'order_id' => $order->id,
                 'error' => $e->getMessage(),
             ]);
+
             return ApiResponse::error('Gagal membuat invoice pembayaran', 500, $e->getMessage());
         }
     }
 
     /**
-     * Get Payment Status (dari DB)
+     * Get Payment Status dari DB.
+     * Legacy endpoint compatibility.
      */
     public function getStatus($orderId)
     {
         $user = Auth::user();
-        if (!$user) {
+        if (!$user instanceof User) {
             return ApiResponse::error('Unauthorized', 401);
         }
 
@@ -133,7 +131,7 @@ class PaymentController extends Controller
             ->where('user_id', $user->id)
             ->first();
 
-        if (!$order) {
+        if (!$order instanceof Order) {
             return ApiResponse::error('Order tidak ditemukan', 404);
         }
 
@@ -143,12 +141,12 @@ class PaymentController extends Controller
             ->first();
 
         return ApiResponse::success([
-            'order_status'   => $order->status,
-            'status'         => $payment?->status,
+            'order_status' => $order->status,
+            'status' => $payment?->status,
             'payment_method' => $payment?->payment_method,
-            'paid_at'        => $payment?->paid_at,
-            'expired_at'     => $payment?->expired_at,
-            'invoice_url'    => $payment?->invoice_url,
+            'paid_at' => $payment?->paid_at,
+            'expired_at' => $payment?->expired_at,
+            'invoice_url' => $payment?->invoice_url,
         ], 'Status payment berhasil diambil');
     }
 
@@ -159,7 +157,7 @@ class PaymentController extends Controller
     public function verifyPayment(Request $request, $orderId)
     {
         $user = Auth::user();
-        if (!$user) {
+        if (!$user instanceof User) {
             return ApiResponse::error('Unauthorized', 401);
         }
 
@@ -168,7 +166,7 @@ class PaymentController extends Controller
             ->where('user_id', $user->id)
             ->first();
 
-        if (!$order) {
+        if (!$order instanceof Order) {
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
@@ -181,18 +179,18 @@ class PaymentController extends Controller
             ]);
         }
 
-        // If already PAID, return immediately
-        if ($order->payment_status === 'PAID') {
+        // If already PAID, return immediately.
+        if ($order->payment_status === 'PAID' || in_array($order->status, ['paid', 'menunggu_konfirmasi_merchant'], true)) {
             return ApiResponse::success([
                 'order_id' => $order->id,
                 'order_status' => $order->status,
                 'payment_status' => 'PAID',
-                'payment_channel' => $order->paid_channel,
+                'payment_channel' => $order->paid_channel ?? $order->payment_channel,
                 'already_paid' => true,
             ], 'Pesanan sudah dibayar');
         }
 
-        // If no invoice reference, check DB for pending payment
+        // If no invoice reference, check DB for pending payment.
         $invoiceId = $order->payment_reference;
         if (!$invoiceId) {
             $payment = Payment::where('order_id', $orderId)
@@ -206,11 +204,11 @@ class PaymentController extends Controller
             return ApiResponse::error('Invoice belum dibuat untuk pesanan ini', 400);
         }
 
-        // Get invoice status from Xendit
+        // Get invoice status from Xendit service.
         $invoiceData = $this->xenditInvoiceService->getInvoiceStatus($invoiceId);
 
+        // Fallback: check via HTTP client directly using staging-ta settings.
         if (!$invoiceData) {
-            // Fallback: check via HTTP client directly using staging-ta settings
             try {
                 $response = Http::withBasicAuth((string) config('services.xendit.secret_key'), '')
                     ->acceptJson()
@@ -220,7 +218,9 @@ class PaymentController extends Controller
                     $invoiceData = $response->json();
                 }
             } catch (\Throwable $t) {
-                Log::error('[PaymentController] Fallback verify HTTP client failed', ['error' => $t->getMessage()]);
+                Log::error('[PaymentController] Fallback verify HTTP client failed', [
+                    'error' => $t->getMessage(),
+                ]);
             }
         }
 
@@ -231,7 +231,7 @@ class PaymentController extends Controller
         $xenditStatus = strtoupper((string) ($invoiceData['status'] ?? ''));
         $paymentChannel = $invoiceData['payment_channel'] ?? $invoiceData['payment_method'] ?? null;
 
-        if ($xenditStatus === 'PAID' || $xenditStatus === 'SETTLED') {
+        if (in_array($xenditStatus, ['PAID', 'SETTLED'], true)) {
             return $this->processPaymentSuccess($order, $paymentChannel, $invoiceData);
         }
 
@@ -253,50 +253,59 @@ class PaymentController extends Controller
     {
         $isJasa = $order->order_type === 'jasa';
 
-        // Update order status and payment information
-        $orderUpdate = [
-            'payment_status' => 'PAID',
-            'paid_at' => now(),
-            'payment_channel' => $paymentChannel,
-            'paid_channel' => $paymentChannel,
-        ];
+        DB::transaction(function () use ($order, $paymentChannel, $invoiceData, $isJasa) {
+            $lockedOrder = Order::where('id', $order->id)->lockForUpdate()->first();
+            if (!$lockedOrder instanceof Order) {
+                return;
+            }
 
-        if ($isJasa) {
-            $orderUpdate['status'] = 'menunggu_konfirmasi_merchant';
-            $orderUpdate['confirm_deadline'] = now()->addMinutes(60);
-            $orderUpdate['merchant_response_deadline'] = now()->addMinutes(60);
-        } else {
-            $orderUpdate['status'] = 'paid';
-            $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
-            $orderUpdate['confirm_deadline'] = now()->addMinutes($confirmMinutes);
-        }
-
-        $order->update($orderUpdate);
-
-        Log::info('Order updated after paid', [
-            'order_id' => $order->id,
-            'order_type' => $order->order_type,
-            'status' => $order->status,
-            'payment_status' => $order->payment_status,
-        ]);
-
-        // Update Payment record
-        $payment = Payment::where('order_id', $order->id)->first();
-        if ($payment) {
-            $payment->update([
-                'status' => 'PAID',
+            $orderUpdate = [
+                'payment_status' => 'PAID',
                 'paid_at' => now(),
-                'payment_method' => $paymentChannel,
-                'raw_response' => $invoiceData,
-            ]);
+                'payment_channel' => $paymentChannel,
+                'paid_channel' => $paymentChannel,
+            ];
+
+            if ($isJasa) {
+                $orderUpdate['status'] = 'menunggu_konfirmasi_merchant';
+                $orderUpdate['confirm_deadline'] = now()->addMinutes(60);
+                $orderUpdate['merchant_response_deadline'] = now()->addMinutes(60);
+            } else {
+                $orderUpdate['status'] = 'paid';
+                $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
+                $orderUpdate['confirm_deadline'] = now()->addMinutes($confirmMinutes);
+            }
+
+            $lockedOrder->update($orderUpdate);
+
+            $payment = Payment::where('order_id', $lockedOrder->id)->latest()->first();
+            if ($payment) {
+                $payment->update([
+                    // payments.status migration uses lowercase values: pending, paid, expired, failed.
+                    'status' => 'paid',
+                    'paid_at' => now(),
+                    'payment_method' => $paymentChannel,
+                    'raw_response' => $invoiceData,
+                ]);
+            }
+        });
+
+        $order->refresh();
+        $payment = Payment::where('order_id', $order->id)->latest()->first();
+
+        if ($payment) {
             event(new PaymentStatusUpdated($payment));
         }
+        event(new OrderStatusUpdated($order, $order->status));
 
-        // Fire OrderStatusUpdated event
-        event(new OrderStatusUpdated($order->fresh(), $order->status));
-
-        // Non-blocking push notification
-        $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'verify');
+        try {
+            $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'verify');
+        } catch (\Throwable $e) {
+            Log::warning('[WebPush] verify sendPaymentStatusUpdate failed', [
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         Log::info('[PaymentController] Payment verified as PAID', [
             'order_id' => $order->id,
@@ -320,15 +329,21 @@ class PaymentController extends Controller
         ], 'Pembayaran berhasil');
     }
 
+    /**
+     * Cancel Payment untuk flow baru.
+     */
     public function cancelPayment(Request $request, $orderId)
     {
-        $userId = Auth::id();
+        $user = Auth::user();
+        if (!$user instanceof User) {
+            return ApiResponse::error('Unauthorized', 401);
+        }
 
         $order = Order::where('id', $orderId)
-            ->where('user_id', $userId)
+            ->where('user_id', $user->id)
             ->first();
 
-        if (!$order) {
+        if (!$order instanceof Order) {
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
@@ -339,21 +354,19 @@ class PaymentController extends Controller
         $isJasa = $order->order_type === 'jasa';
 
         DB::transaction(function () use ($order, $orderId, $isJasa) {
-            // Expire the payment record
-            $payment = Payment::where('order_id', $orderId)->first();
+            $payment = Payment::where('order_id', $orderId)->latest()->first();
             if ($payment) {
                 $payment->update(['status' => 'expired']);
-                event(new PaymentStatusUpdated($payment));
             }
 
             if ($isJasa) {
-                // Clear payment reference so customer can create new invoice
+                // Clear payment reference so customer can create new invoice.
                 $order->update([
                     'payment_status' => 'PENDING',
                     'payment_reference' => null,
                 ]);
             } else {
-                if (in_array($order->status, ['pending', 'responsed'], true)) {
+                if (in_array($order->status, ['pending', 'responsed', 'accepted'], true)) {
                     $order->update([
                         'status' => 'cancelled',
                         'cancelled_at' => now(),
@@ -363,12 +376,22 @@ class PaymentController extends Controller
         });
 
         $order->refresh();
+        $payment = Payment::where('order_id', $orderId)->latest()->first();
+
+        if ($payment) {
+            event(new PaymentStatusUpdated($payment));
+        }
         event(new OrderStatusUpdated($order, $order->status));
 
-        // Get payment
-        $payment = Payment::where('order_id', $orderId)->first();
         if ($payment) {
-            $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'cancel');
+            try {
+                $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'cancel');
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] cancelPayment sendPaymentStatusUpdate failed', [
+                    'order_id' => $order->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         Log::info('[PaymentController] Payment cancelled', [
@@ -388,18 +411,20 @@ class PaymentController extends Controller
      */
     public function getPaymentStatus(Request $request, $orderId)
     {
-        $userId = Auth::id();
+        $user = Auth::user();
+        if (!$user instanceof User) {
+            return ApiResponse::error('Unauthorized', 401);
+        }
 
-        $order = Order::with(['jasaItems:id,order_id,jasa_id,jasa_title_snapshot'])
+        $order = Order::with(['jasaItems:id,order_id,jasa_id,jasa_title_snapshot,booking_date,booking_time'])
             ->where('id', $orderId)
-            ->where('user_id', $userId)
+            ->where('user_id', $user->id)
             ->first();
 
-        if (!$order) {
+        if (!$order instanceof Order) {
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
-        // Payment status display mapping
         $paymentStatusLabels = [
             'PENDING' => 'Menunggu Pembayaran',
             'WAITING_CONFIRMATION' => 'Menunggu Konfirmasi',
@@ -421,16 +446,14 @@ class PaymentController extends Controller
             'ALFAMART' => 'Alfamart / Alfamidi',
         ];
 
-        // Get payment record
-        $payment = Payment::where('order_id', $orderId)->first();
+        $payment = Payment::where('order_id', $orderId)->latest()->first();
 
-        // Get service info for jasa orders - gunakan SNAPSHOT accessor
         $serviceInfo = null;
         if ($order->order_type === 'jasa') {
             $jasaItem = $order->jasaItems->first();
             $serviceInfo = [
                 'jasa_order_item_id' => $jasaItem?->id,
-                'service_name' => $jasaItem?->jasa_title,
+                'service_name' => $jasaItem?->jasa_title_snapshot,
                 'booking_date' => $jasaItem?->booking_date?->toDateString(),
                 'booking_time' => $jasaItem?->booking_time?->format('H:i'),
             ];
@@ -442,10 +465,10 @@ class PaymentController extends Controller
             'status' => $payment?->status,
             'payment_id' => $payment?->id,
             'payment_method' => $order->payment_method,
-            'payment_method_display' => $paymentMethodLabels[strtoupper($order->payment_method ?? '')]
+            'payment_method_display' => $paymentMethodLabels[strtoupper((string) ($order->payment_method ?? ''))]
                 ?? $order->payment_method ?? '-',
             'payment_status' => $order->payment_status,
-            'payment_status_display' => $paymentStatusLabels[strtoupper($order->payment_status ?? '')]
+            'payment_status_display' => $paymentStatusLabels[strtoupper((string) ($order->payment_status ?? ''))]
                 ?? $order->payment_status ?? '-',
             'payment_channel' => $order->payment_channel,
             'paid_channel' => $order->paid_channel,
@@ -461,12 +484,12 @@ class PaymentController extends Controller
     }
 
     /**
-     * Cancel Product Order (staging-ta)
+     * Cancel Payment legacy endpoint.
      */
     public function cancel($orderId)
     {
         $user = Auth::user();
-        if (!$user) {
+        if (!$user instanceof User) {
             return ApiResponse::error('Unauthorized', 401);
         }
 
@@ -479,7 +502,7 @@ class PaymentController extends Controller
             ->latest()
             ->first();
 
-        if (!$payment) {
+        if (!$payment instanceof Payment) {
             return ApiResponse::error('Tidak ada pembayaran aktif', 404);
         }
 
@@ -489,16 +512,16 @@ class PaymentController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (!$lockedPayment || $lockedPayment->status !== 'pending') {
+            if (!$lockedPayment instanceof Payment || $lockedPayment->status !== 'pending') {
                 return;
             }
 
             $lockedPayment->update([
-                'status' => 'expired'
+                'status' => 'expired',
             ]);
 
             $order = $lockedPayment->order;
-            if ($order && in_array($order->status, ['pending', 'responsed'], true)) {
+            if ($order && in_array($order->status, ['pending', 'responsed', 'accepted'], true)) {
                 $order->update([
                     'status' => 'cancelled',
                     'cancelled_at' => now(),
@@ -511,8 +534,16 @@ class PaymentController extends Controller
 
         $order = $payment->order;
         if ($order) {
-            event(new OrderStatusUpdated($order->fresh(), $order->status));
-            $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'cancel');
+            $order->refresh();
+            event(new OrderStatusUpdated($order, $order->status));
+            try {
+                $this->webPushService->sendPaymentStatusUpdate($order, $payment, 'cancel');
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] cancel sendPaymentStatusUpdate failed', [
+                    'order_id' => $order->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         return ApiResponse::success(null, 'Payment dibatalkan');

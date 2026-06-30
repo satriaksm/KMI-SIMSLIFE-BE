@@ -731,7 +731,7 @@ class RatingController extends Controller
             if ($hasReply === 'true' || $hasReply === '1') {
                 $query->whereNotNull('merchant_reply')->where('merchant_reply', '!=', '');
             } elseif ($hasReply === 'false' || $hasReply === '0') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('merchant_reply')->orWhere('merchant_reply', '');
                 });
             }

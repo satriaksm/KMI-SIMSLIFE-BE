@@ -22,8 +22,8 @@ class XenditInvoiceService
 
     public function createOrGetPendingInvoice(Order $order): Payment
     {
-        // For product/kuliner orders, validate status is pending.
-        // For jasa orders, checkout status might be pending as well.
+        // Product/kuliner order harus masih pending.
+        // Jasa tetap dibuat lewat flow jasa dan menggunakan Order sebagai struktur utama.
         if ($order->order_type !== 'jasa' && $order->status !== 'pending') {
             throw new \RuntimeException('Order tidak valid atau sudah diproses');
         }
@@ -41,6 +41,7 @@ class XenditInvoiceService
                 'payment_id' => $existingPayment->id,
                 'external_id' => $externalId,
             ]);
+
             return $existingPayment;
         }
 
@@ -49,7 +50,14 @@ class XenditInvoiceService
 
     protected function createInvoice(Order $order, string $externalId): Payment
     {
-        $amount = (int) ($order->total_payment_snapshot ?? $order->gross_amount ?? $order->total ?? $order->total_price ?? 0);
+        $amount = (int) round((float) (
+            $order->total_payment_snapshot
+            ?? $order->gross_amount
+            ?? $order->total
+            ?? $order->total_price
+            ?? 0
+        ));
+
         if ($amount <= 0) {
             $amount = 1;
         }
@@ -57,7 +65,9 @@ class XenditInvoiceService
         if ($order->order_type === 'jasa') {
             $order->loadMissing('jasaItems.jasa');
             $jasaItem = $order->jasaItems->first();
-            $serviceName = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa?->title ?? 'Layanan Jasa';
+            $serviceName = $jasaItem?->jasa_title_snapshot
+                ?? $jasaItem?->jasa?->title
+                ?? 'Layanan Jasa';
             $description = "Pembayaran Layanan: {$serviceName}";
         } else {
             $description = 'Order #' . ($order->order_code ?? $order->id);
@@ -69,8 +79,6 @@ class XenditInvoiceService
         }
 
         $frontendUrl = rtrim((string) config('services.xendit.frontend_url', config('app.frontend_url', 'http://localhost:5173')), '/');
-        $successUrl = $frontendUrl . '/orders/' . $order->id . '?payment=success';
-        $failureUrl = $frontendUrl . '/orders/' . $order->id . '?payment=failed';
 
         $payload = [
             'external_id' => $externalId,
@@ -78,64 +86,77 @@ class XenditInvoiceService
             'description' => $description,
             'currency' => 'IDR',
             'invoice_duration' => $invoiceDuration,
-            'success_redirect_url' => $successUrl,
-            'failure_redirect_url' => $failureUrl,
+            'success_redirect_url' => $frontendUrl . '/orders/' . $order->id . '?payment=success',
+            'failure_redirect_url' => $frontendUrl . '/orders/' . $order->id . '?payment=failed',
         ];
 
-        // Add payment methods if matches
-        $paymentMethodsList = [
-            'BCA', 'BNI', 'BRI', 'MANDIRI', 'PERMATA', 'CIMB', 'SAHABAT_SAMPOERNA',
-            'ALFAMART', 'INDOMARET', 'OVO', 'DANA', 'SHOPEEPAY', 'LINKAJA', 'QRIS'
-        ];
-        
-        // Resolve target channel code from payment_channel, payment_channel_snapshot, or payment_method
-        $channel = strtoupper(
-            $order->payment_channel ??
-            $order->payment_channel_snapshot ??
-            $order->payment_method ??
-            ''
-        );
-        
-        // Clean up common variations (e.g. BNI_VA or BNI VA -> BNI)
-        $channel = str_replace(['_VA', ' VA'], '', $channel);
-        
-        if (in_array($channel, $paymentMethodsList)) {
-            $payload['payment_methods'] = [$channel];
+        if ($order->user?->email) {
+            $payload['payer_email'] = (string) $order->user->email;
+            $payload['customer'] = [
+                'email' => (string) $order->user->email,
+                'given_name' => (string) ($order->nama ?? $order->user->name ?? 'Customer'),
+            ];
         }
 
-        // Add customer info
-        if ($order->user?->email) {
-            $payload['customer'] = [
-                'email' => $order->user->email,
-                'given_name' => $order->nama ?? $order->user->name ?? 'Customer',
-            ];
+        $paymentMethodsList = [
+            'BCA',
+            'BNI',
+            'BRI',
+            'MANDIRI',
+            'PERMATA',
+            'CIMB',
+            'SAHABAT_SAMPOERNA',
+            'ALFAMART',
+            'INDOMARET',
+            'OVO',
+            'DANA',
+            'SHOPEEPAY',
+            'LINKAJA',
+            'QRIS',
+        ];
+
+        $channel = strtoupper(
+            $order->payment_channel
+            ?? $order->payment_channel_snapshot
+            ?? $order->payment_method
+            ?? ''
+        );
+
+        // Normalize common values, e.g. BNI_VA / BNI VA -> BNI.
+        $channel = str_replace(['_VA', ' VA'], '', $channel);
+
+        if (in_array($channel, $paymentMethodsList, true)) {
+            $payload['payment_methods'] = [$channel];
         }
 
         Log::info('[XenditInvoiceService] Creating invoice', [
             'external_id' => $externalId,
             'amount' => $amount,
             'description' => $description,
+            'payment_methods' => $payload['payment_methods'] ?? null,
         ]);
 
         $response = Http::withBasicAuth($this->secretKey, '')
             ->acceptJson()
+            ->asJson()
             ->post($this->baseUrl . '/v2/invoices', $payload);
 
         if (!$response->successful()) {
             $errBody = $response->json();
             $errCode = $errBody['error_code'] ?? '';
-            
-            // If the specific payment method is unavailable/unsupported on this Xendit account,
-            // fallback to general invoice (without restricting payment methods) and try again.
+
+            // Jika payment method belum aktif di Xendit, retry tanpa filter method.
             if ($errCode === 'UNAVAILABLE_PAYMENT_METHOD_ERROR' && isset($payload['payment_methods'])) {
                 Log::warning('[XenditInvoiceService] Payment method unsupported, retrying without payment_methods filter', [
                     'external_id' => $externalId,
                     'unsupported_method' => $payload['payment_methods'],
                 ]);
+
                 unset($payload['payment_methods']);
-                
+
                 $response = Http::withBasicAuth($this->secretKey, '')
                     ->acceptJson()
+                    ->asJson()
                     ->post($this->baseUrl . '/v2/invoices', $payload);
             }
         }
@@ -146,21 +167,22 @@ class XenditInvoiceService
                 'status' => $response->status(),
                 'body' => $response->json(),
             ]);
+
             throw new \RuntimeException($response->json('message') ?: 'Gagal membuat invoice Xendit');
         }
 
         $invoice = $response->json();
 
         return Payment::query()->create([
-            'order_id'          => $order->id,
-            'external_id'       => $externalId,
+            'order_id' => $order->id,
+            'external_id' => $externalId,
             'xendit_invoice_id' => $invoice['id'] ?? null,
-            'invoice_url'       => $invoice['invoice_url'] ?? null,
-            'payment_method'    => null,
-            'expired_at'        => now()->addSeconds($invoiceDuration),
-            'amount'            => $amount,
-            'status'            => 'pending',
-            'raw_response'      => $invoice,
+            'invoice_url' => $invoice['invoice_url'] ?? null,
+            'payment_method' => null,
+            'expired_at' => now()->addSeconds($invoiceDuration),
+            'amount' => $amount,
+            'status' => 'pending',
+            'raw_response' => $invoice,
         ]);
     }
 
@@ -178,6 +200,7 @@ class XenditInvoiceService
             Log::error('[XenditInvoiceService] Failed to get invoice status', [
                 'invoice_id' => $invoiceId,
                 'status' => $response->status(),
+                'body' => $response->json(),
             ]);
 
             return null;
@@ -186,6 +209,7 @@ class XenditInvoiceService
                 'invoice_id' => $invoiceId,
                 'error' => $e->getMessage(),
             ]);
+
             return null;
         }
     }
@@ -195,6 +219,7 @@ class XenditInvoiceService
         if (empty($this->callbackToken)) {
             return false;
         }
+
         return hash_equals($this->callbackToken, (string) $token);
     }
 }

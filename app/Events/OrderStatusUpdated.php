@@ -19,15 +19,12 @@ class OrderStatusUpdated implements ShouldBroadcastNow
     public Order $order;
 
     /**
-     * Optional status context (for backward compatibility).
+     * Optional status context.
      */
     public ?string $status;
 
     /**
      * Create a new event instance.
-     *
-     * @param Order $order
-     * @param string|null $status (optional, for backward compatibility with jasa flow)
      */
     public function __construct(Order $order, ?string $status = null)
     {
@@ -82,9 +79,12 @@ class OrderStatusUpdated implements ShouldBroadcastNow
             'payment_status' => $this->order->payment_status ?? null,
             'paid_at' => $this->order->paid_at?->toISOString(),
             'responsed_at' => $this->order->responsed_at?->toISOString(),
+            'accepted_at' => $this->order->accepted_at?->toISOString(),
             'delivered_at' => $this->order->delivered_at?->toISOString(),
             'completed_at' => $this->order->completed_at?->toISOString(),
             'cancelled_at' => $this->order->cancelled_at?->toISOString(),
+            'ready_to_pickup_at' => $this->order->ready_to_pickup_at?->toISOString(),
+            'unpicked_at' => $this->order->unpicked_at?->toISOString(),
             'order_type' => $this->order->order_type ?? 'product',
         ];
     }

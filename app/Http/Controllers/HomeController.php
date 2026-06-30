@@ -8,7 +8,6 @@ use App\Models\Category;
 use App\Models\Jasa;
 use App\Models\PaymentFee;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class HomeController extends Controller
@@ -41,8 +40,7 @@ class HomeController extends Controller
                         $q->where('status', 'published');
                     },
                     'jasas' => function ($q) {
-                        // Count jasas where is_active=true (covers draft+active+published
-                        // since newly created jasas default to status='draft', is_active=true).
+                        // Count jasas where is_active=true
                         $q->where('is_active', true);
                     }
                 ])
@@ -50,12 +48,12 @@ class HomeController extends Controller
                 ->limit($limit)
                 ->get()
                 ->map(function ($merchant) {
-                    // Append coordinates dari primaryAddress ke merchant object
                     $address = $merchant->primaryAddress;
                     if ($address) {
                         $merchant->latitude = $address->latitude;
                         $merchant->longitude = $address->longitude;
                     }
+
                     return $merchant;
                 });
 
@@ -113,6 +111,7 @@ class HomeController extends Controller
                     $merchant->latitude = $address->latitude;
                     $merchant->longitude = $address->longitude;
                 }
+
                 return $merchant;
             });
 
@@ -176,7 +175,7 @@ class HomeController extends Controller
                     return [
                         'method_code' => $fee->method_code,
                         'method_name' => $fee->method_name,
-                        'type' => $fee->type, // 'fixed' or 'percentage'
+                        'type' => $fee->type,
                         'value' => (float) $fee->value,
                         'description' => $fee->description,
                     ];

@@ -47,20 +47,19 @@ class PaymentFee extends Model
         if ($this->type === 'percentage') {
             return floatval($this->value) . '%';
         }
-        return 'Rp ' . number_format($this->value, 0, ',', '.');
+
+        return 'Rp ' . number_format((float) $this->value, 0, ',', '.');
     }
 
     /**
      * Calculate fee amount berdasarkan gross amount.
-     *
-     * @param float $grossAmount
-     * @return int
      */
     public function calculateFee(float $grossAmount): int
     {
         if ($this->type === 'percentage') {
-            return (int) ceil($grossAmount * ($this->value / 100));
+            return (int) ceil($grossAmount * ((float) $this->value / 100));
         }
+
         return (int) $this->value;
     }
 
@@ -82,9 +81,6 @@ class PaymentFee extends Model
 
     /**
      * Static method untuk mendapatkan fee berdasarkan payment method.
-     *
-     * @param string $paymentMethod
-     * @return self|null
      */
     public static function getByPaymentMethod(string $paymentMethod): ?self
     {
@@ -97,9 +93,6 @@ class PaymentFee extends Model
 
     /**
      * Map payment method ke fee code.
-     *
-     * @param string $paymentMethod
-     * @return string
      */
     public static function mapPaymentMethodToFeeCode(string $paymentMethod): string
     {
@@ -109,7 +102,7 @@ class PaymentFee extends Model
         $ewalletMethods = ['OVO', 'DANA', 'LINKAJA'];
         $retailMethods = ['ALFAMART', 'INDOMARET'];
 
-        if (in_array($paymentMethod, $vaMethods)) {
+        if (in_array($paymentMethod, $vaMethods, true)) {
             return 'VA';
         }
 
@@ -117,7 +110,7 @@ class PaymentFee extends Model
             return 'QRIS';
         }
 
-        if (in_array($paymentMethod, $ewalletMethods)) {
+        if (in_array($paymentMethod, $ewalletMethods, true)) {
             return 'EWALLET';
         }
 
@@ -125,19 +118,15 @@ class PaymentFee extends Model
             return 'SHOPEEPAY';
         }
 
-        if (in_array($paymentMethod, $retailMethods)) {
+        if (in_array($paymentMethod, $retailMethods, true)) {
             return 'RETAIL';
         }
 
-        return 'VA'; // Default
+        return 'VA';
     }
 
     /**
      * Calculate platform fee berdasarkan payment method dan gross amount.
-     *
-     * @param string $paymentMethod
-     * @param float $grossAmount
-     * @return int
      */
     public static function calculatePlatformFee(string $paymentMethod, float $grossAmount): int
     {
@@ -147,7 +136,6 @@ class PaymentFee extends Model
             return $fee->calculateFee($grossAmount);
         }
 
-        // Fallback fee jika tidak ada konfigurasi
-        return 4440; // Default fee
+        return 4440;
     }
 }

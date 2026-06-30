@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class ProductOrderItem extends Model
 {
@@ -58,7 +59,9 @@ class ProductOrderItem extends Model
 
     public function getPriceAttribute($value)
     {
-        return $value !== null ? (float)$value : (float)($this->unit_price_snapshot ?? 0);
+        return $value !== null
+            ? (float) $value
+            : (float) ($this->unit_price_snapshot ?? 0);
     }
 
     public function getIsReviewedAttribute(): bool
@@ -71,10 +74,11 @@ class ProductOrderItem extends Model
     public function getCanReviewAttribute(): bool
     {
         $status = null;
+
         if ($this->relationLoaded('order') && $this->order) {
             $status = $this->order->status;
         } elseif ($this->order_id) {
-            $status = \Illuminate\Support\Facades\DB::table('orders')
+            $status = DB::table('orders')
                 ->where('id', $this->order_id)
                 ->value('status');
         }
@@ -82,8 +86,10 @@ class ProductOrderItem extends Model
         if (!$status) {
             return false;
         }
+
         $status = strtolower($status);
-        $isCompleted = in_array($status, ['completed', 'selesai']);
+        $isCompleted = in_array($status, ['completed', 'selesai'], true);
+
         return $isCompleted && !$this->is_reviewed;
     }
 
@@ -96,6 +102,9 @@ class ProductOrderItem extends Model
         if (!$review) {
             return false;
         }
-        return method_exists($review, 'canUpdate') ? $review->canUpdate() : (int)($review->update_count ?? 0) < 1;
+
+        return method_exists($review, 'canUpdate')
+            ? $review->canUpdate()
+            : (int) ($review->update_count ?? 0) < 1;
     }
 }

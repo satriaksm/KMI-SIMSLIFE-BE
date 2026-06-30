@@ -99,6 +99,8 @@ class Order extends Model
         'rejected_by',
         'rejection_reason', // Rejection reason for cancelled/rejected orders
         'delivered_at',
+        'ready_to_pickup_at',
+        'unpicked_at',
         'completed_at',
         'cancelled_at',
         'cancelled_by',
@@ -128,6 +130,8 @@ class Order extends Model
         'rejected_at' => 'datetime',
         'paid_at' => 'datetime',
         'delivered_at' => 'datetime',
+        'ready_to_pickup_at' => 'datetime',
+        'unpicked_at' => 'datetime',
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'confirm_deadline' => 'datetime',
@@ -461,7 +465,7 @@ class Order extends Model
     public function getPlatformFeeAttribute($value)
     {
         if ($this->order_type === 'jasa') {
-            return (float) ($this->platform_fee_snapshot ?? $this->platform_fee ?? $this->payment_fee_snapshot ?? $this->payment_fee ?? $value ?? 0);
+            return (float) ($this->platform_fee_snapshot ?? $this->payment_fee_snapshot ?? $value ?? 0);
         }
         return (float) ($value ?? 0);
     }

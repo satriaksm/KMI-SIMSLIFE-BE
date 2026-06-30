@@ -8,6 +8,7 @@ use App\Models\Category;
 use App\Models\Merchant;
 use App\Models\Jasa;
 use App\Models\Voucher;
+use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -137,27 +138,60 @@ class DashboardController extends Controller
 
         /**
          * =========================
-         * STAT PESANAN & KEUANGAN
+         * STAT ORDER
          * =========================
          */
-        $ordersToday = \App\Models\Order::where('merchant_id', $merchantId)
-            ->whereDate('created_at', today())
+        $orderBaseQuery = Order::query()
+            ->where('merchant_id', $merchantId);
+
+        if ($isJasaMerchant) {
+            $orderBaseQuery->where('order_type', 'jasa');
+
+            $pendingStatuses = [
+                'pending',
+                'menunggu_konfirmasi',
+                'menunggu_konfirmasi_merchant',
+                'processing_payment',
+            ];
+
+            $completedStatuses = [
+                'selesai',
+                'completed',
+            ];
+        } else {
+            $orderBaseQuery->where(function ($q) {
+                $q->where('order_type', '!=', 'jasa')
+                    ->orWhereNull('order_type');
+            });
+
+            $pendingStatuses = [
+                'pending',
+                'paid',
+                'responsed',
+                'accepted',
+                'ready_to_pickup',
+            ];
+
+            $completedStatuses = [
+                'completed',
+            ];
+        }
+
+        $ordersToday = (clone $orderBaseQuery)
+            ->whereDate('created_at', now()->toDateString())
             ->count();
 
-        $ordersPending = \App\Models\Order::where('merchant_id', $merchantId)
-            ->where(function ($q) {
-                $q->where('status', 'paid')
-                  ->orWhere(function ($sq) {
-                      $sq->where('status', 'pending')->where('payment_method', 'COD');
-                  });
-            })->count();
-
-        $ordersCompleted = \App\Models\Order::where('merchant_id', $merchantId)
-            ->where('status', 'completed')
+        $ordersPending = (clone $orderBaseQuery)
+            ->whereIn('status', $pendingStatuses)
             ->count();
 
-        $revenueTotal = \App\Models\Order::where('merchant_id', $merchantId)
-            ->where('status', 'completed')
+        $ordersCompleted = (clone $orderBaseQuery)
+            ->whereIn('status', $completedStatuses)
+            ->count();
+
+        $revenueTotal = (clone $orderBaseQuery)
+            ->whereIn('status', $completedStatuses)
+            ->get()
             ->sum('net_amount');
 
         return ApiResponse::success(

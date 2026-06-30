@@ -341,6 +341,7 @@ class AdminDashboardController extends Controller
                 ->get()
                 ->map(function ($order) {
                     $jasaItem = $order->jasaItems->first();
+
                     return [
                         'id' => $order->id,
                         'order_code' => $order->order_code,
@@ -348,7 +349,13 @@ class AdminDashboardController extends Controller
                         'tel' => $order->user_phone_snapshot ?? $order->tel ?? '-',
                         'tanggal' => $order->created_at->format('Y-m-d'),
                         'waktu' => $order->created_at->format('H:i:s'),
-                        'total' => (int) ($order->total_payment_snapshot ?? $order->gross_amount ?? $order->total ?? $order->total_price ?? 0),
+                        'total' => (int) (
+                            $order->total_payment_snapshot
+                            ?? $order->gross_amount
+                            ?? $order->total
+                            ?? $order->total_price
+                            ?? 0
+                        ),
                         'merchant' => [
                             'id' => $order->merchant_id,
                             'name' => $order->merchant ? $order->merchant->name : 'Unknown Merchant',
@@ -637,7 +644,7 @@ class AdminDashboardController extends Controller
             // Load logo as base64
             $logoPath = public_path('images/logo-sumilir.png');
             $logoBase64 = '';
-            
+
             if (file_exists($logoPath)) {
                 $logoData = file_get_contents($logoPath);
                 $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);

@@ -13,9 +13,7 @@ class PaymentStatusUpdated implements ShouldBroadcastNow
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public function __construct(public Payment $payment)
-    {
-    }
+    public function __construct(public Payment $payment) {}
 
     public function broadcastOn(): array
     {
@@ -61,6 +59,8 @@ class PaymentStatusUpdated implements ShouldBroadcastNow
             'amount' => $this->payment->amount,
             'invoice_url' => $this->payment->invoice_url,
             'xendit_invoice_id' => $this->payment->xendit_invoice_id,
+            'xendit_refund_id' => $this->payment->xendit_refund_id ?? null,
+            'refund_status' => $this->payment->refund_status ?? null,
         ];
     }
 }
