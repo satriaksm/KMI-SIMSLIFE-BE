@@ -16,6 +16,12 @@ class EventSeeder extends Seeder
     {
         $this->command->info('Seeding events beserta merchant...');
 
+        // Bersihkan tabel agar tidak terjadi duplikasi saat seeder dijalankan berulang kali
+        \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+        \App\Models\Event::truncate();
+        \Illuminate\Support\Facades\DB::table('event_merchants')->truncate();
+        \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+
         // Create dummy banner if not exists
         if (!Storage::disk('public')->exists('events/dummy-banner.jpg')) {
             $img = imagecreatetruecolor(800, 400);

@@ -139,6 +139,9 @@ class ProductController extends Controller
                         ]);
                 },
 
+                // Categories
+                'categories:id,parent_id,name,slug',
+
                 // Rating summary
                 'ratingSummary',
 

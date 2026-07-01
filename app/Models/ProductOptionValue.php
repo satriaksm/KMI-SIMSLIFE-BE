@@ -27,7 +27,10 @@ class ProductOptionValue extends Model
         if (empty($this->image_path)) {
             return null;
         }
-        return route('images.product-option-value.show', ['optionValue' => $this->id]);
+        return route('images.product-option-value.show', [
+            'optionValue' => $this->id,
+            'v' => $this->updated_at ? $this->updated_at->timestamp : time()
+        ]);
     }
 
     public function getImageUrlsAttribute(): ?array
@@ -36,10 +39,12 @@ class ProductOptionValue extends Model
             return null;
         }
 
+        $v = $this->updated_at ? $this->updated_at->timestamp : time();
+
         return [
-            'original' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'original']),
-            'medium' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'medium']),
-            'thumb' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'thumb']),
+            'original' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'thumb', 'v' => $v]),
         ];
     }
 

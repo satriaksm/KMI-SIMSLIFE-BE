@@ -1580,6 +1580,69 @@ class ProductSeeder extends Seeder
 
         $totalProducts = 0;
 
+        $productCategoryMap = [
+            'Nasi Gudeg Komplit' => ['katering-nasi-kotak', 'katering-harian'],
+            'Nasi Pecel' => ['katering-nasi-kotak', 'katering-harian'],
+            'Soto Ayam' => ['katering-nasi-kotak', 'katering-harian'],
+            'Ayam Goreng Kampung' => ['katering-nasi-kotak', 'katering-harian'],
+            'Es Teh Manis' => ['teh', 'minuman-ringan'],
+
+            'Ayam Geprek' => ['katering-nasi-kotak', 'katering-harian'],
+            'Lele Goreng' => ['katering-nasi-kotak', 'katering-harian'],
+            'Nasi Campur' => ['katering-nasi-kotak', 'katering-harian'],
+            'Sambal Bawang Botol' => ['bumbu-masak'],
+            'Rendang Sapi' => ['katering-nasi-kotak', 'katering-harian'],
+
+            'Roti Sobek Coklat' => ['roti-pastry', 'kue-basah'],
+            'Roti Keju' => ['roti-pastry', 'kue-basah'],
+            'Donat Kentang' => ['roti-pastry', 'kue-basah'],
+            'Bolu Pisang' => ['roti-pastry', 'kue-basah'],
+            'Brownies Kukus' => ['roti-pastry', 'kue-basah'],
+
+            'Espresso' => ['kopi', 'minuman-ringan'],
+            'Cappuccino' => ['kopi', 'minuman-ringan'],
+            'Latte' => ['kopi', 'minuman-ringan'],
+            'Es Kopi Susu Gula Aren' => ['kopi', 'minuman-ringan'],
+            'Matcha Latte' => ['teh', 'minuman-ringan'],
+            'Croffle' => ['roti-pastry', 'kue-basah'],
+
+            'Kemeja Batik Pria' => ['pakaian-pria', 'batik-tenun'],
+            'Blouse Batik Wanita' => ['pakaian-wanita', 'batik-tenun'],
+            'Kain Batik Tulis' => ['batik-tenun'],
+            'Totebag Batik' => ['tas-wanita', 'batik-tenun'],
+            'Dompet Batik' => ['tas-pria', 'batik-tenun'],
+
+            'Ember 20 Liter' => ['alat-kebersihan'],
+            'Sapu Lantai' => ['alat-kebersihan'],
+            'Pel Lantai' => ['alat-kebersihan'],
+            'Rak Plastik 3 Susun' => ['penyimpanan'],
+            'Tempat Sampah' => ['alat-kebersihan'],
+
+            'Vas Bambu' => ['dekorasi'],
+            'Lampu Rotan' => ['lampu-pencahayaan'],
+            'Tempat Tisu Kayu' => ['dekorasi'],
+            'Keranjang Rotan' => ['penyimpanan'],
+            'Hiasan Dinding Kayu' => ['dekorasi'],
+
+            'Keripik Pisang' => ['makanan-ringan'],
+            'Keripik Singkong' => ['makanan-ringan'],
+            'Stik Bawang' => ['makanan-ringan'],
+            'Kastengel' => ['kue-kering'],
+            'Nastar' => ['kue-kering'],
+
+            'Telur Ayam' => ['sembako'],
+            'Wortel' => ['buah-sayur'],
+            'Tomat' => ['buah-sayur'],
+            'Bayam' => ['buah-sayur'],
+            'Jeruk Manis' => ['buah-sayur'],
+
+            'Hijab Pashmina Ceruty' => ['hijab-jilbab'],
+            'Hijab Segi Empat Premium' => ['hijab-jilbab'],
+            'Mukena Travel' => ['mukena'],
+            'Ciput Rajut' => ['hijab-jilbab'],
+            'Bros Mutiara' => ['aksesoris-wanita'],
+        ];
+
         foreach ($data as $merchantName => $products) {
             $merchant = Merchant::where('name', 'like', "%{$merchantName}%")->first();
             if (!$merchant) {
@@ -1599,11 +1662,32 @@ class ProductSeeder extends Seeder
                         'description' => 'Deskripsi untuk ' . $prodData['name'],
                     ]);
 
-                // Attach category
-                $randomCategories = $leafCategories->random(rand(1, min(3, $leafCategories->count())));
-                foreach ($randomCategories as $category) {
-                    $product->categories()->attach($category->id);
+                // Attach categories
+                $slugsToAttach = $productCategoryMap[$prodData['name']] ?? ['makanan-ringan'];
+                $categoriesToAttach = Category::whereIn('slug', $slugsToAttach)->get();
+                
+                $rootParentId = null;
+                foreach ($categoriesToAttach as $category) {
+                    $product->categories()->syncWithoutDetaching([$category->id]);
+                    
+                    // Find root parent
+                    $curr = $category;
+                    while ($curr->parent_id !== null) {
+                        $curr = Category::find($curr->parent_id);
+                        if ($curr) {
+                            $product->categories()->syncWithoutDetaching([$curr->id]);
+                        } else {
+                            break;
+                        }
+                    }
+                    if ($curr && $curr->parent_id === null) {
+                        $rootParentId = $curr->id;
+                    }
                 }
+                
+                // Ensure there is at least one root parent, remove any other root parents
+                // Wait, if all slugs in the map belong to the same root, we don't need to remove.
+                // Just to be safe, the map is designed to only span one root parent per product.
 
                 // Setup variants
                 if (!empty($prodData['variants'])) {

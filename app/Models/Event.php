@@ -35,7 +35,10 @@ class Event extends Model
         if (empty($this->banner_img_path)) {
             return null;
         }
-        return route('event-banners.show', ['event' => $this->id]);
+        return route('event-banners.show', [
+            'event' => $this->id,
+            'v' => $this->updated_at ? $this->updated_at->timestamp : time()
+        ]);
     }
 
     public function getBannerUrlsAttribute()
@@ -44,10 +47,12 @@ class Event extends Model
             return null;
         }
 
+        $v = $this->updated_at ? $this->updated_at->timestamp : time();
+
         return [
-            'original' => route('event-banners.show', ['event' => $this->id, 'size' => 'original']),
-            'medium' => route('event-banners.show', ['event' => $this->id, 'size' => 'medium']),
-            'thumb' => route('event-banners.show', ['event' => $this->id, 'size' => 'thumb']),
+            'original' => route('event-banners.show', ['event' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('event-banners.show', ['event' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('event-banners.show', ['event' => $this->id, 'size' => 'thumb', 'v' => $v]),
         ];
     }
 

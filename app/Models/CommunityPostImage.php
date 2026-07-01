@@ -40,7 +40,10 @@ class CommunityPostImage extends Model
      */
     public function getImageUrlAttribute(): string
     {
-        return route('community-images.show', ['image' => $this->id]);
+        return route('community-images.show', [
+            'image' => $this->id,
+            'v' => $this->updated_at ? $this->updated_at->timestamp : time()
+        ]);
     }
 
     /**
@@ -48,10 +51,12 @@ class CommunityPostImage extends Model
      */
     public function getImageUrlsAttribute(): array
     {
+        $v = $this->updated_at ? $this->updated_at->timestamp : time();
+
         return [
-            'original' => route('community-images.show', ['image' => $this->id]),
-            'medium' => route('community-images.show', ['image' => $this->id, 'size' => 'medium']),
-            'thumb' => route('community-images.show', ['image' => $this->id, 'size' => 'thumb']),
+            'original' => route('community-images.show', ['image' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('community-images.show', ['image' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('community-images.show', ['image' => $this->id, 'size' => 'thumb', 'v' => $v]),
         ];
     }
 
