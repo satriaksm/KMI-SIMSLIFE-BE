@@ -570,12 +570,11 @@ class SearchController extends Controller
 
         if (!empty($data['q'])) {
             $q = $data['q'];
-            $query->where(function ($qBuilder) use ($q) {
-                $qBuilder->where('merchants.name', 'like', "%{$q}%")
-                  ->orWhere('merchants.description', 'like', "%{$q}%");
-            });
-            $quotedQ = DB::getPdo()->quote("%{$q}%");
-            $query->addSelect(DB::raw("(CASE WHEN merchants.name LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
+            $query->where('merchants.name', 'like', "%{$q}%");
+            
+            // Relevance score can just be 1 since we only search by name,
+            // or we keep it 2 for consistency with the frontend.
+            $query->addSelect(DB::raw("2 as relevance_score"));
             $query->orderByDesc('relevance_score');
         }
 

@@ -18,11 +18,6 @@ return new class extends Migration {
                 ->cascadeOnUpdate()
                 ->restrictOnDelete();
 
-            $table->foreignId('paguyuban_id')
-                ->nullable()
-                ->constrained('paguyubans')
-                ->cascadeOnUpdate()
-                ->restrictOnDelete();
 
             $table->foreignId('segmentation_id')
                 ->constrained('segmentations')

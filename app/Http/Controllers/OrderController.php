@@ -20,6 +20,7 @@ use App\Models\Voucher;
 use App\Models\VoucherUsage;
 use App\Services\XenditInvoiceService;
 use App\Services\WebPushService;
+use App\Services\ImageOptimizationService;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -434,7 +435,10 @@ class OrderController extends Controller
             $order->ready_to_pickup_at = now();
         } elseif ($newStatus === 'undelivered') {
             if ($request->hasFile('proof_image')) {
-                $path = $request->file('proof_image')->store('orders/proofs', 'public');
+                if ($order->proof_image_path) {
+                    app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
+                }
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
                 $order->proof_image_path = $path;
             }
             
@@ -446,7 +450,10 @@ class OrderController extends Controller
         } elseif ($newStatus === 'completed') {
             $order->completed_at = now();
             if ($request->hasFile('proof_image')) {
-                $path = $request->file('proof_image')->store('orders/proofs', 'public');
+                if ($order->proof_image_path) {
+                    app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
+                }
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
                 $order->proof_image_path = $path;
             }
             $this->moveBalanceToAvailable($order);

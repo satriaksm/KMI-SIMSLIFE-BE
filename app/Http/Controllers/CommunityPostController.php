@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Response;
+use App\Services\ImageOptimizationService;
 
 class CommunityPostController
 {
@@ -55,7 +56,7 @@ class CommunityPostController
     public function index(Request $request)
     {
         $query = CommunityPost::with([
-            'user:id,name,profile_picture_path',
+            'user:id,name,profile_picture_path,updated_at',
             'images' => function ($query) {
                 $query->ordered()->limit(5);
             }
@@ -178,7 +179,7 @@ class CommunityPostController
 
             // Load relationships
             $post->load([
-                'user:id,name,profile_picture_path',
+                'user:id,name,profile_picture_path,updated_at',
                 'images' => fn($q) => $q->ordered()
             ]);
 
@@ -237,7 +238,7 @@ class CommunityPostController
     {
 
         $post = CommunityPost::with([
-            'user:id,name,profile_picture_path',
+            'user:id,name,profile_picture_path,updated_at',
             'images' => fn($q) => $q->ordered()
         ])
             ->where('post_slug', $slug)
@@ -376,7 +377,7 @@ class CommunityPostController
             }
 
             $post->load([
-                'user:id,name,profile_picture_path',
+                'user:id,name,profile_picture_path,updated_at',
                 'images' => fn($q) => $q->ordered()
             ]);
 
@@ -415,9 +416,7 @@ class CommunityPostController
         // ✅ FIX: Delete images from storage before deleting post
         if ($post->images) {
             foreach ($post->images as $image) {
-                if (Storage::disk('public')->exists($image->post_image_path)) {
-                    Storage::disk('public')->delete($image->post_image_path);
-                }
+                app(ImageOptimizationService::class)->deleteImages($image->post_image_path, 'public');
             }
         }
 
@@ -450,9 +449,7 @@ class CommunityPostController
         // Delete images from storage
         if ($post->images) {
             foreach ($post->images as $image) {
-                if (Storage::disk('public')->exists($image->post_image_path)) {
-                    Storage::disk('public')->delete($image->post_image_path);
-                }
+                app(ImageOptimizationService::class)->deleteImages($image->post_image_path, 'public');
             }
         }
 
@@ -512,7 +509,7 @@ class CommunityPostController
         $limit = min($request->get('limit', 10), 50);
 
         $posts = CommunityPost::with([
-            'user:id,name,profile_picture_path',
+            'user:id,name,profile_picture_path,updated_at',
             'images' => fn($q) => $q->ordered()->limit(1)
         ])
             ->published()
@@ -570,7 +567,7 @@ class CommunityPostController
         $perPage = min($request->get('per_page', 15), 100);
 
         $posts = CommunityPost::with([
-            'user:id,name,profile_picture_path',
+            'user:id,name,profile_picture_path,updated_at',
             'images' => fn($q) => $q->ordered()->limit(3)
         ])
             ->where('user_id', Auth::id())
@@ -600,17 +597,22 @@ class CommunityPostController
      * @param CommunityPostImage $image
      * @return \Illuminate\Http\Response
      */
-    public function showImage(CommunityPostImage $image)
+    public function showImage(Request $request, CommunityPostImage $image)
     {
         if (empty($image->post_image_path)) {
             abort(404);
         }
 
+        $size = $request->query('size', 'original');
         $disk = 'public';
-        $path = ltrim($image->post_image_path, '/');
+        $originalPath = ltrim($image->post_image_path, '/');
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath; // fallback
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
@@ -649,9 +651,8 @@ class CommunityPostController
         $postTitleSlug = $altPrefix ?? Str::slug($post->post_title);
 
         foreach ($images as $index => $image) {
-            $filename = Str::random(20) . '.' . $image->getClientOriginalExtension();
             $path = "community/posts/{$post->id}";
-            $fullPath = $image->storeAs($path, $filename, 'public');
+            $fullPath = app(ImageOptimizationService::class)->processAndStore($image, $path, 'public');
 
             // Auto-generate alt text: {altPrefix}-{n}
             $imageNumber = $currentCount + $index + 1;
@@ -676,9 +677,7 @@ class CommunityPostController
 
         foreach ($images as $image) {
             // Delete file from storage
-            if (Storage::disk('public')->exists($image->post_image_path)) {
-                Storage::disk('public')->delete($image->post_image_path);
-            }
+            app(ImageOptimizationService::class)->deleteImages($image->post_image_path, 'public');
             // Delete record
             $image->delete();
         }
@@ -704,6 +703,7 @@ class CommunityPostController
                 'id' => $post->user->id,
                 'name' => $post->user->name,
                 'profile_picture' => $post->user->profile_picture,
+                'profile_picture_urls' => $post->user->profile_picture_urls,
             ],
             'links' => [
                 'self' => url("/api/community/posts/{$post->post_slug}"),

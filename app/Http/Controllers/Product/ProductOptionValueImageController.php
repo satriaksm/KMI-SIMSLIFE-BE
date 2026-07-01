@@ -8,11 +8,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use App\Models\ProductOptionValue;
 use Illuminate\Support\Facades\Storage;
+use App\Services\ImageOptimizationService;
 
 class ProductOptionValueImageController extends Controller
 {
     public function show(Request $request, ProductOptionValue $optionValue)
     {
+        $size = $request->query('size', 'original');
         // cobalah beberapa kemungkinan relasi
         $product = $optionValue->option?->product
             ?? $optionValue->product // jika ada relasi langsung
@@ -27,12 +29,12 @@ class ProductOptionValueImageController extends Controller
         $status = strtolower((string) $product->status);
 
         if ($status === 'published' || $status === 'publish') {
-            return $this->stream($optionValue);
+            return $this->stream($optionValue, $size);
         }
 
         $user = $request->user();
         if ($user && $product->merchant && $user->id === $product->merchant->user_id) {
-            return $this->stream($optionValue);
+            return $this->stream($optionValue, $size);
         }
 
         Log::info('Access denied to option image', [
@@ -46,21 +48,31 @@ class ProductOptionValueImageController extends Controller
     }
 
 
-    private function stream(ProductOptionValue $optionValue)
+    private function stream(ProductOptionValue $optionValue, string $size = 'original')
     {
         $disk = config('filesystems.product_disk', 'private');
-        $imagePath = $optionValue->image_path;
+        $originalPath = $optionValue->image_path;
 
-        if (!$imagePath || !Storage::disk($disk)->exists($imagePath)) {
+        if (!$originalPath) {
             abort(404);
         }
 
-        $stream = Storage::disk($disk)->readStream($imagePath);
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
+
+        if (!Storage::disk($disk)->exists($path)) {
+            $path = $originalPath; // fallback
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
+        }
+
+        $stream = Storage::disk($disk)->readStream($path);
+        $mime = pathinfo($path, PATHINFO_EXTENSION) === 'webp' ? 'image/webp' : 'image/jpeg';
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
         }, 200, [
-            'Content-Type' => 'image/jpeg',
+            'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=31536000',
         ]);
     }

@@ -47,7 +47,7 @@ class PostCommentSeeder extends Seeder
 
             for ($i = 0; $i < $commentCount; $i++) {
                 $comment = PostComment::factory()
-                    ->commentFactory()
+                    ->commentFactory($post->post_title)
                     ->create([
                         'post_id' => $post->id,
                         'user_id' => $users->random()->id,
@@ -62,7 +62,7 @@ class PostCommentSeeder extends Seeder
 
                     for ($j = 0; $j < $replyCount; $j++) {
                         $reply = PostComment::factory()
-                            ->commentFactory()
+                            ->commentFactory($post->post_title)
                             ->create([
                                 'post_id' => $post->id,
                                 'user_id' => $users->random()->id,
@@ -74,7 +74,7 @@ class PostCommentSeeder extends Seeder
                         // 30% chance for reply to reply (max 2 levels deep)
                         if (rand(1, 100) <= 30) {
                             PostComment::factory()
-                                ->commentFactory()
+                                ->commentFactory($post->post_title)
                                 ->create([
                                     'post_id' => $post->id,
                                     'user_id' => $users->random()->id,

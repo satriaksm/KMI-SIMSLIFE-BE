@@ -26,8 +26,11 @@ return new class extends Migration
             
             $table->timestamps();
             
-            // Unique constraint: 1 pembeli hanya bisa rating 1x per produk
-            $table->unique(['user_id', 'rateable_id', 'rateable_type']);
+            // Unique constraint: 1 pembeli hanya bisa rating 1x per ORDER per produk
+            $table->unique(
+                ['user_id', 'order_id', 'rateable_id', 'rateable_type'],
+                'ratings_user_order_rateable_unique'
+            );
             // Unique constraint for service_order_id
             $table->unique(['user_id', 'service_order_id'], 'ratings_user_service_order_unique');
         });

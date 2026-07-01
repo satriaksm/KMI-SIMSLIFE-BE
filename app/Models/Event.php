@@ -25,6 +25,37 @@ class Event extends Model
         'event_end_date' => 'date',
     ];
 
+    protected $appends = [
+        'banner_url',
+        'banner_urls',
+    ];
+
+    public function getBannerUrlAttribute()
+    {
+        if (empty($this->banner_img_path)) {
+            return null;
+        }
+        return route('event-banners.show', [
+            'event' => $this->id,
+            'v' => $this->updated_at ? $this->updated_at->timestamp : time()
+        ]);
+    }
+
+    public function getBannerUrlsAttribute()
+    {
+        if (empty($this->banner_img_path)) {
+            return null;
+        }
+
+        $v = $this->updated_at ? $this->updated_at->timestamp : time();
+
+        return [
+            'original' => route('event-banners.show', ['event' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('event-banners.show', ['event' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('event-banners.show', ['event' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

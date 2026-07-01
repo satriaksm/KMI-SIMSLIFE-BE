@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use App\Services\ImageOptimizationService;
 
 class MerchantController extends Controller
 {
@@ -47,20 +48,18 @@ class MerchantController extends Controller
 
     public function merchantProfilePictureShow(Request $request, Merchant $merchant)
     {
-        if ($request->hasValidSignature()) {
-            return $this->streamMerchantAsset($merchant->logo_path);
-        }
-
-        return $this->streamMerchantAsset($merchant->logo_path);
+        $size = $request->query('size', 'original');
+        $resolvedPath = app(\App\Services\ImageOptimizationService::class)->resolveSizePath($merchant->logo_path, $size);
+        
+        return $this->streamMerchantAsset($resolvedPath);
     }
 
     public function merchantBannerShow(Request $request, Merchant $merchant)
     {
-        if ($request->hasValidSignature()) {
-            return $this->streamMerchantAsset($merchant->cover_path);
-        }
-
-        return $this->streamMerchantAsset($merchant->cover_path);
+        $size = $request->query('size', 'original');
+        $resolvedPath = app(\App\Services\ImageOptimizationService::class)->resolveSizePath($merchant->cover_path, $size);
+        
+        return $this->streamMerchantAsset($resolvedPath);
     }
 
     public function mapIndex()
@@ -290,7 +289,6 @@ class MerchantController extends Controller
 
             $merchant = Merchant::create([
                 'user_id' => $user->id,
-                'paguyuban_id' => null,
                 'segmentation_id' => $validated['segmentation_id'],
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
@@ -337,7 +335,6 @@ class MerchantController extends Controller
 
         $merchant->load([
             'segmentation',
-            'paguyuban',
             'primaryAddress.province',
             'primaryAddress.city',
             'primaryAddress.district',
@@ -562,11 +559,11 @@ class MerchantController extends Controller
              * Logo Upload
              * =============================== */
             if ($request->hasFile('logo')) {
-                if ($merchant->logo_path && Storage::disk('public')->exists($merchant->logo_path)) {
-                    Storage::disk('public')->delete($merchant->logo_path);
+                if ($merchant->logo_path) {
+                    app(ImageOptimizationService::class)->deleteImages($merchant->logo_path, 'public');
                 }
 
-                $path = $request->file('logo')->store('merchants/logos', 'public');
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('logo'), 'merchants/logos', 'public', true);
 
                 $merchant->update([
                     'logo_path' => $path
@@ -578,11 +575,11 @@ class MerchantController extends Controller
              * =============================== */
             if ($request->hasFile('cover')) {
                 // Delete old cover if exists
-                if ($merchant->cover_path && Storage::disk('public')->exists($merchant->cover_path)) {
-                    Storage::disk('public')->delete($merchant->cover_path);
+                if ($merchant->cover_path) {
+                    app(ImageOptimizationService::class)->deleteImages($merchant->cover_path, 'public');
                 }
 
-                $path = $request->file('cover')->store('merchants/covers', 'public');
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('cover'), 'merchants/covers', 'public');
                 $merchant->update(['cover_path' => $path]);
             }
 

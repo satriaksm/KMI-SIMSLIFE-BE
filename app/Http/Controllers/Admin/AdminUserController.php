@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Storage;
+use App\Services\ImageOptimizationService;
 use App\Http\Requests\Admin\ChangeUserStatusRequest;
 
 class AdminUserController extends Controller
@@ -1036,7 +1037,7 @@ class AdminUserController extends Controller
     public function notify(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
-            'type' => 'required|in:outreach,event_invite,paguyuban_invite,voucher,general',
+            'type' => 'required|in:outreach,event_invite,voucher,general',
             'message' => 'required|string|max:1000',
             'metadata' => 'nullable|array',
         ]);
@@ -1261,7 +1262,7 @@ class AdminUserController extends Controller
     public function executeAlertAction(Request $request, $alertId)
     {
         $validator = Validator::make($request->all(), [
-            'action' => 'required|in:warn,suspend,limit_posting,invite_event,invite_paguyuban,dismiss',
+            'action' => 'required|in:warn,suspend,limit_posting,invite_event,dismiss',
             'reason' => 'required|string|max:500',
         ]);
 
@@ -1663,19 +1664,20 @@ class AdminUserController extends Controller
      */
     public function showProfilePicture(Request $request, User $user)
     {
+        $size = $request->query('size', 'original');
         // Support signed URL for secure access
         if ($request->hasValidSignature()) {
-            return $this->streamProfilePicture($user);
+            return $this->streamProfilePicture($user, $size);
         }
 
         // Public access for now (you can add auth checks later)
-        return $this->streamProfilePicture($user);
+        return $this->streamProfilePicture($user, $size);
     }
 
     /**
      * Private method to stream profile picture
      */
-    private function streamProfilePicture(User $user)
+    private function streamProfilePicture(User $user, string $size = 'original')
     {
         // ✅ FIX: Check if path exists and is not empty
         if (empty($user->profile_picture_path)) {
@@ -1683,11 +1685,14 @@ class AdminUserController extends Controller
         }
 
         $disk = 'public';
-        $path = ltrim($user->profile_picture_path, '/');
+        $originalPath = ltrim($user->profile_picture_path, '/');
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         // ✅ FIX: Verify file exists on disk
         if (!Storage::disk($disk)->exists($path)) {
-            Log::warning('[AdminUser] Profile picture file not found', [
+            $path = $originalPath; // fallback
+            if (!Storage::disk($disk)->exists($path)) {
+                Log::warning('[AdminUser] Profile picture file not found', [
                 'user_id' => $user->id,
                 'path' => $path,
             ]);
@@ -1729,4 +1734,5 @@ class AdminUserController extends Controller
             abort(500, 'Error streaming file');
         }
     }
+}
 }
