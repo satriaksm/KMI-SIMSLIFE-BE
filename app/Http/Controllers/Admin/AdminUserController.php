@@ -509,7 +509,7 @@ class AdminUserController extends Controller
                 'name' => ['required', 'string', 'max:255'],
                 'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
                 'phone' => ['nullable', 'string', 'max:13'],
-                'nik' => ['required', 'string', 'size:16', 'unique:users,nik'],
+                'nik' => ['nullable', 'string', 'size:16', 'unique:users,nik'],
                 'password' => [
                     'required',
                     'confirmed',
