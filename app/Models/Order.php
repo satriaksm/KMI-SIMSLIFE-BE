@@ -103,6 +103,7 @@ class Order extends Model
         'unpicked_at',
         'completed_at',
         'cancelled_at',
+        'expired_at',
         'cancelled_by',
         'confirm_deadline',
 

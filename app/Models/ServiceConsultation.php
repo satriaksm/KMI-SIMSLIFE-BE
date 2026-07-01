@@ -317,7 +317,8 @@ class ServiceConsultation extends Model
         $this->customer_accepted = true;
         $this->customer_accepted_at = now();
         $this->status = self::STATUS_ACCEPTED;
-        $this->order_id = $orderId; // Link ke Order (bukan ServiceOrder)
+        // Relasi order jasa konsultasi disimpan melalui jasa_order_items.service_consultation_id.
+        // Tabel service_consultations tidak memiliki kolom order_id, jadi jangan set order_id di sini.
         $this->negotiated_price = $negotiatedPrice ?? $this->merchant_offered_price;
 
         return $this->save();
@@ -328,7 +329,11 @@ class ServiceConsultation extends Model
      */
     public function close(?string $reason = null): bool
     {
-        if ($this->status === self::STATUS_ACCEPTED || $this->status === self::STATUS_CLOSED) {
+        if ($this->status === self::STATUS_CLOSED) {
+            return false;
+        }
+
+        if (in_array($this->status, [self::STATUS_DITOLAK, self::STATUS_OFFER_REJECTED], true)) {
             return false;
         }
 

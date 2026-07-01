@@ -269,10 +269,13 @@ class MerchantReportController extends Controller
                 ?? $paymentMethodLabels[strtolower($paymentMethod)]
                 ?? $paymentMethod;
 
+            // Paksa tampilan laporan memakai ORD-000001, bukan JS-...
+            $displayOrderCode = 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
+
             return [
                 'id' => $order->id,
-                'order_number' => $order->order_code ?? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT)),
-                'order_code' => $order->order_code ?? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT)),
+                'order_number' => $displayOrderCode,
+                'order_code' => $displayOrderCode,
                 'order_type' => 'jasa',
                 'service_name' => $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa_title ?? 'Layanan',
                 'customer_name' => $order->customer_name_snapshot

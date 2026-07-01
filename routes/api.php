@@ -269,7 +269,7 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-
+Route::get('/banks', [BankController::class, 'index']);
 
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
@@ -277,8 +277,6 @@ Route::prefix('auth')->group(function () {
 Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('/me', [AuthController::class, 'me'])->name('me');
-
-    Route::get('/banks', [BankController::class, 'index']);
 
     Route::prefix('profile')->controller(UserController::class)->group(function () {
         Route::get('/', 'show')->name('profile.show');

@@ -106,6 +106,10 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
+        if (($order->order_type ?? 'product') === 'jasa') {
+            return ApiResponse::error('Pesanan jasa harus diakses melalui endpoint jasa.', 404);
+        }
+
         if ($this->checkAndAutoCancelOrder($order)) {
             $order->refresh();
         }

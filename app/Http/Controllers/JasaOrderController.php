@@ -7,6 +7,9 @@ use App\Models\JasaOrderItem;
 use App\Models\Jasa;
 use App\Models\Payment;
 use App\Models\PaymentFee;
+use App\Models\Voucher;
+use App\Models\VoucherUsage;
+use App\Models\ServiceConsultation;
 use App\Models\Rating;
 use App\Models\ReviewMedia;
 use App\Helpers\ApiResponse;
@@ -19,25 +22,26 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 
+
 /**
  * JasaOrderController
  *
  * Controller baru untuk flow order jasa menggunakan Order + JasaOrderItem.
  * ServiceOrder sudah deprecated - menggunakan struktur ini sebagai gantinya.
  *
- * Flow baru:
+ * Flow jasa aman:
  * 1. Customer checkout jasa
- * 2. Order dibuat (Order + JasaOrderItem)
- * 3. Untuk COD: langsung masuk 'menunggu_konfirmasi_merchant' + set confirm_deadline
- * 4. Untuk Xendit: masuk 'pending', setelah bayar baru ke 'menunggu_konfirmasi_merchant'
+ * 2. Order dibuat sebagai menunggu_konfirmasi
+ * 3. Merchant setuju / tolak terlebih dahulu
+ * 4. Jika merchant setuju, customer baru boleh membayar
+ * 5. Setelah pembayaran berhasil, layanan baru dapat diproses
  */
 class JasaOrderController extends Controller
 {
     public function __construct(
         private readonly XenditInvoiceService $xenditInvoiceService,
         private readonly WebPushService $webPushService
-    ) {
-    }
+    ) {}
 
     /**
      * Create order jasa baru (langsung_pesan flow)
@@ -62,22 +66,112 @@ class JasaOrderController extends Controller
             'subtotal' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|string|max:50',
             'payment_channel' => 'nullable|string|max:50',
+            'voucher_id' => 'nullable|integer|exists:vouchers,id',
+            'voucher_code' => 'nullable|string|max:100',
+            'discount_amount' => 'nullable|numeric|min:0',
+            'consultation_id' => 'nullable|integer|exists:service_consultations,id',
         ]);
 
         $jasa = Jasa::with(['merchant', 'images'])->findOrFail($request->jasa_id);
+
+        $consultation = null;
+        $isConsultationOrder = false;
+
+        if ($request->filled('consultation_id')) {
+            $consultation = ServiceConsultation::with(['jasa', 'merchant', 'customer', 'jasaOrderItems.order.payment'])
+                ->where('id', $request->consultation_id)
+                ->where('customer_id', Auth::id())
+                ->where('jasa_id', $jasa->id)
+                ->first();
+
+            if (!$consultation) {
+                return ApiResponse::error('Konsultasi tidak ditemukan atau tidak sesuai dengan layanan ini.', 404);
+            }
+
+            if (!in_array($consultation->status, [
+                ServiceConsultation::STATUS_DAPAT_DIKERJAKAN,
+                ServiceConsultation::STATUS_PENYESUAIAN,
+                ServiceConsultation::STATUS_ACCEPTED,
+            ], true)) {
+                return ApiResponse::error('Konsultasi belum memiliki penawaran aktif dari merchant.', 422);
+            }
+
+            if (empty($consultation->merchant_offered_price) && empty($consultation->negotiated_price)) {
+                return ApiResponse::error('Harga penawaran konsultasi belum tersedia.', 422);
+            }
+
+            $existingConsultationItem = JasaOrderItem::with('order.payment')
+                ->where('service_consultation_id', $consultation->id)
+                ->whereHas('order', function ($query) {
+                    $query->whereNotIn('status', ['expired', 'dibatalkan', 'ditolak']);
+                })
+                ->latest('id')
+                ->first();
+
+            if ($existingConsultationItem?->order) {
+                $existingOrder = $existingConsultationItem->order;
+
+                if (strtoupper((string) $existingOrder->payment_status) !== 'PAID') {
+                    $deadline = $existingOrder->payment?->expired_at ?? $existingOrder->confirm_deadline;
+
+                    if ($deadline && now()->greaterThan($deadline)) {
+                        DB::transaction(function () use ($existingOrder, $consultation) {
+                            $existingOrder->update([
+                                'status' => 'expired',
+                                'expired_at' => now(),
+                            ]);
+
+                            if ($existingOrder->payment && $existingOrder->payment->status === 'pending') {
+                                $existingOrder->payment->update(['status' => 'expired']);
+                            }
+
+                            $consultation->update([
+                                'status' => ServiceConsultation::STATUS_CLOSED,
+                                'closed_at' => now(),
+                                'offer_status' => 'payment_expired',
+                            ]);
+                        });
+
+                        return ApiResponse::error('Batas waktu pembayaran sudah habis. Percakapan otomatis dihentikan.', 422);
+                    }
+                }
+
+                return ApiResponse::success([
+                    'order_id' => $existingOrder->id,
+                    'jasa_order_item_id' => $existingConsultationItem->id,
+                    'payment_method' => $existingOrder->payment_method_snapshot ?? $existingOrder->payment_method,
+                    'payment_channel' => $existingOrder->payment_channel_snapshot ?? $existingOrder->payment_channel,
+                    'is_cod' => strtoupper((string) ($existingOrder->payment_method ?? '')) === 'COD',
+                    'status' => $existingOrder->status,
+                    'payment_status' => $existingOrder->payment_status,
+                    'confirm_deadline' => $existingOrder->confirm_deadline?->toISOString(),
+                    'already_exists' => true,
+                    'subtotal' => (float) ($existingOrder->subtotal_snapshot ?? $existingOrder->subtotal ?? $existingOrder->total_price),
+                    'discount_total' => 0,
+                    'payment_fee' => (float) ($existingOrder->payment_fee_snapshot ?? $existingOrder->platform_fee_snapshot ?? 0),
+                    'total_payment' => (float) ($existingOrder->total_payment_snapshot ?? $existingOrder->total_price),
+                ], 'Pesanan konsultasi sudah dibuat. Silakan lanjutkan pembayaran.', 200);
+            }
+
+            $isConsultationOrder = true;
+        }
 
         // Validasi: hanya untuk UMKM Jasa
         if (!$jasa->merchant || $jasa->merchant->segmentation_id !== 3) {
             return ApiResponse::error('Layanan ini tidak tersedia untuk dipesan', 400);
         }
 
-        // Validasi: hanya langsung_pesan atau booking
+        // Validasi: langsung_pesan/booking untuk order biasa, memerlukan_konsultasi untuk order dari chat konsultasi.
         $caraPemesanan = $jasa->cara_pemesanan ?? 'langsung_pesan';
-        if (!in_array($caraPemesanan, ['langsung_pesan', 'booking'])) {
+        if (!$isConsultationOrder && !in_array($caraPemesanan, ['langsung_pesan', 'booking'], true)) {
             return ApiResponse::error(
                 'Layanan ini memerlukan konsultasi terlebih dahulu. Silakan gunakan fitur Ajukan Konsultasi.',
                 400
             );
+        }
+
+        if ($isConsultationOrder && $caraPemesanan !== 'memerlukan_konsultasi') {
+            return ApiResponse::error('Order konsultasi hanya dapat dibuat dari layanan yang memerlukan konsultasi.', 422);
         }
 
         // ============================================================
@@ -89,6 +183,10 @@ class JasaOrderController extends Controller
             ?? JasaOrderItem::mapToOrderMethod($request->mekanisme_pemesanan)
             ?? JasaOrderItem::mapToOrderMethod($jasa->cara_pemesanan)
             ?? 'keranjang';
+
+        if ($isConsultationOrder) {
+            $orderMethod = 'konsultasi';
+        }
 
         if ($orderMethod === 'booking' && $request->booking_date && $request->booking_time) {
             $activeStatuses = [
@@ -125,6 +223,10 @@ class JasaOrderController extends Controller
             ?? JasaOrderItem::mapToOrderMethod($jasa->cara_pemesanan)
             ?? 'keranjang';
 
+        if ($isConsultationOrder) {
+            $orderMethod = 'konsultasi';
+        }
+
         $paymentMethod = strtoupper($request->payment_method ?? 'COD');
         $paymentChannel = $request->payment_channel
             ? strtoupper($request->payment_channel)
@@ -133,25 +235,116 @@ class JasaOrderController extends Controller
 
         // subtotal: harga layanan (sebelum fee)
         $subtotal = floatval($request->subtotal ?? $request->total_price ?? 0);
+        if ($isConsultationOrder) {
+            $subtotal = floatval($consultation->negotiated_price ?? $consultation->merchant_offered_price ?? 0);
+        }
         if ($subtotal <= 0) {
             $subtotal = floatval($jasa->fixed_price ?? $jasa->base_price ?? $jasa->price ?? 0);
         }
 
-        // platform_fee: biaya admin/platform yang dibebankan ke customer
-        // Hitung dari SIMSLIFE PaymentFee config (payment_channel → SIMSLIFE fee)
-        $platformFee = 0;
-        if (!$isCodPayment && $paymentChannel) {
-            $platformFee = PaymentFee::calculatePlatformFee($paymentChannel, $subtotal);
+        // ============================================================
+        // VOUCHER / DISKON
+        // Frontend boleh mengirim voucher_id / voucher_code / discount_amount,
+        // tetapi backend tetap menghitung ulang dari data voucher agar aman.
+        // Rumus total jasa:
+        // subtotal - discount_total + payment_fee = total_payment
+        // ============================================================
+        $discountTotal = 0;
+        $appliedVoucher = null;
+        $voucherCode = $request->filled('voucher_code')
+            ? strtoupper(trim((string) $request->voucher_code))
+            : null;
+
+        if (!$isConsultationOrder && ($request->filled('voucher_id') || $voucherCode)) {
+            $acceptedEventIds = DB::table('event_merchants')
+                ->select('event_id')
+                ->where('merchant_id', $merchantId)
+                ->where('status', 'accepted')
+                ->pluck('event_id');
+
+            $voucherQuery = Voucher::query()
+                ->where(function ($query) use ($merchantId, $acceptedEventIds) {
+                    $query->where('merchant_id', $merchantId)
+                        ->orWhereIn('event_id', $acceptedEventIds);
+                })
+                ->where('is_secret', false)
+                ->active();
+
+            if ($request->filled('voucher_id')) {
+                $voucherQuery->where('id', $request->voucher_id);
+            } else {
+                $voucherQuery->whereRaw('UPPER(voucher_code) = ?', [$voucherCode]);
+            }
+
+            $appliedVoucher = $voucherQuery->first();
+
+            if (!$appliedVoucher) {
+                return ApiResponse::error('Voucher tidak valid atau sudah tidak aktif.', 422);
+            }
+
+            $minPurchase = (float) ($appliedVoucher->min_purchase_amount ?? 0);
+            if ($minPurchase > 0 && $subtotal < $minPurchase) {
+                return ApiResponse::error(
+                    'Minimal transaksi untuk voucher ini adalah Rp ' . number_format($minPurchase, 0, ',', '.'),
+                    422
+                );
+            }
+
+            $usageLimit = (int) ($appliedVoucher->usage_limit ?? 0);
+            $usageLimitPerUser = (int) ($appliedVoucher->usage_limit_per_user ?? 0);
+
+            if ($usageLimit > 0) {
+                $totalUsed = $appliedVoucher->usages()->count();
+
+                if ($totalUsed >= $usageLimit) {
+                    return ApiResponse::error('Kuota voucher sudah habis.', 422);
+                }
+            }
+
+            if ($customerId && $usageLimitPerUser > 0) {
+                $userUsed = $appliedVoucher->usages()
+                    ->where('user_id', $customerId)
+                    ->count();
+
+                if ($userUsed >= $usageLimitPerUser) {
+                    return ApiResponse::error('Voucher sudah mencapai batas pemakaian untuk akun Anda.', 422);
+                }
+            }
+
+            $voucherType = strtolower((string) $appliedVoucher->voucher_type);
+            $voucherValue = (float) ($appliedVoucher->value ?? 0);
+            $maxDiscount = (float) ($appliedVoucher->max_discount_amount ?? 0);
+
+            if (in_array($voucherType, ['percent', 'percentage', 'persen'], true)) {
+                $discountTotal = round(($voucherValue / 100) * $subtotal);
+
+                if ($maxDiscount > 0) {
+                    $discountTotal = min($discountTotal, $maxDiscount);
+                }
+            } else {
+                $discountTotal = $voucherValue;
+            }
+
+            $discountTotal = max(0, min($discountTotal, $subtotal));
         }
 
-        // total_price yang customer bayarkan = subtotal + platform_fee
-        $totalPrice = $subtotal + $platformFee;
+        $payableSubtotal = max(0, $subtotal - $discountTotal);
+
+        // platform_fee: biaya admin/platform yang dibebankan ke customer.
+        // Biaya admin dihitung dari nominal setelah diskon.
+        $platformFee = 0;
+        if (!$isCodPayment && $paymentChannel) {
+            $platformFee = PaymentFee::calculatePlatformFee($paymentChannel, $payableSubtotal);
+        }
+
+        // total_price yang customer bayarkan = subtotal setelah diskon + platform_fee
+        $totalPrice = $payableSubtotal + $platformFee;
 
         // Determine service location address
         $serviceLocationAddress = null;
         if ($serviceType === 'online') {
             $serviceLocationAddress = 'Online';
-        } elseif ($serviceType === 'di_tempat_umjm' || $serviceType === 'at_location') {
+        } elseif ($serviceType === 'di_tempat_umkm' || $serviceType === 'at_location') {
             $serviceLocationAddress = $jasa->location_address ?? $jasa->merchant?->address ?? null;
         }
 
@@ -159,9 +352,9 @@ class JasaOrderController extends Controller
 
         DB::beginTransaction();
         try {
-            // Tentukan initial status berdasarkan payment method
-            // SLA: all jasa orders start as menunggu_konfirmasi, merchant has 24h to respond
-            $initialStatus = 'menunggu_konfirmasi';
+            // Tentukan initial status berdasarkan flow.
+            // Order konsultasi sudah memiliki penawaran merchant, jadi langsung masuk tahap pembayaran.
+            $initialStatus = $isConsultationOrder ? 'diterima' : 'menunggu_konfirmasi';
 
             // Create order
             $customerName = $request->customer_name
@@ -169,32 +362,58 @@ class JasaOrderController extends Controller
                 ?? Auth::user()?->nama
                 ?? 'Customer';
 
+            $customerPhone = (string) ($request->customer_phone ?? '');
+            $customerAddress = (string) ($request->customer_address ?? $serviceLocationAddress ?? '');
+            $orderCode = 'JS-' . now()->format('YmdHis') . '-' . strtoupper(substr(md5(uniqid('', true)), 0, 6));
+
             $order = Order::create([
                 'user_id' => $customerId,
                 'merchant_id' => $merchantId,
                 'order_type' => 'jasa',
-                'nama' => $customerName,
-                'tel' => $request->customer_phone ?? '',
-                'alamat' => $request->customer_address ?? '',
-                'tanggal' => $request->booking_date ?? now()->toDateString(),
-                'waktu' => $request->booking_time ?? '00:00',
+                'order_code' => $orderCode,
+
                 'total_price' => $totalPrice,
+                'subtotal' => $subtotal,
+                'discount_total' => $discountTotal,
+                'delivery_type' => 'pickup',
+                'delivery_fee_snapshot' => 0,
+                'platform_fee' => $platformFee,
+                'gross_amount' => $totalPrice,
+                'net_amount' => $payableSubtotal,
+
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'UNPAID',
                 'status' => $initialStatus,
-                // SLA: merchant wajib merespon dalam durasi yang dikonfigurasi
-                'merchant_response_deadline' => now()->addHours((int) config('sla.merchant_response_hours', 24)),
-                // COD: langsung set confirm_deadline
-                'confirm_deadline' => $isCodPayment ? now()->addMinutes($confirmMinutes) : null,
-                // SNAPSHOT: Capture customer data at time of order
+
+                'notes' => $request->booking_note,
+
+                // SLA: order konsultasi tidak perlu konfirmasi merchant lagi.
+                'merchant_response_deadline' => $isConsultationOrder ? null : now()->addHours((int) config('sla.merchant_response_hours', 24)),
+                'merchant_responded_at' => $isConsultationOrder ? now() : null,
+                'confirm_deadline' => $isConsultationOrder ? now()->addHour() : null,
+
+                // Snapshot customer versi product/order umum
+                'user_name_snapshot' => $customerName,
+                'user_phone_snapshot' => $customerPhone,
+                'address_detail_snapshot' => $customerAddress,
+                'province_name_snapshot' => '',
+                'city_name_snapshot' => '',
+                'district_name_snapshot' => '',
+                'village_name_snapshot' => '',
+                'latitude_snapshot' => $request->latitude,
+                'longitude_snapshot' => $request->longitude,
+
+                // Snapshot customer versi jasa
                 'customer_name_snapshot' => $customerName,
-                'customer_phone_snapshot' => $request->customer_phone ?? '',
-                'customer_address_snapshot' => $request->customer_address ?? '',
-                // SNAPSHOT: Capture merchant data at time of order
+                'customer_phone_snapshot' => $customerPhone,
+                'customer_address_snapshot' => $customerAddress,
+
+                // Snapshot merchant
                 'merchant_name_snapshot' => $jasa->merchant->name,
                 'merchant_phone_snapshot' => $jasa->merchant->phone ?? '',
                 'merchant_address_snapshot' => $jasa->merchant->address ?? '',
-                // SNAPSHOT: Capture payment data at time of order
+
+                // Snapshot payment
                 'payment_method_snapshot' => $paymentMethod,
                 'payment_channel_snapshot' => $paymentChannel,
                 'subtotal_snapshot' => $subtotal,
@@ -203,6 +422,25 @@ class JasaOrderController extends Controller
                 'payment_fee_snapshot' => $platformFee,
                 'total_payment_snapshot' => $totalPrice,
             ]);
+
+            // Catat pemakaian voucher segera saat order berhasil dibuat.
+            // Voucher dianggap terpakai sejak order masuk menunggu konfirmasi merchant.
+            // Jika order dibatalkan/ditolak/expired, usage ini akan dilepas kembali.
+            if ($appliedVoucher && $discountTotal > 0 && $customerId) {
+                VoucherUsage::create([
+                    'user_id' => $customerId,
+                    'voucher_id' => $appliedVoucher->id,
+                    'order_id' => $order->id,
+                    'discount_amount' => $discountTotal,
+                ]);
+            }
+
+            if ($isConsultationOrder && $consultation) {
+                $consultation->update([
+                    'negotiated_price' => $subtotal,
+                    'offer_status' => 'waiting_payment',
+                ]);
+            }
 
             // SNAPSHOT: Get jasa image URL
             $jasaImage = null;
@@ -220,11 +458,12 @@ class JasaOrderController extends Controller
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $jasa->id,
+                'service_consultation_id' => $consultation?->id,
                 'quantity' => 1,
-                'price' => $totalPrice,
-                'subtotal' => $totalPrice,
-                'booking_date' => $request->booking_date,
-                'booking_time' => $request->booking_time,
+                'price' => $payableSubtotal,
+                'subtotal' => $payableSubtotal,
+                'booking_date' => $isConsultationOrder ? null : $request->booking_date,
+                'booking_time' => $isConsultationOrder ? null : $request->booking_time,
                 'service_type' => $serviceType,
                 'order_method' => $orderMethod,
                 'note' => $request->booking_note,
@@ -238,8 +477,8 @@ class JasaOrderController extends Controller
                 'jasa_image_snapshot' => $jasaImage,
                 'jasa_price_snapshot' => $subtotal,
                 'original_price_snapshot' => $jasa->base_price ?? $jasa->price ?? 0,
-                'offered_price_snapshot' => $totalPrice,
-                'agreed_price_snapshot' => $totalPrice,
+                'offered_price_snapshot' => $payableSubtotal,
+                'agreed_price_snapshot' => $payableSubtotal,
                 'service_type_snapshot' => $serviceType,
                 // SNAPSHOT: Capture merchant data
                 'merchant_name_snapshot' => $jasa->merchant->name,
@@ -255,6 +494,8 @@ class JasaOrderController extends Controller
                 'payment_method' => $paymentMethod,
                 'is_cod' => $isCodPayment,
                 'confirm_deadline' => $order->confirm_deadline?->toISOString(),
+                'discount_total' => $discountTotal,
+                'voucher_code' => $appliedVoucher?->voucher_code,
             ]);
 
             // Build response
@@ -269,8 +510,12 @@ class JasaOrderController extends Controller
                 'confirm_deadline' => $order->confirm_deadline?->toISOString(),
                 // Fee breakdown
                 'subtotal' => $subtotal,
+                'discount_total' => $discountTotal,
                 'payment_fee' => $platformFee,
                 'total_payment' => $totalPrice,
+                'voucher_code' => $appliedVoucher?->voucher_code,
+                'consultation_id' => $consultation?->id,
+                'is_consultation_order' => $isConsultationOrder,
             ];
 
             // COD: redirect URL
@@ -281,9 +526,8 @@ class JasaOrderController extends Controller
 
             return ApiResponse::success(
                 $responseData,
-                $isCodPayment ? 'Pesanan COD berhasil dibuat.' : 'Pesanan berhasil dibuat. Gunakan endpoint pembayaran untuk invoice.'
+                'Pesanan berhasil dibuat. Menunggu konfirmasi merchant.'
             );
-
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('[JasaOrderController] Create error', ['error' => $e->getMessage()]);
@@ -344,13 +588,14 @@ class JasaOrderController extends Controller
 
             // Use snapshot data (prioritize snapshot over live data)
             $merchantName = $order->merchant_name_snapshot ?? $order->merchant?->name ?? 'Merchant';
+            $merchantLogoUrl = $this->getMerchantLogoUrl($order->merchant);
             $serviceTitle = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa?->title ?? $jasaItem?->jasa?->name ?? 'Layanan';
             $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa?->image_url ?? null;
             $totalPrice = $order->total_payment_snapshot ?? $order->total_price ?? 0;
             $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
-            $serviceType = $jasaItem?->service_type_snapshot 
-                ?? $jasaItem?->service_type 
-                ?? $jasaItem?->jasa?->service_type 
+            $serviceType = $jasaItem?->service_type_snapshot
+                ?? $jasaItem?->service_type
+                ?? $jasaItem?->jasa?->service_type
                 ?? null;
             $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
             $orderMethod = $jasaItem?->order_method ?? null;
@@ -365,6 +610,9 @@ class JasaOrderController extends Controller
             $savedPlatformFee = (float) ($order->platform_fee_snapshot ?? 0);
             $savedTotalPayment = (float) ($order->total_payment_snapshot ?? 0);
             $savedPaymentFee = (float) ($order->payment_fee_snapshot ?? 0);
+            $discountTotal = (float) ($order->discount_total ?? 0);
+            $voucherInfo = $this->getOrderVoucherInfo($order);
+            $invoice = 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
 
             if ($savedSubtotal > 0 && $savedTotalPayment > 0) {
                 // New order: use saved snapshots
@@ -402,6 +650,11 @@ class JasaOrderController extends Controller
                 'id' => $order->id,
                 'order_id' => $order->id,
                 'order_type' => 'jasa',
+                'invoice' => $invoice,
+                'order_number' => $invoice,
+                'formatted_order_number' => $invoice,
+                'nomor_pesanan' => $invoice,
+                'order_code' => $invoice,
                 'jasa_order_item_id' => $jasaItem?->id,
                 'status' => $order->status,
                 'order_status' => $order->status,
@@ -412,6 +665,13 @@ class JasaOrderController extends Controller
                 'subtotal' => $subtotal,
                 'payment_fee' => $paymentFee,
                 'platform_fee' => $platformFee,
+                'discount_total' => $discountTotal,
+                'discount' => $discountTotal,
+                'voucher_usage_id' => $voucherInfo['voucher_usage_id'],
+                'voucher_id' => $voucherInfo['voucher_id'],
+                'voucher_code' => $voucherInfo['voucher_code'],
+                'voucher_name' => $voucherInfo['voucher_name'],
+                'voucher_discount_amount' => $voucherInfo['voucher_discount_amount'],
                 'is_cod' => $isCod,
                 'total_price' => $totalPrice,
                 'total_payment' => $totalPayment,
@@ -420,6 +680,8 @@ class JasaOrderController extends Controller
                     'id' => $order->merchant?->id,
                     'name' => $merchantName,
                     'slug' => $order->merchant?->slug,
+                    'logo_url' => $merchantLogoUrl,
+                    'logoUrl' => $merchantLogoUrl,
                 ],
                 // Flat merchant name for card convenience
                 'merchant_name' => $merchantName,
@@ -439,6 +701,9 @@ class JasaOrderController extends Controller
                     'expired_at' => $payment->expired_at?->toISOString(),
                     'subtotal' => $subtotal,
                     'payment_fee' => $paymentFee,
+                    'discount_total' => $discountTotal,
+                    'voucher_code' => $voucherInfo['voucher_code'],
+                    'voucher_name' => $voucherInfo['voucher_name'],
                     'total_payment' => $totalPayment,
                     'payment_method' => $paymentMethod,
                     'payment_channel' => $paymentChannel,
@@ -570,14 +835,15 @@ class JasaOrderController extends Controller
         $customerNote = $jasaItem?->customer_note_snapshot ?? $jasaItem?->booking_note ?? null;
         $offerNote = $jasaItem?->offer_note_snapshot ?? null;
         $agreedAt = $jasaItem?->agreed_at?->toISOString() ?? null;
-        $serviceType = $jasaItem?->service_type_snapshot 
-            ?? $jasaItem?->service_type 
-            ?? $jasaItem?->jasa?->service_type 
+        $serviceType = $jasaItem?->service_type_snapshot
+            ?? $jasaItem?->service_type
+            ?? $jasaItem?->jasa?->service_type
             ?? null;
         $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
         $orderMethod = $jasaItem?->order_method ?? null;
         $categoryName = $jasaItem?->jasa?->categories?->first()?->name ?? null;
         $merchantAddress = $this->getMerchantFullAddress($order);
+        $merchantLogoUrl = $this->getMerchantLogoUrl($order->merchant);
         $serviceLocationAddress = $this->getServiceLocationAddress($serviceType, $order, $jasaItem);
         // Get payment info
         $payment = Payment::where('order_id', $orderId)->first();
@@ -589,6 +855,8 @@ class JasaOrderController extends Controller
         $savedPlatformFee = (float) ($order->platform_fee_snapshot ?? 0);
         $savedTotalPayment = (float) ($order->total_payment_snapshot ?? 0);
         $savedPaymentFee = (float) ($order->payment_fee_snapshot ?? 0);
+        $discountTotal = (float) ($order->discount_total ?? 0);
+        $voucherInfo = $this->getOrderVoucherInfo($order);
 
         if ($savedSubtotal > 0 && $savedTotalPayment > 0) {
             // New order: use saved snapshots
@@ -643,6 +911,7 @@ class JasaOrderController extends Controller
             'invoice' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'nomor_pesanan' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            'order_code' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'jasa_order_item_id' => $jasaItem?->id,
             'status' => $order->status,
             'order_status' => $order->status,
@@ -658,6 +927,13 @@ class JasaOrderController extends Controller
             'payment_fee' => $paymentFee,
             'platform_fee' => $platformFee,
             'admin_fee' => $platformFee,
+            'discount_total' => $discountTotal,
+            'discount' => $discountTotal,
+            'voucher_usage_id' => $voucherInfo['voucher_usage_id'],
+            'voucher_id' => $voucherInfo['voucher_id'],
+            'voucher_code' => $voucherInfo['voucher_code'],
+            'voucher_name' => $voucherInfo['voucher_name'],
+            'voucher_discount_amount' => $voucherInfo['voucher_discount_amount'],
             'is_cod' => $isCod,
             'total_price' => $totalPrice,
             'total_payment' => $totalPayment,
@@ -705,7 +981,12 @@ class JasaOrderController extends Controller
                 'phone' => $merchantPhone,
                 'address' => $merchantAddress,
                 'slug' => $order->merchant?->slug,
+                'logo_url' => $merchantLogoUrl,
+                'logoUrl' => $merchantLogoUrl,
             ],
+            'merchant_name' => $merchantName,
+            'merchant_phone' => $merchantPhone,
+            'merchant_logo_url' => $merchantLogoUrl,
             'service_description' => $serviceDescription,
             'items' => [
                 [
@@ -729,7 +1010,9 @@ class JasaOrderController extends Controller
             ],
             'amounts' => [
                 'subtotal' => $subtotal,
-                'discount' => 0,
+                'discount' => $discountTotal,
+                'voucher_code' => $voucherInfo['voucher_code'],
+                'voucher_name' => $voucherInfo['voucher_name'],
                 'shipping' => 0,
                 'platform_fee' => $platformFee,
                 'admin_fee' => $platformFee,
@@ -756,6 +1039,9 @@ class JasaOrderController extends Controller
                 'expired_at' => $payment->expired_at?->toISOString(),
                 'subtotal' => $subtotal,
                 'payment_fee' => $paymentFee,
+                'discount_total' => $discountTotal,
+                'voucher_code' => $voucherInfo['voucher_code'],
+                'voucher_name' => $voucherInfo['voucher_name'],
                 'total_payment' => $totalPayment,
                 'payment_method' => $paymentMethod,
                 'payment_channel' => $paymentChannel,
@@ -861,8 +1147,29 @@ class JasaOrderController extends Controller
             return ApiResponse::error('Pesanan tidak ditemukan', 404);
         }
 
-        // Only allow cancel from cancellable statuses
-        $cancellableStatuses = ['pending', 'menunggu_konfirmasi_merchant'];
+        $paymentMethod = strtoupper((string) ($order->payment_method ?? ''));
+        $paymentStatus = strtoupper((string) ($order->payment_status ?? ''));
+
+        /*
+     |--------------------------------------------------------------------------
+     | Flow cancel jasa baru
+     |--------------------------------------------------------------------------
+     | Customer boleh batal jika:
+     | 1. Pesanan masih menunggu konfirmasi merchant
+     | 2. Pesanan sudah diterima merchant, tetapi customer belum bayar
+     |
+     | Customer tidak boleh batal jika:
+     | 1. Pembayaran sudah PAID/SETTLED/SUCCEEDED
+     | 2. Layanan sudah diproses
+     | 3. Pesanan sudah selesai/ditolak/dibatalkan/expired
+     */
+        $cancellableStatuses = [
+            'pending',
+            'menunggu_konfirmasi',
+            'menunggu_konfirmasi_merchant',
+            'diterima',
+        ];
+
         if (!in_array($order->status, $cancellableStatuses)) {
             return ApiResponse::error(
                 "Pesanan dengan status '{$order->status}' tidak dapat dibatalkan.",
@@ -870,41 +1177,64 @@ class JasaOrderController extends Controller
             );
         }
 
-        // Cancel any pending payment
-        $payment = Payment::where('order_id', $orderId)
-            ->whereIn('status', ['PENDING', 'UNPAID'])
-            ->first();
-        if ($payment) {
-            $payment->update(['status' => 'EXPIRED']);
-            event(new \App\Events\PaymentStatusUpdated($payment));
+        // Kalau sudah bayar non-COD, jangan batalkan langsung karena perlu flow refund.
+        if (
+            $paymentMethod !== 'COD' &&
+            in_array($paymentStatus, ['PAID', 'SETTLED', 'SUCCEEDED', 'LUNAS', 'SUDAH_BAYAR'])
+        ) {
+            return ApiResponse::error(
+                'Pesanan sudah dibayar dan tidak dapat dibatalkan langsung. Silakan hubungi merchant/admin untuk proses lebih lanjut.',
+                422
+            );
         }
 
-        // Update order status to dibatalkan
-        $order->update([
-            'status' => 'dibatalkan',
-            'cancelled_at' => now(),
-            'cancelled_by' => 'customer',
-        ]);
+        DB::transaction(function () use ($order, $orderId) {
+            // Cancel pending/unpaid payment jika ada
+            $payment = Payment::where('order_id', $orderId)
+                ->whereIn('status', ['PENDING', 'UNPAID'])
+                ->first();
 
-        // Update jasa_order_items status if exists
-        $jasaItem = $order->jasaItems->first();
-        if ($jasaItem) {
-            $jasaItem->update(['status' => 'dibatalkan']);
-        }
+            if ($payment) {
+                $payment->update(['status' => 'EXPIRED']);
+                event(new \App\Events\PaymentStatusUpdated($payment));
+            }
 
-        Log::info('[JasaOrderController] Order cancelled', [
+            // Update order status
+            $order->update([
+                'status' => 'dibatalkan',
+                'cancelled_at' => now(),
+                'cancelled_by' => 'customer',
+            ]);
+
+            $this->releaseVoucherUsage($order);
+
+            // Update jasa_order_items status jika ada
+            $jasaItem = $order->jasaItems->first();
+
+            if ($jasaItem) {
+                $jasaItem->update([
+                    'status' => 'dibatalkan',
+                ]);
+            }
+        });
+
+        Log::info('[JasaOrderController] Order cancelled by customer', [
             'order_id' => $order->id,
             'previous_status' => $order->getOriginal('status'),
             'cancelled_by' => $customerId,
         ]);
 
+        $freshOrder = $order->fresh();
+
+        event(new OrderStatusUpdated($freshOrder, 'dibatalkan'));
+
         return ApiResponse::success([
-            'id' => $order->id,
-            'order_id' => $order->id,
+            'id' => $freshOrder->id,
+            'order_id' => $freshOrder->id,
             'status' => 'dibatalkan',
             'order_status' => 'dibatalkan',
             'status_label' => 'Dibatalkan',
-            'cancelled_at' => $order->cancelled_at?->toISOString(),
+            'cancelled_at' => $freshOrder->cancelled_at?->toISOString(),
         ], 'Pesanan berhasil dibatalkan.');
     }
 
@@ -959,6 +1289,41 @@ class JasaOrderController extends Controller
             'konsultasi', 'consultation', 'memerlukan_konsultasi' => 'Hasil Konsultasi',
             default => ucfirst($orderMethod ?? '-'),
         };
+    }
+
+
+    /**
+     * Resolve merchant logo URL for API response.
+     */
+    private function getMerchantLogoUrl(?\App\Models\Merchant $merchant): ?string
+    {
+        if (!$merchant) {
+            return null;
+        }
+
+        $logo = $merchant->logo_path
+            ?? $merchant->logo_url
+            ?? $merchant->logo
+            ?? $merchant->image
+            ?? null;
+
+        if (!$logo) {
+            return null;
+        }
+
+        $logo = str_replace('\\', '/', (string) $logo);
+
+        if (str_starts_with($logo, 'http://') || str_starts_with($logo, 'https://')) {
+            return $logo;
+        }
+
+        if (str_starts_with($logo, '/storage/')) {
+            return asset(ltrim($logo, '/'));
+        }
+
+        $cleanLogo = ltrim(str_replace(['storage/', 'public/'], '', $logo), '/');
+
+        return asset('storage/' . $cleanLogo);
     }
 
     /**
@@ -1022,6 +1387,7 @@ class JasaOrderController extends Controller
                     'status' => 'batal',
                     'cancelled_at' => now(),
                 ]);
+                $this->releaseVoucherUsage($order);
                 $order->status = 'batal';
                 $order->cancelled_at = now();
 
@@ -1041,6 +1407,7 @@ class JasaOrderController extends Controller
                     'status' => 'batal',
                     'cancelled_at' => now(),
                 ]);
+                $this->releaseVoucherUsage($order);
                 $order->status = 'batal';
                 $order->cancelled_at = now();
 
@@ -1066,6 +1433,8 @@ class JasaOrderController extends Controller
             'status' => 'expired',
             'expired_at' => now(),
         ]);
+
+        $this->releaseVoucherUsage($order);
 
         // Update in-memory model so transformations pick up the new status
         $order->status = 'expired';
@@ -1125,8 +1494,8 @@ class JasaOrderController extends Controller
             $paymentMethod = $order->payment_method_snapshot ?? $order->payment_method ?? 'COD';
             $paymentChannel = $order->payment_channel_snapshot ?? $order->payment_channel;
 
-            $serviceType = $jasaItem?->service_type_snapshot 
-                ?? $jasaItem?->service_type 
+            $serviceType = $jasaItem?->service_type_snapshot
+                ?? $jasaItem?->service_type
                 ?? $jasaItem?->jasa?->service_type;
             $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
 
@@ -1135,11 +1504,15 @@ class JasaOrderController extends Controller
 
             $serviceTitle = $jasaItem?->jasa_title_snapshot ?? $jasaItem?->jasa_title ?? 'Layanan';
             $serviceImage = $jasaItem?->jasa_image_snapshot ?? $jasaItem?->jasa_image_url ?? null;
-            
+
             // Standard/unified fields
-            $invoice = $order->order_code ?? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT));
+            $invoice = 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
             $customerName = $order->customer_name_snapshot ?? $order->nama ?? 'Pelanggan';
             $customerPhone = $order->customer_phone_snapshot ?? $order->tel ?? '-';
+
+            $discountTotal = (float) ($order->discount_total ?? 0);
+            $voucherInfo = $this->getOrderVoucherInfo($order);
+            $totalPayment = (float) ($order->total_payment_snapshot ?? $order->total_price ?? 0);
 
             return [
                 'id' => $order->id,
@@ -1149,6 +1522,7 @@ class JasaOrderController extends Controller
                 'order_number' => $invoice,
                 'formatted_order_number' => $invoice,
                 'nomor_pesanan' => $invoice,
+                'order_code' => $invoice,
                 'jasa_order_item_id' => $jasaItem?->id,
                 'status' => $order->status,
                 'order_status' => $order->status,
@@ -1159,11 +1533,19 @@ class JasaOrderController extends Controller
                 'payment_status' => $order->payment_status,
                 'payment_method' => $paymentMethod,
                 'payment_channel' => $paymentChannel,
-                'total_price' => (float) $order->total_price,
-                'total' => (float) $order->total_price,
+                'total_price' => $totalPayment,
+                'total' => $totalPayment,
+                'total_payment' => $totalPayment,
                 'subtotal' => (float) ($order->subtotal_snapshot ?? $order->total_price),
                 'platform_fee' => (float) ($order->platform_fee_snapshot ?? 0),
                 'admin_fee' => (float) ($order->platform_fee_snapshot ?? 0),
+                'discount_total' => $discountTotal,
+                'discount' => $discountTotal,
+                'voucher_usage_id' => $voucherInfo['voucher_usage_id'],
+                'voucher_id' => $voucherInfo['voucher_id'],
+                'voucher_code' => $voucherInfo['voucher_code'],
+                'voucher_name' => $voucherInfo['voucher_name'],
+                'voucher_discount_amount' => $voucherInfo['voucher_discount_amount'],
 
                 // Customer info
                 'customer_name' => $customerName,
@@ -1187,7 +1569,7 @@ class JasaOrderController extends Controller
                 'service_type' => $serviceType,
                 'service_type_label' => $serviceTypeLabel,
                 'tipe_layanan' => $serviceTypeLabel,
-                
+
                 // Booking / Order method
                 'booking_date' => $jasaItem?->booking_date_snapshot ?? $jasaItem?->booking_date,
                 'booking_time' => $jasaItem?->booking_time_snapshot ?? $jasaItem?->booking_time,
@@ -1319,14 +1701,15 @@ class JasaOrderController extends Controller
         $customerNote = $jasaItem?->customer_note_snapshot ?? $jasaItem?->booking_note ?? null;
         $offerNote = $jasaItem?->offer_note_snapshot ?? null;
         $agreedAt = $jasaItem?->agreed_at?->toISOString() ?? null;
-        $serviceType = $jasaItem?->service_type_snapshot 
-            ?? $jasaItem?->service_type 
-            ?? $jasaItem?->jasa?->service_type 
+        $serviceType = $jasaItem?->service_type_snapshot
+            ?? $jasaItem?->service_type
+            ?? $jasaItem?->jasa?->service_type
             ?? null;
         $serviceTypeLabel = $this->getServiceTypeLabel($serviceType);
         $orderMethod = $jasaItem?->order_method ?? null;
         $categoryName = $jasaItem?->jasa?->categories?->first()?->name ?? null;
         $merchantAddress = $this->getMerchantFullAddress($order);
+        $merchantLogoUrl = $this->getMerchantLogoUrl($order->merchant);
         $serviceLocationAddress = $this->getServiceLocationAddress($serviceType, $order, $jasaItem);
         // Get payment info
         $payment = Payment::where('order_id', $orderId)->first();
@@ -1338,6 +1721,8 @@ class JasaOrderController extends Controller
         $savedPlatformFee = (float) ($order->platform_fee_snapshot ?? 0);
         $savedTotalPayment = (float) ($order->total_payment_snapshot ?? 0);
         $savedPaymentFee = (float) ($order->payment_fee_snapshot ?? 0);
+        $discountTotal = (float) ($order->discount_total ?? 0);
+        $voucherInfo = $this->getOrderVoucherInfo($order);
 
         if ($savedSubtotal > 0 && $savedTotalPayment > 0) {
             // New order: use saved snapshots
@@ -1391,6 +1776,7 @@ class JasaOrderController extends Controller
             'order_number' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'invoice' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'nomor_pesanan' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+            'order_code' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
             'jasa_order_item_id' => $jasaItem?->id,
             'status' => $order->status,
             'order_status' => $order->status,
@@ -1405,6 +1791,13 @@ class JasaOrderController extends Controller
             'subtotal' => $subtotal,
             'payment_fee' => $paymentFee,
             'platform_fee' => $platformFee,
+            'discount_total' => $discountTotal,
+            'discount' => $discountTotal,
+            'voucher_usage_id' => $voucherInfo['voucher_usage_id'],
+            'voucher_id' => $voucherInfo['voucher_id'],
+            'voucher_code' => $voucherInfo['voucher_code'],
+            'voucher_name' => $voucherInfo['voucher_name'],
+            'voucher_discount_amount' => $voucherInfo['voucher_discount_amount'],
             'is_cod' => $isCod,
             'total_price' => $totalPrice,
             'total_payment' => $totalPayment,
@@ -1443,6 +1836,8 @@ class JasaOrderController extends Controller
                 'phone' => $merchantPhone,
                 'address' => $merchantAddress,
                 'slug' => $order->merchant?->slug,
+                'logo_url' => $merchantLogoUrl,
+                'logoUrl' => $merchantLogoUrl,
             ],
             'service_description' => $serviceDescription,
             'jasa_order_item' => [
@@ -1466,6 +1861,9 @@ class JasaOrderController extends Controller
                 'expired_at' => $payment->expired_at?->toISOString(),
                 'subtotal' => $subtotal,
                 'payment_fee' => $paymentFee,
+                'discount_total' => $discountTotal,
+                'voucher_code' => $voucherInfo['voucher_code'],
+                'voucher_name' => $voucherInfo['voucher_name'],
                 'total_payment' => $totalPayment,
                 'payment_method' => $paymentMethod,
                 'payment_channel' => $paymentChannel,
@@ -1527,6 +1925,20 @@ class JasaOrderController extends Controller
             return ApiResponse::error('Transisi status tidak valid', 422);
         }
 
+        // Flow jasa baru:
+        // Merchant hanya boleh mulai mengerjakan setelah customer membayar.
+        // COD dikecualikan karena pembayaran dilakukan di luar Xendit.
+        if (
+            $newStatus === 'layanan_dikerjakan' &&
+            strtoupper((string) ($order->payment_method ?? '')) !== 'COD' &&
+            strtoupper((string) ($order->payment_status ?? '')) !== 'PAID'
+        ) {
+            return ApiResponse::error(
+                'Customer belum melakukan pembayaran. Layanan belum dapat diproses.',
+                422
+            );
+        }
+
         // SLA check: prevent accepting if deadline has passed
         if (in_array($newStatus, ['diterima']) && $order->merchant_response_deadline && $order->merchant_response_deadline->isPast()) {
             return ApiResponse::error('Batas waktu respons merchant sudah habis. Pesanan tidak dapat diterima.', 422);
@@ -1548,6 +1960,10 @@ class JasaOrderController extends Controller
             }
 
             $order->update($orderUpdate);
+
+            if ($newStatus === 'ditolak') {
+                $this->releaseVoucherUsage($order);
+            }
 
             $jasaItem = $order->jasaItems->first();
             if ($jasaItem && $newStatus === 'ditolak') {
@@ -1585,11 +2001,9 @@ class JasaOrderController extends Controller
 
                     \App\Models\ServiceCompletionEvidence::create([
                         'jasa_order_item_id' => $jasaItem->id,
-                        'order_id' => $order->id,
                         'service_order_id' => null,
                         'file_name' => $file->getClientOriginalName(),
                         'file_path' => $path,
-                        // file_url generated by accessor from file_path
                         'file_type' => $type,
                         'mime_type' => $file->getMimeType(),
                         'file_size' => $file->getSize(),
@@ -1688,6 +2102,35 @@ class JasaOrderController extends Controller
         ];
 
         return ApiResponse::success($responseData, 'Review berhasil dikirim. Terima kasih atas ulasan Anda!');
+    }
+
+    /**
+     * Ambil informasi voucher yang digunakan pada order.
+     */
+    private function getOrderVoucherInfo(Order $order): array
+    {
+        $usage = VoucherUsage::with('voucher')
+            ->where('order_id', $order->id)
+            ->first();
+
+        return [
+            'voucher_usage_id' => $usage?->id,
+            'voucher_id' => $usage?->voucher_id,
+            'voucher_code' => $usage?->voucher?->voucher_code,
+            'voucher_name' => $usage?->voucher?->voucher_name,
+            'voucher_discount_amount' => $usage ? (float) $usage->discount_amount : (float) ($order->discount_total ?? 0),
+        ];
+    }
+
+    /**
+     * Kembalikan pemakaian voucher jika order batal/ditolak/expired.
+     *
+     * Sistem voucher menghitung pemakaian dari tabel voucher_usages,
+     * jadi cukup hapus usage berdasarkan order_id.
+     */
+    private function releaseVoucherUsage(Order $order): void
+    {
+        VoucherUsage::where('order_id', $order->id)->delete();
     }
 
     /**

@@ -66,6 +66,179 @@ class ServiceConsultationController extends Controller
         };
     }
 
+
+    /**
+     * Attach order/payment summary to consultation JSON response and expire unpaid consultation orders.
+     */
+    protected function attachConsultationOrderSummary(ServiceConsultation $consultation): ServiceConsultation
+    {
+        $consultation->loadMissing(['jasaOrderItems.order.payment']);
+
+        $jasaItem = $consultation->jasaOrderItems->first();
+        $order = $jasaItem?->order;
+        $payment = $order?->payment;
+
+        if ($order && !$this->isOrderPaid($order)) {
+            $paymentDeadline = $payment?->expired_at ?? $order->confirm_deadline;
+
+            if ($paymentDeadline && now()->greaterThan($paymentDeadline) && !in_array($order->status, ['expired', 'dibatalkan', 'ditolak', 'selesai'], true)) {
+                DB::transaction(function () use ($order, $payment, $consultation) {
+                    $order->update([
+                        'status' => 'expired',
+                        'expired_at' => now(),
+                    ]);
+
+                    if ($payment && in_array(strtoupper((string) $payment->status), ['PENDING', 'UNPAID'], true)) {
+                        $payment->update(['status' => 'EXPIRED']);
+                    }
+
+                    if (!in_array($consultation->status, [ServiceConsultation::STATUS_CLOSED, ServiceConsultation::STATUS_OFFER_REJECTED, ServiceConsultation::STATUS_DITOLAK], true)) {
+                        $consultation->update([
+                            'status' => ServiceConsultation::STATUS_CLOSED,
+                            'closed_at' => now(),
+                            'offer_status' => 'payment_expired',
+                            'negotiation_notes' => trim(($consultation->negotiation_notes ?? '') . "\n[Auto] Percakapan dihentikan karena pembayaran melewati batas waktu 1 jam."),
+                        ]);
+
+                        ConsultationMessage::create([
+                            'service_consultation_id' => $consultation->id,
+                            'sender_id' => $consultation->customer_id,
+                            'sender_type' => 'system',
+                            'message' => 'Percakapan otomatis dihentikan karena pembayaran tidak diselesaikan dalam 1 jam.',
+                            'message_type' => 'payment_expired',
+                        ]);
+                    }
+                });
+
+                $order->refresh();
+                $consultation->refresh();
+                $consultation->loadMissing(['jasaOrderItems.order.payment']);
+                $jasaItem = $consultation->jasaOrderItems->first();
+                $order = $jasaItem?->order;
+                $payment = $order?->payment;
+            }
+        }
+
+        $paid = $order ? $this->isOrderPaid($order) : false;
+        $deadline = $payment?->expired_at ?? $order?->confirm_deadline;
+
+        // Field di bawah ini hanya untuk response API, bukan kolom database.
+        // Jangan sampai ikut tersimpan saat method lain memanggil update()/save().
+        $computedFields = [
+            'order_id' => $order?->id,
+            'has_order' => (bool) $order,
+            'order_status' => $order?->status,
+            'order_payment_status' => $order?->payment_status,
+            'payment_status' => $order?->payment_status ?? 'UNPAID',
+            'payment_expired_at' => $deadline?->toISOString(),
+            'is_paid' => $paid,
+            'can_continue_payment' => $this->canContinuePayment($consultation, $order),
+            'can_stop_conversation' => $this->canStopConversation($consultation, $order),
+            'can_send_message' => $this->canSendConsultationMessage($consultation, $order),
+            'conversation_finished' => $order ? in_array($order->status, ['selesai', 'completed'], true) : false,
+            'conversation_status_label' => $this->getConversationStatusLabel($consultation, $order),
+        ];
+
+        foreach ($computedFields as $key => $value) {
+            $consultation->setAttribute($key, $value);
+            $consultation->syncOriginalAttribute($key);
+        }
+
+        return $consultation;
+    }
+
+    protected function isOrderPaid(?Order $order): bool
+    {
+        if (!$order) {
+            return false;
+        }
+
+        return strtoupper((string) $order->payment_status) === 'PAID';
+    }
+
+    protected function canContinuePayment(ServiceConsultation $consultation, ?Order $order = null): bool
+    {
+        if (in_array($consultation->status, [ServiceConsultation::STATUS_CLOSED, ServiceConsultation::STATUS_DITOLAK, ServiceConsultation::STATUS_OFFER_REJECTED], true)) {
+            return false;
+        }
+
+        if ($order && $this->isOrderPaid($order)) {
+            return false;
+        }
+
+        if ($order && in_array($order->status, ['expired', 'dibatalkan', 'ditolak', 'selesai'], true)) {
+            return false;
+        }
+
+        return !empty($consultation->merchant_offered_price)
+            && in_array($consultation->merchant_response, [ServiceConsultation::RESPONSE_BISA, ServiceConsultation::RESPONSE_PENYESUAIAN], true);
+    }
+
+    protected function canStopConversation(ServiceConsultation $consultation, ?Order $order = null): bool
+    {
+        if (in_array($consultation->status, [ServiceConsultation::STATUS_CLOSED, ServiceConsultation::STATUS_DITOLAK, ServiceConsultation::STATUS_OFFER_REJECTED], true)) {
+            return false;
+        }
+
+        if ($order && $this->isOrderPaid($order)) {
+            return false;
+        }
+
+        if ($order && in_array($order->status, ['selesai', 'completed'], true)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function canSendConsultationMessage(ServiceConsultation $consultation, ?Order $order = null): bool
+    {
+        if (in_array($consultation->status, [ServiceConsultation::STATUS_CLOSED, ServiceConsultation::STATUS_DITOLAK, ServiceConsultation::STATUS_OFFER_REJECTED], true)) {
+            return false;
+        }
+
+        if ($order && in_array($order->status, ['selesai', 'completed'], true)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function getConversationStatusLabel(ServiceConsultation $consultation, ?Order $order = null): string
+    {
+        if ($consultation->status === ServiceConsultation::STATUS_CLOSED) {
+            return ($consultation->offer_status === 'payment_expired') ? 'Percakapan Dihentikan' : 'Percakapan Dihentikan';
+        }
+
+        if ($consultation->status === ServiceConsultation::STATUS_DITOLAK) {
+            return 'Ditolak Merchant';
+        }
+
+        if ($consultation->status === ServiceConsultation::STATUS_OFFER_REJECTED) {
+            return 'Penawaran Ditolak';
+        }
+
+        if ($order) {
+            $paid = $this->isOrderPaid($order);
+            if (!$paid) {
+                return 'Pengajuan';
+            }
+
+            return match ($order->status) {
+                'layanan_dikerjakan', 'dikerjakan', 'processing' => 'Layanan Diproses',
+                'menunggu_konfirmasi_selesai', 'menunggu_selesai' => 'Menunggu Persetujuan',
+                'selesai', 'completed' => 'Selesai',
+                default => 'Pembayaran Berhasil',
+            };
+        }
+
+        if (!empty($consultation->merchant_offered_price) || in_array($consultation->status, [ServiceConsultation::STATUS_DAPAT_DIKERJAKAN, ServiceConsultation::STATUS_PENYESUAIAN], true)) {
+            return 'Pengajuan';
+        }
+
+        return 'Chat Dengan Merchant';
+    }
+
     // ============================================================
     // CUSTOMER ACTIONS
     // ============================================================
@@ -178,6 +351,7 @@ class ServiceConsultationController extends Controller
                 'merchant:id,name,slug',
                 'messages.media',
                 'notes',
+                'jasaOrderItems.order.payment',
             ])
             ->forCustomer($customerId)
             ->orderByDesc('created_at');
@@ -191,6 +365,7 @@ class ServiceConsultationController extends Controller
         }
 
         $consultations = $query->paginate($perPage);
+        $consultations->getCollection()->transform(fn ($item) => $this->attachConsultationOrderSummary($item));
 
         return ApiResponse::success($consultations, 'success');
     }
@@ -205,6 +380,7 @@ class ServiceConsultationController extends Controller
                 'jasa',
                 'merchant:id,name,slug,phone',
                 'messages.media',
+                'jasaOrderItems.order.payment',
             ])->find($id);
 
             if (!$consultation) {
@@ -216,7 +392,7 @@ class ServiceConsultationController extends Controller
                 return ApiResponse::error('Tidak memiliki akses', 403);
             }
 
-            return ApiResponse::success($consultation, 'success');
+            return ApiResponse::success($this->attachConsultationOrderSummary($consultation), 'success');
         } catch (\Throwable $e) {
             Log::error('[CustomerShowConsultation] Error', [
                 'consultation_id' => $id,
@@ -277,8 +453,11 @@ class ServiceConsultationController extends Controller
             return ApiResponse::error('Tidak memiliki akses', 403);
         }
 
-        if (!$consultation->isActive()) {
-            return ApiResponse::error('Konsultasi sudah tidak aktif', 400);
+        $consultation->loadMissing(['jasaOrderItems.order.payment']);
+        $order = $consultation->jasaOrderItems->first()?->order;
+
+        if (!$this->canSendConsultationMessage($consultation, $order)) {
+            return ApiResponse::error('Percakapan sudah selesai atau tidak aktif', 400);
         }
 
         // Check if message or media is provided
@@ -388,6 +567,7 @@ class ServiceConsultationController extends Controller
                 'customer:id,name,phone',
                 'messages.media',
                 'notes',
+                'jasaOrderItems.order.payment',
             ])
             ->forMerchant($merchant->id);
 
@@ -451,14 +631,14 @@ class ServiceConsultationController extends Controller
 
         $consultations = $query->paginate($perPage);
 
-        // Append service_image and customer_name to each consultation for frontend convenience
+        // Append computed order/payment summary and frontend convenience fields
         $consultations->getCollection()->transform(function ($consultation) {
             $consultation->service_image = $consultation->jasa?->cover_img?->url
                 ?? $consultation->jasa?->image_url
                 ?? null;
-            // Also set customer_name as top-level for convenience
             $consultation->customer_name = $consultation->customer?->name ?? null;
-            return $consultation;
+
+            return $this->attachConsultationOrderSummary($consultation);
         });
 
         Log::info('[getMerchantHistory] Response built', [
@@ -483,6 +663,7 @@ class ServiceConsultationController extends Controller
                 'jasa',
                 'customer:id,name,phone',
                 'messages.media',
+                'jasaOrderItems.order.payment',
             ])
                 ->where('merchant_id', $merchant->id)
                 ->where('id', $id)
@@ -497,7 +678,7 @@ class ServiceConsultationController extends Controller
                 ?? $consultation->jasa?->image_url
                 ?? null;
 
-            return ApiResponse::success($consultation, 'success');
+            return ApiResponse::success($this->attachConsultationOrderSummary($consultation), 'success');
         } catch (\Throwable $e) {
             Log::error('[MerchantShowConsultation] Error', [
                 'merchant_slug' => $merchant->slug,
@@ -590,6 +771,15 @@ class ServiceConsultationController extends Controller
                 'consultation_id' => $consultation->id,
             ]);
             return ApiResponse::error('Gagal mengirim tanggapan', 500);
+        }
+
+        if (in_array($data['response'], [ServiceConsultation::RESPONSE_BISA, ServiceConsultation::RESPONSE_PENYESUAIAN], true)) {
+            $consultation->update([
+                'offer_status' => 'offered',
+                'customer_accepted' => false,
+                'customer_accepted_at' => null,
+                'negotiated_price' => $data['merchant_offered_price'] ?? null,
+            ]);
         }
 
         // Create system message for the offer response
@@ -685,8 +875,11 @@ class ServiceConsultationController extends Controller
             return ApiResponse::error('Konsultasi tidak ditemukan', 404);
         }
 
-        if (!$consultation->isActive()) {
-            return ApiResponse::error('Konsultasi sudah tidak aktif', 400);
+        $consultation->loadMissing(['jasaOrderItems.order.payment']);
+        $order = $consultation->jasaOrderItems->first()?->order;
+
+        if (!$this->canSendConsultationMessage($consultation, $order)) {
+            return ApiResponse::error('Percakapan sudah selesai atau tidak aktif', 400);
         }
 
         // Check if message or media is provided
@@ -797,6 +990,7 @@ class ServiceConsultationController extends Controller
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $consultation->jasa_id,
+                'service_consultation_id' => $consultation->id,
                 'quantity' => 1,
                 'price' => $finalPrice,
                 'subtotal' => $finalPrice,
@@ -810,8 +1004,9 @@ class ServiceConsultationController extends Controller
             ]);
 
             // ===== 3. Update consultation status =====
+            // Relasi order konsultasi disimpan melalui jasa_order_items.service_consultation_id.
+            // Tabel service_consultations tidak memiliki kolom order_id.
             $consultation->status = ServiceConsultation::STATUS_ACCEPTED;
-            $consultation->order_id = $order->id;
             $consultation->save();
 
             DB::commit();
@@ -932,127 +1127,62 @@ class ServiceConsultationController extends Controller
             'user_id' => Auth::id(),
         ]);
 
-        $data = $request->validate([
-            'proposed_date' => 'nullable|date',
-            'proposed_time' => 'nullable|date_format:H:i',
-            'proposed_notes' => 'nullable|string|max:1000',
-        ]);
-
-        $consultation = ServiceConsultation::with(['jasa', 'merchant'])->find($id);
+        $consultation = ServiceConsultation::with(['jasa', 'merchant', 'customer', 'messages.media', 'jasaOrderItems.order.payment'])->find($id);
 
         if (!$consultation) {
-            Log::warning('[AcceptOffer] Consultation not found', ['id' => $id]);
             return ApiResponse::error('Konsultasi tidak ditemukan', 404);
         }
 
         if ($consultation->customer_id !== Auth::id()) {
-            Log::warning('[AcceptOffer] Access denied', [
-                'consultation_id' => $id,
-                'owner_id' => $consultation->customer_id,
-                'requester_id' => Auth::id(),
-            ]);
             return ApiResponse::error('Tidak memiliki akses', 403);
         }
 
-        // Check if merchant has responded with an offer
+        $this->attachConsultationOrderSummary($consultation);
+
+        if (!$this->canContinuePayment($consultation, $consultation->jasaOrderItems->first()?->order)) {
+            return ApiResponse::error('Penawaran sudah tidak dapat diproses.', 422);
+        }
+
         if (!$consultation->merchant_response) {
-            Log::warning('[AcceptOffer] No offer from merchant', [
-                'consultation_id' => $id,
-                'merchant_response' => $consultation->merchant_response,
-            ]);
             return ApiResponse::error('Belum ada penawaran dari merchant', 400);
         }
 
-        // Check if merchant rejected the offer
-        if ($consultation->merchant_response === 'tidak_bisa_dikerjakan') {
-            Log::warning('[AcceptOffer] Merchant rejected', ['consultation_id' => $id]);
+        if ($consultation->merchant_response === ServiceConsultation::RESPONSE_TIDAK) {
             return ApiResponse::error('Merchant tidak dapat mengerjakan layanan ini', 400);
         }
 
-        // Check if already accepted FIRST - return 200 with data (not error)
-        if ($consultation->customer_accepted || $consultation->status === ServiceConsultation::STATUS_ACCEPTED) {
-            Log::info('[AcceptOffer] Already accepted - returning current state', ['consultation_id' => $id]);
-            return ApiResponse::success([
-                'consultation' => $consultation->fresh(['jasa', 'merchant', 'customer', 'messages']),
-                'booking_card' => [
-                    'service_name' => $consultation->service_name,
-                    'merchant_name' => $consultation->merchant?->name ?? 'UMKM',
-                    'final_price' => $consultation->negotiated_price,
-                    'has_order' => $consultation->order_id !== null,
-                ],
-            ], 'Penawaran sudah diterima sebelumnya.', 200);
-        }
-
-        // Statuses that can be accepted
-        $canAcceptStatuses = [
-            ServiceConsultation::STATUS_PENDING,
-            ServiceConsultation::STATUS_DAPAT_DIKERJAKAN,
-            ServiceConsultation::STATUS_PENYESUAIAN,
-        ];
-
-        if (!in_array($consultation->status, $canAcceptStatuses)) {
-            Log::warning('[AcceptOffer] Invalid status for accept', [
-                'consultation_id' => $id,
-                'current_status' => $consultation->status,
-                'allowed_statuses' => $canAcceptStatuses,
-            ]);
-            return ApiResponse::error(
-                'Konsultasi tidak dapat diproses. Status saat ini: ' . $consultation->status,
-                400
-            );
-        }
-
-        // Validate that there's a price to accept
         if (!$consultation->merchant_offered_price) {
-            Log::warning('[AcceptOffer] No price offered', ['consultation_id' => $id]);
             return ApiResponse::error('Tidak ada harga yang ditawarkan merchant', 400);
         }
 
-        // Accept the offer and save booking proposal
-        $consultation->customer_accepted = true;
-        $consultation->customer_accepted_at = now();
-        $consultation->negotiated_price = $consultation->merchant_offered_price;
-        $consultation->status = ServiceConsultation::STATUS_ACCEPTED;
-
-        // Save booking proposal data if provided
-        if (!empty($data['proposed_date'])) {
-            $consultation->proposed_date = $data['proposed_date'];
-        }
-        if (!empty($data['proposed_time'])) {
-            $consultation->proposed_time = $data['proposed_time'] . ':00';
-        }
-        if (!empty($data['proposed_notes'])) {
-            $consultation->proposed_notes = $data['proposed_notes'];
-        }
-
-        $consultation->save();
-
-        Log::info('[AcceptOffer] Successfully accepted', [
-            'consultation_id' => $id,
-            'final_price' => $consultation->negotiated_price,
-            'proposed_date' => $consultation->proposed_date,
-            'proposed_time' => $consultation->proposed_time,
+        $consultation->update([
+            'negotiated_price' => $consultation->merchant_offered_price,
+            'offer_status' => 'waiting_payment',
         ]);
 
-        // Create system message for acceptance
-        $formattedPrice = 'Rp ' . number_format($consultation->negotiated_price, 0, ',', '.');
-        $acceptanceMessage = ConsultationMessage::create([
-            'service_consultation_id' => $consultation->id,
-            'sender_id' => Auth::id(),
-            'sender_type' => 'customer',
-            'message' => "Pelanggan menerima penawaran harga {$formattedPrice}. Harga kesepakatan telah ditetapkan.",
-            'proposed_price' => $consultation->negotiated_price,
-        ]);
+        $alreadyNoted = ConsultationMessage::where('service_consultation_id', $consultation->id)
+            ->where('message_type', 'offer_accepted_waiting_payment')
+            ->exists();
+
+        if (!$alreadyNoted) {
+            $formattedPrice = 'Rp ' . number_format((float) $consultation->merchant_offered_price, 0, ',', '.');
+            ConsultationMessage::create([
+                'service_consultation_id' => $consultation->id,
+                'sender_id' => Auth::id(),
+                'sender_type' => 'customer',
+                'message' => "Pelanggan menerima penawaran {$formattedPrice} dan diarahkan ke ringkasan pesanan untuk pembayaran.",
+                'message_type' => 'offer_accepted_waiting_payment',
+                'proposed_price' => $consultation->merchant_offered_price,
+            ]);
+        }
+
+        $fresh = $consultation->fresh(['jasa', 'merchant', 'customer', 'messages.media', 'jasaOrderItems.order.payment']);
 
         return ApiResponse::success([
-            'consultation' => $consultation->fresh(['jasa', 'merchant', 'customer', 'messages']),
-            'booking_card' => [
-                'service_name' => $consultation->service_name,
-                'merchant_name' => $consultation->merchant?->name ?? 'UMKM',
-                'final_price' => $consultation->negotiated_price,
-                'has_order' => $consultation->order_id !== null,
-            ],
-        ], 'Penawaran diterima! Silakan klik Booking Sekarang untuk melanjutkan.', 200);
+            'consultation' => $this->attachConsultationOrderSummary($fresh),
+            'checkout_url' => '/customer/consultations/' . $consultation->id . '/checkout',
+            'final_price' => (float) $consultation->merchant_offered_price,
+        ], 'Penawaran diterima. Silakan lanjut ke ringkasan pesanan untuk pembayaran.', 200);
     }
 
     /**
@@ -1299,6 +1429,7 @@ class ServiceConsultationController extends Controller
             $jasaOrderItem = JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $consultation->jasa_id,
+                'service_consultation_id' => $consultation->id,
                 'quantity' => 1,
                 'price' => $finalPrice,
                 'subtotal' => $finalPrice,
@@ -1342,7 +1473,8 @@ class ServiceConsultationController extends Controller
             ]);
 
             // ===== 3. Link consultation to order =====
-            $consultation->order_id = $order->id;
+            // Relasi order konsultasi disimpan melalui jasa_order_items.service_consultation_id.
+            // Tabel service_consultations tidak memiliki kolom order_id.
             $consultation->save();
 
             DB::commit();
@@ -1441,25 +1573,52 @@ class ServiceConsultationController extends Controller
         ]);
 
         // Check if already closed
+        // Jika sudah closed, jangan error.
+        // Anggap berhasil agar frontend tidak stuck di popup.
         if ($consultation->status === ServiceConsultation::STATUS_CLOSED) {
-            return ApiResponse::error('Konsultasi sudah ditutup sebelumnya', 400);
+            return ApiResponse::success(
+                $this->attachConsultationOrderSummary(
+                    $consultation->fresh(['messages.media', 'jasaOrderItems.order.payment'])
+                ),
+                'Konsultasi sudah ditutup sebelumnya'
+            );
         }
 
-        // Check if accepted
-        if ($consultation->status === ServiceConsultation::STATUS_ACCEPTED) {
-            return ApiResponse::error('Konsultasi sudah disepakati, tidak dapat ditutup', 400);
+        $consultation->loadMissing(['jasaOrderItems.order.payment']);
+        $order = $consultation->jasaOrderItems->first()?->order;
+
+        if ($order && $this->isOrderPaid($order)) {
+            return ApiResponse::error('Pembayaran sudah berhasil, percakapan tidak dapat dihentikan.', 400);
         }
 
         $data = $request->validate([
             'reason' => 'nullable|string|max:500',
         ]);
 
-        $ok = $consultation->close($data['reason'] ?? null);
+        DB::transaction(function () use ($consultation, $order, $data) {
+            if ($order && !in_array($order->status, ['expired', 'dibatalkan', 'ditolak', 'selesai'], true)) {
+                $order->update([
+                    'status' => 'dibatalkan',
+                    'cancelled_at' => now(),
+                    'cancelled_by' => Auth::id() === $consultation->customer_id ? 'customer' : 'merchant',
+                ]);
 
-        if (!$ok) {
-            return ApiResponse::error('Konsultasi tidak dapat ditutup', 400);
-        }
+                if ($order->payment && in_array(strtoupper((string) $order->payment->status), ['PENDING', 'UNPAID'], true)) {
+                    $order->payment->update(['status' => 'EXPIRED']);
+                }
+            }
 
-        return ApiResponse::success($consultation->fresh(), 'Konsultasi berhasil ditutup');
+            $consultation->close($data['reason'] ?? 'Percakapan dihentikan.');
+
+            ConsultationMessage::create([
+                'service_consultation_id' => $consultation->id,
+                'sender_id' => Auth::id(),
+                'sender_type' => 'system',
+                'message' => 'Percakapan dihentikan.',
+                'message_type' => 'conversation_closed',
+            ]);
+        });
+
+        return ApiResponse::success($this->attachConsultationOrderSummary($consultation->fresh(['messages.media', 'jasaOrderItems.order.payment'])), 'Percakapan berhasil dihentikan');
     }
 }

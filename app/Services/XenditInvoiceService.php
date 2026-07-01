@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\Payment;
+use App\Models\ServiceConsultation;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -23,9 +24,14 @@ class XenditInvoiceService
     public function createOrGetPendingInvoice(Order $order): Payment
     {
         // Product/kuliner order harus masih pending.
-        // Jasa tetap dibuat lewat flow jasa dan menggunakan Order sebagai struktur utama.
         if ($order->order_type !== 'jasa' && $order->status !== 'pending') {
             throw new \RuntimeException('Order tidak valid atau sudah diproses');
+        }
+
+        // Flow jasa baru:
+        // Invoice Xendit hanya boleh dibuat setelah merchant menerima pesanan.
+        if ($order->order_type === 'jasa' && $order->status !== 'diterima') {
+            throw new \RuntimeException('Pesanan jasa harus dikonfirmasi merchant terlebih dahulu sebelum pembayaran.');
         }
 
         $externalId = 'order-' . $order->id;
@@ -37,6 +43,16 @@ class XenditInvoiceService
             ->first();
 
         if ($existingPayment instanceof Payment) {
+            if ($existingPayment->expired_at && now()->greaterThan($existingPayment->expired_at)) {
+                $existingPayment->update(['status' => 'expired']);
+
+                if ($order->order_type === 'jasa') {
+                    $this->expireConsultationOrderIfNeeded($order);
+                }
+
+                throw new \RuntimeException('Batas waktu pembayaran sudah habis. Percakapan otomatis dihentikan.');
+            }
+
             Log::info('[XenditInvoiceService] Reusing existing invoice', [
                 'payment_id' => $existingPayment->id,
                 'external_id' => $externalId,
@@ -73,12 +89,27 @@ class XenditInvoiceService
             $description = 'Order #' . ($order->order_code ?? $order->id);
         }
 
-        $invoiceDuration = (int) config('services.xendit.invoice_duration', 7200);
+        $order->loadMissing('jasaItems');
+        $isConsultationOrder = $order->order_type === 'jasa'
+            && $order->jasaItems->contains(fn($item) => !empty($item->service_consultation_id));
+
+        $invoiceDuration = $isConsultationOrder
+            ? 3600
+            : (int) config('services.xendit.invoice_duration', 7200);
+
         if ($invoiceDuration < 300) {
-            $invoiceDuration = 7200;
+            $invoiceDuration = $isConsultationOrder ? 3600 : 7200;
         }
 
         $frontendUrl = rtrim((string) config('services.xendit.frontend_url', config('app.frontend_url', 'http://localhost:5173')), '/');
+
+        if ($order->order_type === 'jasa') {
+            $successRedirectUrl = $frontendUrl . '/orders/' . $order->id . '?type=jasa&payment=success';
+            $failureRedirectUrl = $frontendUrl . '/orders/' . $order->id . '?type=jasa&payment=failed';
+        } else {
+            $successRedirectUrl = $frontendUrl . '/orders/' . $order->id . '?payment=success';
+            $failureRedirectUrl = $frontendUrl . '/orders/' . $order->id . '?payment=failed';
+        }
 
         $payload = [
             'external_id' => $externalId,
@@ -86,15 +117,15 @@ class XenditInvoiceService
             'description' => $description,
             'currency' => 'IDR',
             'invoice_duration' => $invoiceDuration,
-            'success_redirect_url' => $frontendUrl . '/orders/' . $order->id . '?payment=success',
-            'failure_redirect_url' => $frontendUrl . '/orders/' . $order->id . '?payment=failed',
+            'success_redirect_url' => $successRedirectUrl,
+            'failure_redirect_url' => $failureRedirectUrl,
         ];
 
         if ($order->user?->email) {
             $payload['payer_email'] = (string) $order->user->email;
             $payload['customer'] = [
                 'email' => (string) $order->user->email,
-                'given_name' => (string) ($order->nama ?? $order->user->name ?? 'Customer'),
+                'given_name' => (string) ($order->customer_name_snapshot ?? $order->user_name_snapshot ?? $order->nama ?? $order->user->name ?? 'Customer'),
             ];
         }
 
@@ -117,9 +148,9 @@ class XenditInvoiceService
 
         $channel = strtoupper(
             $order->payment_channel
-            ?? $order->payment_channel_snapshot
-            ?? $order->payment_method
-            ?? ''
+                ?? $order->payment_channel_snapshot
+                ?? $order->payment_method
+                ?? ''
         );
 
         // Normalize common values, e.g. BNI_VA / BNI VA -> BNI.
@@ -184,6 +215,28 @@ class XenditInvoiceService
             'status' => 'pending',
             'raw_response' => $invoice,
         ]);
+    }
+
+    protected function expireConsultationOrderIfNeeded(Order $order): void
+    {
+        $order->loadMissing('jasaItems.serviceConsultation');
+
+        $order->update([
+            'status' => 'expired',
+            'expired_at' => now(),
+        ]);
+
+        foreach ($order->jasaItems as $jasaItem) {
+            $consultation = $jasaItem->serviceConsultation;
+            if ($consultation instanceof ServiceConsultation) {
+                $consultation->update([
+                    'status' => ServiceConsultation::STATUS_CLOSED,
+                    'closed_at' => now(),
+                    'offer_status' => 'payment_expired',
+                    'negotiation_notes' => trim(($consultation->negotiation_notes ?? '') . "\n[Auto] Percakapan dihentikan karena pembayaran melewati batas waktu 1 jam."),
+                ]);
+            }
+        }
     }
 
     public function getInvoiceStatus(string $invoiceId): ?array

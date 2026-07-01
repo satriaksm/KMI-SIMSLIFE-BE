@@ -7,6 +7,7 @@ use App\Events\PaymentStatusUpdated;
 use App\Helpers\ApiResponse;
 use App\Models\Order;
 use App\Models\Payment;
+use App\Models\ServiceConsultation;
 use App\Models\User;
 use App\Services\XenditInvoiceService;
 use App\Services\WebPushService;
@@ -75,13 +76,22 @@ class PaymentController extends Controller
         }
 
         // Pastikan order belum dibayar / belum selesai diproses.
-        if ($order->payment_status === 'PAID' || $order->status === 'paid') {
+        if ($order->payment_status === 'PAID' || ($order->order_type !== 'jasa' && $order->status === 'paid')) {
             return ApiResponse::error('Pesanan sudah dibayar', 400);
         }
 
         // COD tidak perlu invoice Xendit.
         if (strtoupper((string) ($order->payment_method ?? '')) === 'COD') {
             return ApiResponse::error('Pesanan COD tidak memerlukan invoice', 400);
+        }
+
+        // Flow jasa baru:
+        // Customer hanya boleh membuat invoice setelah merchant menerima pesanan.
+        if ($order->order_type === 'jasa' && $order->status !== 'diterima') {
+            return ApiResponse::error(
+                'Pesanan harus dikonfirmasi merchant terlebih dahulu sebelum pembayaran.',
+                422
+            );
         }
 
         try {
@@ -180,7 +190,8 @@ class PaymentController extends Controller
         }
 
         // If already PAID, return immediately.
-        if ($order->payment_status === 'PAID' || in_array($order->status, ['paid', 'menunggu_konfirmasi_merchant'], true)) {
+        // Untuk jasa, status order tetap mengikuti flow jasa. Penanda pembayaran adalah payment_status = PAID.
+        if ($order->payment_status === 'PAID' || ($order->order_type !== 'jasa' && $order->status === 'paid')) {
             return ApiResponse::success([
                 'order_id' => $order->id,
                 'order_status' => $order->status,
@@ -267,9 +278,13 @@ class PaymentController extends Controller
             ];
 
             if ($isJasa) {
-                $orderUpdate['status'] = 'menunggu_konfirmasi_merchant';
-                $orderUpdate['confirm_deadline'] = now()->addMinutes(60);
-                $orderUpdate['merchant_response_deadline'] = now()->addMinutes(60);
+                // Flow jasa baru:
+                // Merchant sudah menerima pesanan sebelum customer membayar.
+                // Setelah pembayaran berhasil, status tetap "diterima".
+                // Yang berubah adalah payment_status menjadi PAID.
+                $orderUpdate['status'] = 'diterima';
+                $orderUpdate['confirm_deadline'] = null;
+                $orderUpdate['merchant_response_deadline'] = null;
             } else {
                 $orderUpdate['status'] = 'paid';
                 $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
@@ -277,6 +292,22 @@ class PaymentController extends Controller
             }
 
             $lockedOrder->update($orderUpdate);
+
+            if ($isJasa) {
+                $lockedOrder->loadMissing('jasaItems.serviceConsultation');
+                foreach ($lockedOrder->jasaItems as $jasaItem) {
+                    $consultation = $jasaItem->serviceConsultation;
+                    if ($consultation instanceof ServiceConsultation) {
+                        $consultation->update([
+                            'status' => ServiceConsultation::STATUS_ACCEPTED,
+                            'customer_accepted' => true,
+                            'customer_accepted_at' => $consultation->customer_accepted_at ?? now(),
+                            'offer_status' => 'paid',
+                            'closed_at' => null,
+                        ]);
+                    }
+                }
+            }
 
             $payment = Payment::where('order_id', $lockedOrder->id)->latest()->first();
             if ($payment) {

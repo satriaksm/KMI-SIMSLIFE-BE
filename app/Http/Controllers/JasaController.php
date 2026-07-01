@@ -593,24 +593,44 @@ class JasaController extends Controller
             return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
         }
 
-        // Normalize booking type input to DB value for cara_pemesanan
-        // Accepts: booking_type | cara_pemesanan (FE format values: keranjang, langsung_pesan, booking, konsultasi, dll.)
-        // DB values for jasas.cara_pemesanan: langsung_pesan | booking | memerlukan_konsultasi
-        $bt = $request->input('booking_type');
-        $cp = $request->input('cara_pemesanan');
-        $canonical = $bt ?? $cp ?? null;
+        // Normalize cara_pemesanan HANYA jika request memang mengirim field cara pemesanan.
+        // Publish/unpublish biasanya hanya mengirim { status: "published" },
+        // jadi jangan ubah cara_pemesanan saat field tidak dikirim.
+        if (
+            $request->has('booking_type') ||
+            $request->has('cara_pemesanan') ||
+            $request->has('service_type_booking')
+        ) {
+            $canonical =
+                $request->input('booking_type')
+                ?? $request->input('cara_pemesanan')
+                ?? $request->input('service_type_booking');
 
-        if (in_array($canonical, ['cart', 'keranjang', 'langsung_pesan', 'direct_checkout', 'direct'])) {
-            $normalized = 'langsung_pesan';
-        } elseif (in_array($canonical, ['booking', 'scheduled'])) {
-            $normalized = 'booking';
-        } elseif (in_array($canonical, ['konsultasi', 'consultation', 'memerlukan_konsultasi'])) {
-            $normalized = 'memerlukan_konsultasi';
-        } else {
-            $normalized = 'langsung_pesan'; // default
+            $canonical = strtolower(trim((string) $canonical));
+
+            if (in_array($canonical, ['cart', 'keranjang', 'langsung_pesan', 'direct_checkout', 'direct'], true)) {
+                $normalized = 'langsung_pesan';
+                $serviceTypeBooking = 'keranjang';
+            } elseif (in_array($canonical, ['booking', 'scheduled'], true)) {
+                $normalized = 'booking';
+                $serviceTypeBooking = 'booking';
+            } elseif (in_array($canonical, ['konsultasi', 'consultation', 'memerlukan_konsultasi'], true)) {
+                $normalized = 'memerlukan_konsultasi';
+                $serviceTypeBooking = 'konsultasi';
+            } else {
+                $normalized = $jasa->cara_pemesanan ?: 'langsung_pesan';
+                $serviceTypeBooking = match ($normalized) {
+                    'booking' => 'booking',
+                    'memerlukan_konsultasi' => 'konsultasi',
+                    default => 'keranjang',
+                };
+            }
+
+            $request->merge([
+                'cara_pemesanan' => $normalized,
+                'service_type_booking' => $serviceTypeBooking,
+            ]);
         }
-
-        $request->merge(['cara_pemesanan' => $normalized]);
 
         // Also normalize service_type if sent (convert old values to new standard)
         $st = $request->input('service_type');
