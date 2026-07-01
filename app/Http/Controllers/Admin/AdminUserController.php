@@ -1037,7 +1037,7 @@ class AdminUserController extends Controller
     public function notify(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
-            'type' => 'required|in:outreach,event_invite,paguyuban_invite,voucher,general',
+            'type' => 'required|in:outreach,event_invite,voucher,general',
             'message' => 'required|string|max:1000',
             'metadata' => 'nullable|array',
         ]);
@@ -1262,7 +1262,7 @@ class AdminUserController extends Controller
     public function executeAlertAction(Request $request, $alertId)
     {
         $validator = Validator::make($request->all(), [
-            'action' => 'required|in:warn,suspend,limit_posting,invite_event,invite_paguyuban,dismiss',
+            'action' => 'required|in:warn,suspend,limit_posting,invite_event,dismiss',
             'reason' => 'required|string|max:500',
         ]);
 

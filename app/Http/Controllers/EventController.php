@@ -437,11 +437,7 @@ class EventController extends Controller
             ->orderBy('event_start_date', 'desc')
             ->get();
 
-        $events->transform(function ($event) {
-            $event->banner_url = route('event_banners.show', ['event' => $event->id]);
-            unset($event->banner_img_path);
-            return $event;
-        });
+        // The Model's $appends will handle banner_url and banner_urls automatically.
 
         return response()->json([
             'data' => $events,
@@ -467,7 +463,7 @@ class EventController extends Controller
             ])
             ->findOrFail($id);
 
-        $event->banner_url = route('event_banners.show', ['event' => $event->id]);
+        // The Model's $appends will handle banner_url and banner_urls automatically.
         
         // Flatten unique products from all vouchers
         $allProducts = collect();

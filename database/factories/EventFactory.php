@@ -30,7 +30,7 @@ class EventFactory extends Factory
             'event_description' => 'Deskripsi event ke-' . $this->faker->randomNumber(1),
             'event_start_date' => $startDate,
             'event_end_date' => $endDate,
-            'banner_img_path' => null,
+            'banner_img_path' => 'events/dummy-banner.jpg',
             'status' => $status,
             'created_by' => User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->first()?->id ?? 1,
         ];

@@ -122,7 +122,7 @@ class AdminEventController extends Controller
                     'removed_by',
                     'removed_at',
                     'responded_at'
-                ])->with(['segmentation', 'paguyuban']);
+                ])->with(['segmentation']);
             },
             'vouchers'
         ])
@@ -270,7 +270,7 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
             }
             
             Log::info('[AdminEvent] New banner uploaded', [
@@ -425,7 +425,7 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
             }
         } else {
             //  Double check 
@@ -733,7 +733,6 @@ class AdminEventController extends Controller
                 ])
                 ->with([
                     'segmentation',
-                    'paguyuban',
                 ])
                 ->get()
                 ->map(function ($merchant) {
@@ -859,7 +858,7 @@ class AdminEventController extends Controller
                 'creator:id,name',
                 'merchants' => function ($query) {
                     $query->wherePivot('status', 'accepted')
-                        ->with(['segmentation', 'paguyuban']);
+                        ->with(['segmentation']);
                 },
                 'vouchers'
             ])

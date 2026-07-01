@@ -35,9 +35,14 @@ class ImageOptimizationService
         // Baca file gambar
         $image = $manager->read($file->getRealPath());
 
-        // 1. Thumbnail (150x150, dicrop proporsional)
+        // 1. Thumbnail
         $thumbImage = clone $image;
-        $thumbData = (string) $thumbImage->cover(150, 150)->toWebp(80);
+        if ($isSquare) {
+            $thumbImage->cover(150, 150);
+        } else {
+            $thumbImage->scaleDown(width: 300);
+        }
+        $thumbData = (string) $thumbImage->toWebp(80);
         Storage::disk($disk)->put($thumbPath, $thumbData);
 
         // 2. Medium
@@ -53,9 +58,9 @@ class ImageOptimizationService
         // 3. Large/Original
         $largeImage = clone $image;
         if ($isSquare) {
-            $largeImage->cover(1200, 1200);
+            $largeImage->cover(1920, 1920);
         } else {
-            $largeImage->scaleDown(width: 1200);
+            $largeImage->scaleDown(width: 1920);
         }
         $largeData = (string) $largeImage->toWebp(85);
         Storage::disk($disk)->put($originalPath, $largeData);

@@ -289,7 +289,6 @@ class MerchantController extends Controller
 
             $merchant = Merchant::create([
                 'user_id' => $user->id,
-                'paguyuban_id' => null,
                 'segmentation_id' => $validated['segmentation_id'],
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
@@ -336,7 +335,6 @@ class MerchantController extends Controller
 
         $merchant->load([
             'segmentation',
-            'paguyuban',
             'primaryAddress.province',
             'primaryAddress.city',
             'primaryAddress.district',

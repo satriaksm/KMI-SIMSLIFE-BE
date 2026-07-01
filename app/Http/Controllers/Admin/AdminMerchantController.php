@@ -212,7 +212,6 @@ class AdminMerchantController extends Controller
         $merchant = DB::transaction(function () use ($validated, $admin) {
             $merchant = Merchant::create([
                 'user_id' => $validated['user_id'],
-                'paguyuban_id' => null,
                 'segmentation_id' => $validated['segmentation_id'],
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
@@ -292,7 +291,6 @@ class AdminMerchantController extends Controller
             $merchant = Merchant::with([
                 'user',
                 'segmentation',
-                'paguyuban',
                 'primaryAddress.province',
                 'primaryAddress.city',
                 'primaryAddress.district',
@@ -720,7 +718,6 @@ class AdminMerchantController extends Controller
             $merchant = Merchant::with([
                 'user',
                 'segmentation',
-                'paguyuban',
                 'primaryAddress.province',
                 'primaryAddress.city',
                 'primaryAddress.district',

@@ -20,7 +20,6 @@ class Merchant extends Model
 
     protected $fillable = [
         'user_id',
-        'paguyuban_id',
         'segmentation_id',
         'name',
         'slug',
@@ -162,11 +161,6 @@ class Merchant extends Model
         return $this->hasMany(MerchantWalletHistory::class, 'merchant_id');
     }
 
-    // Relasi ke paguyuban
-    public function paguyuban(): BelongsTo
-    {
-        return $this->belongsTo(Paguyuban::class);
-    }
 
     // Relasi ke segmentation
     public function segmentation(): BelongsTo

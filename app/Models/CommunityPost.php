@@ -131,7 +131,7 @@ class CommunityPost extends Model
     public function getThumbnailUrlAttribute(): ?string
     {
         $firstImage = $this->images()->ordered()->first();
-        return $firstImage ? $firstImage->image_url : null;
+        return $firstImage ? $firstImage->image_urls['thumb'] : null;
     }
 
     /**

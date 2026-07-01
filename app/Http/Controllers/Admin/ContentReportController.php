@@ -301,7 +301,7 @@ class ContentReportController extends Controller
 
             $validAdminActions = [
                 'status_change', 'warn_user', 'suspend_user', 'unsuspend_user',
-                'limit_posting', 'remove_limit', 'invite_paguyuban', 'invite_event',
+                'limit_posting', 'remove_limit', 'invite_event',
                 'send_notification', 'assign_case', 'resolve_report', 'bulk_update', 'manual_override'
             ];
             
