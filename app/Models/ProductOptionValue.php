@@ -15,7 +15,7 @@ class ProductOptionValue extends Model
         'option_value',
         'image_path',
     ];
-    protected $appends = ['image_url'];
+    protected $appends = ['image_url', 'image_urls'];
 
     public function option(): BelongsTo
     {
@@ -24,7 +24,28 @@ class ProductOptionValue extends Model
 
     public function getImageUrlAttribute(): ?string
     {
-        return $this->image_path ? asset('storage/' . $this->image_path) : null;
+        if (empty($this->image_path)) {
+            return null;
+        }
+        return route('images.product-option-value.show', [
+            'optionValue' => $this->id,
+            'v' => $this->updated_at ? $this->updated_at->timestamp : time()
+        ]);
+    }
+
+    public function getImageUrlsAttribute(): ?array
+    {
+        if (empty($this->image_path)) {
+            return null;
+        }
+
+        $v = $this->updated_at ? $this->updated_at->timestamp : time();
+
+        return [
+            'original' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('images.product-option-value.show', ['optionValue' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
     }
 
     // Relasi ke variants (many-to-many via pivot)

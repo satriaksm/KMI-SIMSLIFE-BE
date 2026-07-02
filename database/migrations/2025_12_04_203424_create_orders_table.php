@@ -18,7 +18,6 @@ return new class extends Migration {
             $table->foreignId('voucher_id')->nullable()->constrained()->nullOnDelete();
             $table->string('order_type')->nullable();
             $table->string('order_code');
-            $table->decimal('total_price', 12, 2)->nullable();
             $table->decimal('subtotal', 12, 2)->default(0);
             $table->decimal('discount_total', 12, 2)->default(0);
             $table->enum('delivery_type', ['pickup', 'delivery'])->default('pickup');
@@ -28,15 +27,16 @@ return new class extends Migration {
             $table->decimal('platform_fee', 12, 2)->default(0);
             $table->decimal('gross_amount', 12, 2)->default(0);
             $table->decimal('net_amount', 12, 2)->default(0);
-            $table->enum('status', ['pending', 'responsed', 'accepted', 'rejected', 'undelivered', 'paid', 'delivered', 'completed', 'cancelled'])->default('pending');
+            $table->enum('status', ['pending', 'accepted', 'rejected', 'on-progress', 'paid', 'delivered', 'undelivered', 'completed', 'cancelled', 'ready_to_pickup', 'unpicked'])->default('pending');
             $table->text('notes')->nullable();
-            $table->timestamp('responsed_at')->nullable();
             $table->timestamp('accepted_at')->nullable();
             $table->timestamp('rejected_at')->nullable();
             $table->timestamp('paid_at')->nullable();
             $table->timestamp('delivered_at')->nullable();
             $table->timestamp('completed_at')->nullable();
             $table->timestamp('cancelled_at')->nullable();
+            $table->timestamp('ready_to_pickup_at')->nullable();
+            $table->timestamp('unpicked_at')->nullable();
             $table->timestamp('confirm_deadline')->nullable();
             $table->string('user_name_snapshot');
             $table->string('user_phone_snapshot');
@@ -48,6 +48,7 @@ return new class extends Migration {
             $table->decimal('latitude_snapshot', 10, 7)->nullable();
             $table->decimal('longitude_snapshot', 10, 7)->nullable();
             $table->string('proof_image_path')->nullable();
+            $table->string('proof_description')->nullable();
             $table->string('failed_reason')->nullable();
             $table->timestamps();
         });

@@ -237,7 +237,7 @@ class PaymentController extends Controller
             ]);
 
             $order = $lockedPayment->order;
-            if ($order && in_array($order->status, ['pending', 'responsed'], true)) {
+            if ($order && in_array($order->status, ['pending', 'accepted'], true)) {
                 $order->update([
                     'status' => 'cancelled',
                     'cancelled_at' => now(),

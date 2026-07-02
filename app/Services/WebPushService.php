@@ -96,7 +96,7 @@ class WebPushService
     }
 
     /**
-     * Perubahan status pesanan (responsed, delivered, completed, cancelled).
+     * Perubahan status pesanan (accepted, delivered, completed, cancelled).
      * Status paid/pending tidak memicu push (hindari duplikat & "paid" langsung).
      */
     /**
@@ -112,8 +112,9 @@ class WebPushService
         }
 
         match ($status) {
-            'responsed' => $this->notifyOrderAccepted($order),
+            'accepted' => $this->notifyOrderAccepted($order),
             'delivered' => $this->notifyOrderDelivered($order),
+            'ready_to_pickup' => $this->notifyOrderReadyToPickup($order),
             'completed' => $this->notifyOrderCompleted($order),
             'cancelled' => $this->notifyOrderCancelled($order, $cancelContext),
             default => null,
@@ -122,21 +123,25 @@ class WebPushService
 
     private function notifyOrderAccepted(Order $order): void
     {
-        if ($this->isCod($order) && $this->isPickup($order)) {
-            $this->notifyCustomer(
-                $order,
-                'Pesanan siap diambil',
-                'Silakan ambil pesanan Anda di toko.',
-                'order-responsed-' . $order->id,
-            );
+        $this->notifyCustomer(
+            $order,
+            'Pesanan diterima',
+            'Pesanan Anda diterima dan sedang diproses penjual.',
+            'order-accepted-' . $order->id,
+        );
+    }
+
+    private function notifyOrderReadyToPickup(Order $order): void
+    {
+        if (!$this->isPickup($order)) {
             return;
         }
 
         $this->notifyCustomer(
             $order,
-            'Pesanan diterima',
-            'Pesanan Anda diterima dan sedang diproses penjual.',
-            'order-responsed-' . $order->id,
+            'Pesanan siap diambil',
+            'Silakan ambil pesanan Anda di toko.',
+            'order-ready-' . $order->id,
         );
     }
 
@@ -192,7 +197,7 @@ class WebPushService
             'merchant_reject' => 'Pesanan Anda ditolak.',
             'customer_cancel' => 'Pesanan Anda dibatalkan.',
             'auto' => 'Pesanan Anda dibatalkan karena batas waktu habis.',
-            default => (!$order->responsed_at && $order->paid_at)
+            default => (!$order->accepted_at && $order->paid_at)
                 ? 'Pesanan Anda ditolak.'
                 : 'Pesanan Anda dibatalkan.',
         };

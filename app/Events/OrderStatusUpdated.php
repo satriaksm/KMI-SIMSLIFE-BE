@@ -45,10 +45,12 @@ class OrderStatusUpdated implements ShouldBroadcastNow
             'user_id' => $this->order->user_id,
             'merchant_id' => $this->order->merchant_id,
             'paid_at' => optional($this->order->paid_at)->toISOString(),
-            'responsed_at' => optional($this->order->responsed_at)->toISOString(),
+            'accepted_at' => optional($this->order->accepted_at)->toISOString(),
             'delivered_at' => optional($this->order->delivered_at)->toISOString(),
             'completed_at' => optional($this->order->completed_at)->toISOString(),
             'cancelled_at' => optional($this->order->cancelled_at)->toISOString(),
+            'ready_to_pickup_at' => optional($this->order->ready_to_pickup_at)->toISOString(),
+            'unpicked_at' => optional($this->order->unpicked_at)->toISOString(),
         ];
     }
 }

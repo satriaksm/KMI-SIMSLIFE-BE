@@ -20,7 +20,6 @@ class Merchant extends Model
 
     protected $fillable = [
         'user_id',
-        'paguyuban_id',
         'segmentation_id',
         'name',
         'slug',
@@ -53,7 +52,7 @@ class Merchant extends Model
         'last_payout_at' => 'datetime',
     ];
 
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'balance_held', 'balance_withdrawable'];
+    protected $appends = ['logo_url', 'logo_urls', 'banner_url', 'banner_urls', 'is_open_now', 'balance_held', 'balance_withdrawable'];
 
     protected static function boot()
     {
@@ -162,11 +161,6 @@ class Merchant extends Model
         return $this->hasMany(MerchantWalletHistory::class, 'merchant_id');
     }
 
-    // Relasi ke paguyuban
-    public function paguyuban(): BelongsTo
-    {
-        return $this->belongsTo(Paguyuban::class);
-    }
 
     // Relasi ke segmentation
     public function segmentation(): BelongsTo
@@ -227,6 +221,34 @@ class Merchant extends Model
             // Query param for cache-busting (no extra path segment)
             'v' => basename((string) $this->cover_path),
         ]);
+    }
+
+    public function getLogoUrlsAttribute()
+    {
+        if (empty($this->logo_path)) {
+            return null;
+        }
+
+        $v = basename((string) $this->logo_path);
+        return [
+            'original' => route('merchant_profile_pictures.show', ['merchant' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('merchant_profile_pictures.show', ['merchant' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('merchant_profile_pictures.show', ['merchant' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
+    }
+
+    public function getBannerUrlsAttribute()
+    {
+        if (empty($this->cover_path)) {
+            return null;
+        }
+
+        $v = basename((string) $this->cover_path);
+        return [
+            'original' => route('merchant_banner.show', ['merchant' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('merchant_banner.show', ['merchant' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('merchant_banner.show', ['merchant' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
     }
 
     public function getIsOpenNowAttribute(): bool

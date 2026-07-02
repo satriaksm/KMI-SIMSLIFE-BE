@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Storage;
 use enshrined\svgSanitize\Sanitizer;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
+use App\Services\ImageOptimizationService;
 
 class AdminEventController extends Controller
 {
@@ -21,29 +22,34 @@ class AdminEventController extends Controller
      */
     public function showBanner(Request $request, Event $event)
     {
+        $size = $request->query('size', 'original');
         // Support signed URL for secure access
         if ($request->hasValidSignature()) {
-            return $this->streamEventBanner($event);
+            return $this->streamEventBanner($event, $size);
         }
 
         // Public access for now (you can add auth checks later)
-        return $this->streamEventBanner($event);
+        return $this->streamEventBanner($event, $size);
     }
 
     /**
      * Private method to stream banner image
      */
-    private function streamEventBanner(Event $event)
+    private function streamEventBanner(Event $event, string $size = 'original')
     {
         if (empty($event->banner_img_path)) {
             abort(404);
         }
 
         $disk = 'public';
-        $path = ltrim($event->banner_img_path, '/');
+        $originalPath = ltrim($event->banner_img_path, '/');
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath; // fallback
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
@@ -116,10 +122,8 @@ class AdminEventController extends Controller
                     'removed_by',
                     'removed_at',
                     'responded_at'
-                ]);
+                ])->with(['segmentation']);
             },
-            'merchants.segmentation',
-            'merchants.paguyuban',
             'vouchers'
         ])
             ->withCount([
@@ -266,7 +270,7 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
             }
             
             Log::info('[AdminEvent] New banner uploaded', [
@@ -421,7 +425,7 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
             }
         } else {
             //  Double check 
@@ -729,7 +733,6 @@ class AdminEventController extends Controller
                 ])
                 ->with([
                     'segmentation',
-                    'paguyuban',
                 ])
                 ->get()
                 ->map(function ($merchant) {
@@ -855,7 +858,7 @@ class AdminEventController extends Controller
                 'creator:id,name',
                 'merchants' => function ($query) {
                     $query->wherePivot('status', 'accepted')
-                        ->with(['segmentation', 'paguyuban']);
+                        ->with(['segmentation']);
                 },
                 'vouchers'
             ])

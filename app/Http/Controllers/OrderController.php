@@ -20,6 +20,7 @@ use App\Models\Voucher;
 use App\Models\VoucherUsage;
 use App\Services\XenditInvoiceService;
 use App\Services\WebPushService;
+use App\Services\ImageOptimizationService;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -130,8 +131,14 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
-        if ($order->status !== 'delivered') {
-            return ApiResponse::error('Pesanan hanya dapat diselesaikan jika statusnya sudah diantar (delivered).', 422);
+        if ($order->delivery_type === 'pickup') {
+            if ($order->status !== 'ready_to_pickup') {
+                return ApiResponse::error('Pesanan hanya dapat diselesaikan jika statusnya sudah siap diambil (ready_to_pickup).', 422);
+            }
+        } else {
+            if ($order->status !== 'delivered') {
+                return ApiResponse::error('Pesanan hanya dapat diselesaikan jika statusnya sudah diantar (delivered).', 422);
+            }
         }
 
         if (strtoupper($order->payment_method ?? '') === 'COD') {
@@ -170,7 +177,7 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
-        if (in_array($order->status, ['paid', 'responsed', 'delivered', 'completed', 'cancelled'], true)) {
+        if (in_array($order->status, ['paid', 'delivered', 'completed', 'cancelled'], true)) {
             return ApiResponse::error('Order tidak bisa dibatalkan', 422);
         }
 
@@ -251,11 +258,11 @@ class OrderController extends Controller
                       });
                 });
             } elseif ($reqStatus === 'processing') {
-                $query->whereIn('status', ['responsed', 'accepted']);
+                $query->where('status', 'accepted');
             } elseif ($reqStatus === 'delivered') {
-                $query->where('status', 'delivered');
+                $query->whereIn('status', ['delivered', 'ready_to_pickup']);
             } elseif ($reqStatus === 'cancelled') {
-                $query->whereIn('status', ['cancelled', 'rejected', 'undelivered']);
+                $query->whereIn('status', ['cancelled', 'rejected', 'undelivered', 'unpicked']);
             } else {
                 $query->where('status', $reqStatus);
             }
@@ -288,9 +295,9 @@ class OrderController extends Controller
                       });
                 })->count(),
             'processing' => Order::where('merchant_id', $merchant->id)
-                ->whereIn('status', ['responsed', 'accepted'])->count(),
+                ->where('status', 'accepted')->count(),
             'delivered' => Order::where('merchant_id', $merchant->id)
-                ->where('status', 'delivered')->count(),
+                ->whereIn('status', ['delivered', 'ready_to_pickup'])->count(),
         ];
 
         return ApiResponse::success(
@@ -347,15 +354,14 @@ class OrderController extends Controller
      * Merchant: update status pesanan.
      *
      * Flow baru:
-     *   paid (Transfer) → responsed (terima) | cancelled (tolak)
-     *   pending COD     → responsed (terima) | cancelled (tolak)
-     *   responsed       → delivered
-     *   delivered       → completed
+     *   paid (Transfer) → accepted (terima) | cancelled (tolak)
+     *   pending COD     → accepted (terima) | cancelled (tolak)
+     *   accepted        → delivered
      */
     public function updateStatus(Request $request, Merchant $merchant, Order $order)
     {
         $request->validate([
-            'status' => 'required|in:responsed,accepted,rejected,delivered,completed,cancelled,undelivered',
+            'status' => 'required|in:accepted,rejected,delivered,completed,cancelled,undelivered,ready_to_pickup,unpicked',
             'proof_image' => 'nullable|image|max:5120',
             'failed_reason' => 'nullable|string|max:1000',
         ]);
@@ -377,18 +383,21 @@ class OrderController extends Controller
 
         $allowed = match ($newStatus) {
             // UMKM bisa terima pesanan yang sudah bayar (paid) atau COD (pending delivery_type=pickup/delivery)
-            'responsed', 'accepted' => in_array($order->status, ['paid', 'pending'], true),
-            'rejected' => in_array($order->status, ['paid', 'pending', 'responsed', 'accepted'], true),
-            'delivered' => in_array($order->status, ['responsed', 'accepted'], true),
-            'completed' => in_array($order->status, ['delivered'], true),
-            'undelivered' => in_array($order->status, ['delivered'], true),
-            'cancelled' => in_array($order->status, ['paid', 'pending', 'responsed', 'accepted'], true),
+            'accepted' => in_array($order->status, ['paid', 'pending'], true),
+            'rejected' => in_array($order->status, ['paid', 'pending', 'accepted'], true),
+            'delivered' => in_array($order->status, ['accepted'], true) && $order->delivery_type === 'delivery',
+            'ready_to_pickup' => in_array($order->status, ['accepted'], true) && $order->delivery_type === 'pickup',
+            'completed' => (in_array($order->status, ['delivered'], true) && $order->delivery_type === 'delivery') || 
+                           (in_array($order->status, ['ready_to_pickup'], true) && $order->delivery_type === 'pickup'),
+            'undelivered' => in_array($order->status, ['delivered'], true) && $order->delivery_type === 'delivery',
+            'unpicked' => in_array($order->status, ['ready_to_pickup'], true) && $order->delivery_type === 'pickup',
+            'cancelled' => in_array($order->status, ['paid', 'pending', 'accepted'], true),
             default     => false,
         };
 
         // COD (pending + pickup/delivery) boleh diterima UMKM
         // Transfer (pending) TIDAK boleh diterima UMKM — harus bayar dulu
-        if (in_array($newStatus, ['responsed', 'accepted', 'rejected']) && $order->status === 'pending') {
+        if (in_array($newStatus, ['accepted', 'rejected']) && $order->status === 'pending') {
             // Hanya izinkan jika COD (belum ada payment)
             $hasPendingPayment = $order->payment()->where('status', 'pending')->exists();
             if ($hasPendingPayment) {
@@ -397,10 +406,8 @@ class OrderController extends Controller
         }
 
         if ($newStatus === 'completed') {
-            $isPickup = $order->delivery_type === 'pickup';
-            // UMKM can complete any order now, but if it's delivery they must upload proof
-            if (!$isPickup && !$request->hasFile('proof_image')) {
-                return ApiResponse::error('Bukti foto pengiriman wajib diunggah saat pesanan tiba.', 422);
+            if (!$request->hasFile('proof_image')) {
+                return ApiResponse::error('Bukti foto wajib diunggah saat pesanan diselesaikan/diambil.', 422);
             }
         }
         
@@ -413,38 +420,55 @@ class OrderController extends Controller
         }
 
         $order->status = $newStatus;
-        if ($newStatus === 'responsed' || $newStatus === 'accepted') {
+        if ($newStatus === 'accepted') {
             $order->status = 'accepted';
             $order->accepted_at = now();
-            // Backward compatibility
-            $order->responsed_at = now();
         } elseif ($newStatus === 'rejected') {
             $order->rejected_at = now();
             $this->refundBalancePendingIfNeeded($order);
         } elseif ($newStatus === 'delivered') {
             $order->delivered_at = now();
             // Photo is now uploaded when completed/arrived, not here
+        } elseif ($newStatus === 'ready_to_pickup') {
+            $order->ready_to_pickup_at = now();
         } elseif ($newStatus === 'undelivered') {
             if ($request->hasFile('proof_image')) {
-                $path = $request->file('proof_image')->store('orders/proofs', 'public');
+                if ($order->proof_image_path) {
+                    app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
+                }
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
                 $order->proof_image_path = $path;
-            }
-            if ($request->filled('failed_reason')) {
-                $order->failed_reason = $request->input('failed_reason');
             }
             
             // Release funds for undelivered as the UMKM has prepared and tried to deliver
             $this->moveBalanceToAvailable($order);
+        } elseif ($newStatus === 'unpicked') {
+            $order->unpicked_at = now();
+            $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'completed') {
             $order->completed_at = now();
+            if (strtoupper($order->payment_method ?? '') === 'COD') {
+                $order->payment_status = 'paid';
+                $order->paid_at = now();
+            }
             if ($request->hasFile('proof_image')) {
-                $path = $request->file('proof_image')->store('orders/proofs', 'public');
+                if ($order->proof_image_path) {
+                    app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
+                }
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
                 $order->proof_image_path = $path;
             }
             $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'cancelled') {
             $order->cancelled_at = now();
             $this->refundBalancePendingIfNeeded($order);
+        }
+        
+        // Simpan alasan pembatalan/penolakan jika ada
+        if (in_array($newStatus, ['rejected', 'cancelled', 'undelivered', 'unpicked'])) {
+            if ($request->filled('failed_reason')) {
+                $order->failed_reason = $request->input('failed_reason');
+            }
         }
         
         $order->save();
@@ -513,6 +537,10 @@ class OrderController extends Controller
 
         if (!$cart->merchant_id || !$cart->merchant) {
             return ApiResponse::error('Merchant cart tidak valid', 422);
+        }
+
+        if ($cart->merchant->user_id === $user->id) {
+            return ApiResponse::error('Anda tidak dapat membeli produk dari toko Anda sendiri.', 403);
         }
 
         if (!$cart->merchant->is_open_now) {
@@ -660,6 +688,7 @@ class OrderController extends Controller
                     'user_id'                 => $user->id,
                     'merchant_id'             => $cart->merchant_id,
                     'voucher_id'              => $voucher?->id,
+                    'order_type'              => 'product',
                     'order_code'              => $orderCode,
                     'subtotal'                => $subtotal,
                     'discount_total'          => $discountTotal,
@@ -669,6 +698,7 @@ class OrderController extends Controller
                     'delivery_fee_snapshot'   => $deliveryFee,
                     'delivery_type'           => $deliveryType,
                     'status'                  => 'pending',
+                    'payment_status'          => 'unpaid',
                     'user_name_snapshot'      => (string) ($user->name ?? ''),
                     'user_phone_snapshot'     => (string) ($user->phone ?? ''),
                     'address_detail_snapshot' => (string) ($address->detail ?? ''),
@@ -957,5 +987,22 @@ class OrderController extends Controller
             'reference_id'   => $order->id,
             'description'    => 'Order cancelled — refund from pending balance',
         ]);
+
+        // Attempt automatic refund if payment was via Xendit
+        if ($order->payment && $order->payment->xendit_invoice_id) {
+            $xenditRefundService = app(\App\Services\XenditRefundService::class);
+            $success = $xenditRefundService->processRefund($order->payment);
+
+            if (!$success && $order->payment->refund_status === 'failed') {
+                // Notifikasi ke admin bahwa refund gagal (butuh manual)
+                $admins = \App\Models\User::whereHas('roles', function ($query) {
+                    $query->where('name', 'admin');
+                })->get();
+
+                foreach ($admins as $admin) {
+                    $admin->notify(new \App\Notifications\ManualRefundRequiredNotification($order));
+                }
+            }
+        }
     }
 }

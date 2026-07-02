@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use App\Services\ImageOptimizationService;
 use Illuminate\Validation\Rules\Password;
 
 class UserController
@@ -95,9 +96,10 @@ class UserController
 
                 // Delete old picture if it exists
                 if ($user->profile_picture_path) {
-                    Storage::disk('public')->delete($user->profile_picture_path);
+                    app(ImageOptimizationService::class)->deleteImages($user->profile_picture_path, 'public');
                 }
-                $path = $file->store('profile_pictures', 'public');
+                
+                $path = app(ImageOptimizationService::class)->processAndStore($file, 'profile_pictures', 'public', true);
                 $user->profile_picture_path = $path;
             }
 
@@ -234,14 +236,15 @@ class UserController
 
     public function profilePictureShow(Request $request, User $user)
     {
+        $size = $request->query('size', 'original');
         // Signed URL is supported (mirrors Product Image access pattern)
         if ($request->hasValidSignature()) {
-            return $this->streamUserProfilePicture($user);
+            return $this->streamUserProfilePicture($user, $size);
         }
 
         // For now, profile pictures are treated as public avatars.
         // If you want to restrict this later, add auth/ownership checks here.
-        return $this->streamUserProfilePicture($user);
+        return $this->streamUserProfilePicture($user, $size);
     }
 
     /**
@@ -297,17 +300,22 @@ class UserController
         }
     }
 
-    private function streamUserProfilePicture(User $user)
+    private function streamUserProfilePicture(User $user, string $size = 'original')
     {
         if (empty($user->profile_picture_path)) {
             abort(404);
         }
 
         $disk = 'public';
-        $path = ltrim($user->profile_picture_path, '/');
+        $originalPath = ltrim($user->profile_picture_path, '/');
+        
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath; // Fallback to original
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));

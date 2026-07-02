@@ -7,7 +7,6 @@ use App\Models\User;
 use App\Models\Merchant;
 use App\Models\Product;
 use App\Models\Order;
-use App\Models\Paguyuban;
 use App\Models\ContentReport;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -120,10 +119,6 @@ class AdminDashboardController extends Controller
                     'current' => $this->safeCount(User::whereNotNull('email_verified_at')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(User::whereNotNull('email_verified_at')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
                 ],
-                'paguyubans' => [
-                    'current' => $this->safeCount(Paguyuban::where('is_active', true)->where('created_at', '>=', $startDate)),
-                    'previous' => $this->safeCount(Paguyuban::where('is_active', true)->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
-                ],
                 'products' => [
                     'current' => $this->safeCount(Product::where('status', 'published')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(Product::where('status', 'published')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
@@ -148,11 +143,6 @@ class AdminDashboardController extends Controller
         return [
             'users' => [
                 'current' => $this->safeCount(User::whereNotNull('email_verified_at')),
-                'previous' => null,
-                'growth' => null
-            ],
-            'paguyubans' => [
-                'current' => $this->safeCount(Paguyuban::where('is_active', true)),
                 'previous' => null,
                 'growth' => null
             ],
