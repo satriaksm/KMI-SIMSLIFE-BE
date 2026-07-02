@@ -39,7 +39,6 @@ class CategorySeeder extends Seeder
             ['id' => 19, 'parent_id' => null, 'name' => 'Salon & Kecantikan', 'slug' => 'salon-kecantikan'],
             ['id' => 20, 'parent_id' => null, 'name' => 'Perbaikan & Servis', 'slug' => 'perbaikan-servis'],
             ['id' => 21, 'parent_id' => null, 'name' => 'Pendidikan & Kursus', 'slug' => 'pendidikan-kursus'],
-            ['id' => 22, 'parent_id' => null, 'name' => 'Jasa Digital & Kreatif', 'slug' => 'jasa-digital-kreatif'],
             ['id' => 23, 'parent_id' => null, 'name' => 'Fotografi & Videografi', 'slug' => 'fotografi-videografi'],
             ['id' => 24, 'parent_id' => null, 'name' => 'Kebugaran & Wellness', 'slug' => 'kebugaran-wellness'],
             ['id' => 25, 'parent_id' => null, 'name' => 'Dekorasi & Desain Interior', 'slug' => 'dekorasi-desain'],

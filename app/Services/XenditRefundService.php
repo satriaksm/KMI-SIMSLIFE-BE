@@ -15,7 +15,7 @@ class XenditRefundService
      * @param string $reason
      * @return bool True if refund is successfully processed/processing, False if failed.
      */
-    public function processRefund(Payment $payment, string $reason = 'CANCELED_ORDER'): bool
+    public function processRefund(Payment $payment, string $reason = 'OTHERS'): bool
     {
         if (!$payment->xendit_invoice_id) {
             return false;
@@ -29,6 +29,9 @@ class XenditRefundService
             }
 
             $response = Http::withBasicAuth($secretKey, '')
+                ->withHeaders([
+                    'X-IDEMPOTENCY-KEY' => 'refund-' . $payment->xendit_invoice_id . '-' . time()
+                ])
                 ->post('https://api.xendit.co/refunds', [
                     'invoice_id' => $payment->xendit_invoice_id,
                     'reason' => $reason,

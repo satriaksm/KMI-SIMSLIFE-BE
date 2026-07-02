@@ -281,10 +281,9 @@ class CheckoutController extends Controller
                     'waktu' => $now->format('H:i'),
                     'metode_pembayaran' => $paymentMethod,
                     'payment_method' => $paymentMethod,
-                    'payment_status' => 'PENDING',
+                    'payment_status' => 'unpaid',
                     'promo_code' => $voucher?->voucher_code,
                     'total' => $finalTotal,
-                    'total_price' => $finalTotal,
                     'status' => 'pending',
                 ]);
 
