@@ -406,10 +406,8 @@ class OrderController extends Controller
         }
 
         if ($newStatus === 'completed') {
-            $isPickup = $order->delivery_type === 'pickup';
-            // UMKM can complete any order now, but if it's delivery they must upload proof
-            if (!$isPickup && !$request->hasFile('proof_image')) {
-                return ApiResponse::error('Bukti foto pengiriman wajib diunggah saat pesanan tiba.', 422);
+            if (!$request->hasFile('proof_image')) {
+                return ApiResponse::error('Bukti foto wajib diunggah saat pesanan diselesaikan/diambil.', 422);
             }
         }
         
@@ -449,6 +447,10 @@ class OrderController extends Controller
             $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'completed') {
             $order->completed_at = now();
+            if (strtoupper($order->payment_method ?? '') === 'COD') {
+                $order->payment_status = 'paid';
+                $order->paid_at = now();
+            }
             if ($request->hasFile('proof_image')) {
                 if ($order->proof_image_path) {
                     app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
@@ -686,6 +688,7 @@ class OrderController extends Controller
                     'user_id'                 => $user->id,
                     'merchant_id'             => $cart->merchant_id,
                     'voucher_id'              => $voucher?->id,
+                    'order_type'              => 'product',
                     'order_code'              => $orderCode,
                     'subtotal'                => $subtotal,
                     'discount_total'          => $discountTotal,
@@ -695,6 +698,7 @@ class OrderController extends Controller
                     'delivery_fee_snapshot'   => $deliveryFee,
                     'delivery_type'           => $deliveryType,
                     'status'                  => 'pending',
+                    'payment_status'          => 'unpaid',
                     'user_name_snapshot'      => (string) ($user->name ?? ''),
                     'user_phone_snapshot'     => (string) ($user->phone ?? ''),
                     'address_detail_snapshot' => (string) ($address->detail ?? ''),

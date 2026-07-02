@@ -30,10 +30,9 @@ class JasaOrderBridgeService
             'waktu' => $bookingTime ?? now()->format('H:i'),
             'metode_pembayaran' => $attributes['metode_pembayaran'] ?? $serviceOrder->payment_method ?? 'COD',
             'payment_method' => $attributes['payment_method'] ?? $serviceOrder->payment_method ?? 'COD',
-            'payment_status' => $attributes['payment_status'] ?? 'PENDING',
+            'payment_status' => $attributes['payment_status'] ?? 'unpaid',
             'promo_code' => $attributes['promo_code'] ?? null,
             'total' => $serviceOrder->total_price,
-            'total_price' => $serviceOrder->total_price,
             'status' => $attributes['status'] ?? 'pending',
             'mekanisme_pemesanan' => $serviceOrder->mekanisme_pemesanan ?? $attributes['mekanisme_pemesanan'] ?? null,
         ]);

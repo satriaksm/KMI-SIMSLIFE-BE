@@ -23,6 +23,7 @@ class Order extends Model
         'delivery_fee_snapshot',
         'delivery_type',
         'payment_method',
+        'payment_status',
         'notes',
 
         'status',
@@ -94,6 +95,10 @@ class Order extends Model
                         (int) $update['variant_id'],
                         $stock
                     ));
+                }
+
+                if ($order->voucher_id) {
+                    \App\Models\VoucherUsage::where('order_id', $order->id)->delete();
                 }
             }
         });

@@ -125,6 +125,7 @@ class WebhookController extends Controller
 
                 $order->update([
                     'status'           => 'paid',
+                    'payment_status'   => 'paid',
                     'paid_at'          => now(),
                     'confirm_deadline' => now()->addMinutes($confirmMinutes),
                 ]);
