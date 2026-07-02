@@ -1112,38 +1112,105 @@ class JasaController extends Controller
         ]);
 
         $jasa = Jasa::find($id);
+
         if (!$jasa) {
             return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
         }
 
         $date = $request->input('date');
 
-        // Status yang menunjukkan slot sedang aktif (belum selesai/ditolak)
-        $activeStatuses = [
-            'menunggu_konfirmasi_merchant',
-            'diterima',
-            'layanan_dikerjakan',
-            'menunggu_konfirmasi_selesai',
+        /*
+    |--------------------------------------------------------------------------
+    | Slot yang dianggap bebas
+    |--------------------------------------------------------------------------
+    | Slot hanya boleh dipakai ulang jika order sebelumnya batal, ditolak,
+    | atau expired. Selain itu, slot tetap dikunci.
+    */
+        $freeStatuses = [
+            'dibatalkan',
+            'batal',
+            'cancelled',
+            'ditolak',
+            'rejected',
+            'expired',
         ];
 
-        // Ambil semua jam yang sudah terisi pada tanggal tersebut
-        $bookedSlots = JasaOrderItem::where('jasa_id', $id)
+        $bookingItems = JasaOrderItem::with(['order:id,status,payment_status,payment_method'])
+            ->where('jasa_id', $id)
             ->where('booking_date', $date)
             ->whereIn('order_method', ['booking', 'scheduled'])
             ->whereNotNull('booking_time')
-            ->whereHas('order', function ($query) use ($activeStatuses) {
-                $query->whereIn('status', $activeStatuses);
+            ->whereHas('order', function ($query) use ($freeStatuses) {
+                $query->whereNotIn('status', $freeStatuses);
             })
-            ->pluck('booking_time')
-            ->map(fn($t) => trim($t))
-            ->filter()
-            ->values()
-            ->toArray();
+            ->get(['id', 'order_id', 'booking_time']);
+
+        $slotStatuses = [];
+
+        foreach ($bookingItems as $item) {
+            $rawTime = trim((string) $item->booking_time);
+
+            if ($rawTime === '') {
+                continue;
+            }
+
+            // Normalisasi 07:00:00 / 07:00 / 07.00 menjadi 07.00
+            $time = str_replace(':', '.', substr($rawTime, 0, 5));
+
+            $orderStatus = strtolower((string) ($item->order?->status ?? ''));
+            $paymentStatus = strtoupper((string) ($item->order?->payment_status ?? ''));
+
+            /*
+        |--------------------------------------------------------------------------
+        | Tipe warna slot
+        |--------------------------------------------------------------------------
+        | pending  = orange, masih menunggu konfirmasi / belum dibayar
+        | approved = merah, sudah diterima UMKM / sudah paid / sedang diproses
+        */
+            $isApproved = in_array($orderStatus, [
+                'diterima',
+                'layanan_dikerjakan',
+                'menunggu_konfirmasi_selesai',
+                'selesai',
+                'completed',
+            ], true) || in_array($paymentStatus, [
+                'PAID',
+                'SETTLED',
+                'SUCCEEDED',
+                'LUNAS',
+                'SUDAH_BAYAR',
+            ], true);
+
+            $type = $isApproved ? 'approved' : 'pending';
+
+            // Jika ada 2 data bentrok di jam yang sama, status approved menang.
+            if (
+                isset($slotStatuses[$time]) &&
+                $slotStatuses[$time]['type'] === 'approved'
+            ) {
+                continue;
+            }
+
+            $slotStatuses[$time] = [
+                'time' => $time,
+                'type' => $type,
+                'status' => $orderStatus,
+                'payment_status' => $paymentStatus,
+                'label' => $isApproved
+                    ? 'Sudah disetujui UMKM'
+                    : 'Menunggu konfirmasi UMKM',
+            ];
+        }
 
         return response()->json([
             'date' => $date,
             'jasa_id' => $id,
-            'booked_slots' => $bookedSlots,
+
+            // Backward compatible untuk FE lama
+            'booked_slots' => array_keys($slotStatuses),
+
+            // Data baru untuk warna bullet
+            'slot_statuses' => array_values($slotStatuses),
         ]);
     }
 

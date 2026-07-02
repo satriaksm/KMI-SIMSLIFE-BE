@@ -53,7 +53,14 @@ class Merchant extends Model
         'last_payout_at' => 'datetime',
     ];
 
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'balance_held', 'balance_withdrawable'];
+    protected $appends = [
+        'logo_url',
+        'banner_url',
+        'is_open_now',
+        'balance_held',
+        'balance_withdrawable',
+        'full_address',
+    ];
 
     protected static function boot()
     {
@@ -195,10 +202,16 @@ class Merchant extends Model
     }
 
     // Accessor alamat utama (string singkat), diambil dari primaryAddress.detail
-    public function getAddressAttribute(): ?string
+    public function getFullAddressAttribute(): ?string
     {
         $primary = $this->primaryAddress;
-        return $primary?->detail;
+
+        return $primary?->full_address ?: null;
+    }
+
+    public function getAddressAttribute(): ?string
+    {
+        return $this->full_address;
     }
 
     // Alias "alamat" untuk kompatibilitas FE lama

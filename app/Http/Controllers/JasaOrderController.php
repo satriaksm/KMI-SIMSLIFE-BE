@@ -189,25 +189,57 @@ class JasaOrderController extends Controller
         }
 
         if ($orderMethod === 'booking' && $request->booking_date && $request->booking_time) {
-            $activeStatuses = [
-                'menunggu_konfirmasi_merchant',
-                'diterima',
-                'layanan_dikerjakan',
-                'menunggu_konfirmasi_selesai',
+            /*
+    |--------------------------------------------------------------------------
+    | Validasi double booking
+    |--------------------------------------------------------------------------
+    | Jadwal dianggap masih terisi selama order belum dibatalkan,
+    | belum ditolak, dan belum expired.
+    |
+    | Jadi status seperti:
+    | - menunggu_konfirmasi
+    | - menunggu_konfirmasi_merchant
+    | - diterima
+    | - layanan_dikerjakan
+    | - menunggu_konfirmasi_selesai
+    | - selesai
+    |
+    | tetap mengunci tanggal dan jam booking.
+    |
+    | Jadwal baru boleh dipakai lagi hanya jika order sebelumnya:
+    | - dibatalkan / batal / cancelled
+    | - ditolak / rejected
+    | - expired
+    */
+            $freeStatuses = [
+                'dibatalkan',
+                'batal',
+                'cancelled',
+                'ditolak',
+                'rejected',
+                'expired',
             ];
+
+            $bookingTime = (string) $request->booking_time;
+            $bookingTimeCandidates = [$bookingTime];
+
+            // Untuk jaga-jaga jika data lama tersimpan sebagai 10:00:00
+            if (strlen($bookingTime) === 5) {
+                $bookingTimeCandidates[] = $bookingTime . ':00';
+            }
 
             $existingBooking = JasaOrderItem::where('jasa_id', $jasa->id)
                 ->where('booking_date', $request->booking_date)
-                ->where('booking_time', $request->booking_time)
+                ->whereIn('booking_time', $bookingTimeCandidates)
                 ->whereIn('order_method', ['booking', 'scheduled'])
-                ->whereHas('order', function ($query) use ($activeStatuses) {
-                    $query->whereIn('status', $activeStatuses);
+                ->whereHas('order', function ($query) use ($freeStatuses) {
+                    $query->whereNotIn('status', $freeStatuses);
                 })
                 ->first();
 
             if ($existingBooking) {
                 return ApiResponse::error(
-                    'Jadwal sudah terisi, silakan pilih jam lain.',
+                    'Jadwal sudah terisi, silakan pilih tanggal atau jam lain.',
                     409
                 );
             }
@@ -345,7 +377,13 @@ class JasaOrderController extends Controller
         if ($serviceType === 'online') {
             $serviceLocationAddress = 'Online';
         } elseif ($serviceType === 'di_tempat_umkm' || $serviceType === 'at_location') {
-            $serviceLocationAddress = $jasa->location_address ?? $jasa->merchant?->address ?? null;
+            $merchantFullAddress = $jasa->merchant?->primaryAddress?->full_address
+                ?? $jasa->merchant?->full_address
+                ?? $jasa->merchant?->address
+                ?? $jasa->merchant?->alamat
+                ?? null;
+
+            $serviceLocationAddress = $merchantFullAddress ?: ($jasa->location_address ?: null);
         }
 
         $confirmMinutes = (int) config('app.order_confirm_minutes', 60);
@@ -411,7 +449,7 @@ class JasaOrderController extends Controller
                 // Snapshot merchant
                 'merchant_name_snapshot' => $jasa->merchant->name,
                 'merchant_phone_snapshot' => $jasa->merchant->phone ?? '',
-                'merchant_address_snapshot' => $jasa->merchant->address ?? '',
+                'merchant_address_snapshot' => $merchantFullAddress ?? $jasa->merchant->address ?? '',
 
                 // Snapshot payment
                 'payment_method_snapshot' => $paymentMethod,

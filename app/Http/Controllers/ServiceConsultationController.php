@@ -72,11 +72,30 @@ class ServiceConsultationController extends Controller
      */
     protected function attachConsultationOrderSummary(ServiceConsultation $consultation): ServiceConsultation
     {
-        $consultation->loadMissing(['jasaOrderItems.order.payment']);
+        $consultation->loadMissing([
+            'merchant.primaryAddress.province',
+            'merchant.primaryAddress.city',
+            'merchant.primaryAddress.district',
+            'merchant.primaryAddress.village',
+            'jasaOrderItems.order.payment',
+        ]);
 
         $jasaItem = $consultation->jasaOrderItems->first();
         $order = $jasaItem?->order;
         $payment = $order?->payment;
+        $merchantPrimaryAddress = $consultation->merchant?->primaryAddress;
+
+        $merchantAddress = $merchantPrimaryAddress?->full_address
+            ?? $merchantPrimaryAddress?->detail
+            ?? $consultation->merchant?->address
+            ?? $consultation->merchant?->alamat
+            ?? null;
+
+        if ($consultation->merchant) {
+            $consultation->merchant->setAttribute('address', $merchantAddress);
+            $consultation->merchant->setAttribute('alamat', $merchantAddress);
+            $consultation->merchant->setAttribute('full_address', $merchantAddress);
+        }
 
         if ($order && !$this->isOrderPaid($order)) {
             $paymentDeadline = $payment?->expired_at ?? $order->confirm_deadline;
@@ -121,6 +140,11 @@ class ServiceConsultationController extends Controller
 
         $paid = $order ? $this->isOrderPaid($order) : false;
         $deadline = $payment?->expired_at ?? $order?->confirm_deadline;
+        $merchantFullAddress = $consultation->merchant?->primaryAddress?->full_address
+            ?? $consultation->merchant?->full_address
+            ?? $consultation->merchant?->address
+            ?? $consultation->merchant?->alamat
+            ?? null;
 
         // Field di bawah ini hanya untuk response API, bukan kolom database.
         // Jangan sampai ikut tersimpan saat method lain memanggil update()/save().
@@ -137,6 +161,10 @@ class ServiceConsultationController extends Controller
             'can_send_message' => $this->canSendConsultationMessage($consultation, $order),
             'conversation_finished' => $order ? in_array($order->status, ['selesai', 'completed'], true) : false,
             'conversation_status_label' => $this->getConversationStatusLabel($consultation, $order),
+
+            'merchant_address' => $merchantFullAddress,
+            'merchant_full_address' => $merchantFullAddress,
+            'service_location_address' => $merchantFullAddress,
         ];
 
         foreach ($computedFields as $key => $value) {
@@ -347,12 +375,12 @@ class ServiceConsultationController extends Controller
         $perPage = $request->get('per_page', 10);
 
         $query = ServiceConsultation::with([
-                'jasa:id,title,price,base_price,fixed_price,image',
-                'merchant:id,name,slug',
-                'messages.media',
-                'notes',
-                'jasaOrderItems.order.payment',
-            ])
+            'jasa:id,title,price,base_price,fixed_price,image',
+            'merchant:id,name,slug',
+            'messages.media',
+            'notes',
+            'jasaOrderItems.order.payment',
+        ])
             ->forCustomer($customerId)
             ->orderByDesc('created_at');
 
@@ -365,7 +393,7 @@ class ServiceConsultationController extends Controller
         }
 
         $consultations = $query->paginate($perPage);
-        $consultations->getCollection()->transform(fn ($item) => $this->attachConsultationOrderSummary($item));
+        $consultations->getCollection()->transform(fn($item) => $this->attachConsultationOrderSummary($item));
 
         return ApiResponse::success($consultations, 'success');
     }
@@ -563,12 +591,12 @@ class ServiceConsultationController extends Controller
         $maxPrice = $request->get('max_price');
 
         $query = ServiceConsultation::with([
-                'jasa:id,title,price,base_price,fixed_price,image',
-                'customer:id,name,phone',
-                'messages.media',
-                'notes',
-                'jasaOrderItems.order.payment',
-            ])
+            'jasa:id,title,price,base_price,fixed_price,image',
+            'customer:id,name,phone',
+            'messages.media',
+            'notes',
+            'jasaOrderItems.order.payment',
+        ])
             ->forMerchant($merchant->id);
 
         // Filter by status_group (menunggu, negosiasi, selesai)
@@ -1263,7 +1291,7 @@ class ServiceConsultationController extends Controller
             ->where('order_type', 'jasa')
             ->whereHas('jasaItems', function ($q) use ($consultation) {
                 $q->where('jasa_id', $consultation->jasa_id)
-                  ->where('order_method', 'consultation');
+                    ->where('order_method', 'consultation');
             })
             ->first();
 
@@ -1291,8 +1319,8 @@ class ServiceConsultationController extends Controller
         // Determine service type and validate address accordingly
         $serviceType = strtolower(
             $jasa->service_type ??
-            $jasa->service?->service_type ??
-            ''
+                $jasa->service?->service_type ??
+                ''
         );
 
         // Build validation rules based on service type
