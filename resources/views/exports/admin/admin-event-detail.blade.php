@@ -76,7 +76,7 @@
     </div>
 
     <div class="section">
-        <div class="section-title">Daftar Merchant Terdaftar ({{ $event->active_merchants_count }})</div>
+        <div class="section-title">Daftar UMKM Terdaftar ({{ $event->active_merchants_count }})</div>
         <table>
             <thead>
                 <tr>
@@ -140,6 +140,106 @@
             </tbody>
         </table>
     </div>
+
+    @if(isset($analytics) && !empty($analytics))
+    <div style="page-break-before: always;"></div>
+    <div class="header" style="margin-bottom: 20px;">
+        <h2 style="margin: 0; color: #194a7a;">Statistik & Analitik Event</h2>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">Data teragregasi hingga {{ date('d/m/Y H:i') }}</div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Ringkasan Transaksi</div>
+        <table style="width: 100%;">
+            <tr>
+                <td style="width: 50%; border: none; padding: 0; vertical-align: top;">
+                    <table style="margin-bottom: 0;">
+                        <tr><td style="width: 60%; background: #f9fafb;">Total Transaksi</td><td>{{ number_format($analytics['summary']['total_transactions'] ?? 0, 0, ',', '.') }}</td></tr>
+                        <tr><td style="background: #f9fafb;">Pesanan Selesai</td><td>{{ number_format($analytics['summary']['completed_orders'] ?? 0, 0, ',', '.') }}</td></tr>
+                        <tr><td style="background: #f9fafb;">Pesanan Batal</td><td>{{ number_format($analytics['summary']['cancelled_orders'] ?? 0, 0, ',', '.') }}</td></tr>
+                        <tr><td style="background: #f9fafb; font-weight: bold;">Total Pendapatan</td><td style="font-weight: bold; color: #16a34a;">Rp {{ number_format($analytics['summary']['total_revenue'] ?? 0, 0, ',', '.') }}</td></tr>
+                    </table>
+                </td>
+                <td style="width: 50%; border: none; padding: 0; padding-left: 10px; vertical-align: top;">
+                    <table style="margin-bottom: 0;">
+                        <tr><td style="width: 60%; background: #f9fafb;">Pembeli Unik</td><td>{{ number_format($analytics['summary']['unique_buyers'] ?? 0, 0, ',', '.') }} orang</td></tr>
+                        <tr><td style="background: #f9fafb;">Rata-rata Transaksi</td><td>Rp {{ number_format($analytics['summary']['avg_transaction'] ?? 0, 0, ',', '.') }}</td></tr>
+                        <tr><td style="background: #f9fafb;">Rating Rata-rata</td><td>{{ $analytics['rating']['avg_rating'] ?? '-' }} / 5 ({{ $analytics['rating']['total_reviews'] ?? 0 }} ulasan)</td></tr>
+                        <tr><td style="background: #f9fafb;">Penggunaan Voucher</td><td>{{ number_format($analytics['summary']['voucher_usage_count'] ?? 0, 0, ',', '.') }}x (Rp {{ number_format($analytics['summary']['total_discount'] ?? 0, 0, ',', '.') }})</td></tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Ranking UMKM</div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 5%;">#</th>
+                    <th style="width: 45%;">Nama UMKM</th>
+                    <th style="width: 20%; text-align: center;">Total Transaksi</th>
+                    <th style="width: 30%; text-align: right;">Total Pendapatan</th>
+                </tr>
+            </thead>
+            <tbody>
+                @forelse($analytics['top_merchants_revenue'] ?? [] as $index => $m)
+                    <tr>
+                        <td>{{ $index + 1 }}</td>
+                        <td>{{ $m['name'] }} <br><span style="font-size: 10px; color: #666;">{{ $m['segmentation'] }}</span></td>
+                        <td style="text-align: center;">{{ number_format($m['total_orders'], 0, ',', '.') }}</td>
+                        <td style="text-align: right;">Rp {{ number_format($m['total_revenue'], 0, ',', '.') }}</td>
+                    </tr>
+                @empty
+                    <tr><td colspan="4" style="text-align: center;">Belum ada data transaksi UMKM.</td></tr>
+                @endforelse
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Kategori & Produk Terlaris</div>
+        <table style="width: 100%;">
+            <tr>
+                <td style="width: 50%; border: none; padding: 0; vertical-align: top;">
+                    <table style="margin-bottom: 0;">
+                        <thead>
+                            <tr><th>Kategori</th><th style="text-align: center;">Unit Terjual</th></tr>
+                        </thead>
+                        <tbody>
+                            @forelse($analytics['top_categories'] ?? [] as $c)
+                                <tr>
+                                    <td>{{ $c['category_name'] }}</td>
+                                    <td style="text-align: center;">{{ number_format($c['total_qty'], 0, ',', '.') }}</td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="2" style="text-align: center;">Belum ada data kategori.</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </td>
+                <td style="width: 50%; border: none; padding: 0; padding-left: 10px; vertical-align: top;">
+                    <table style="margin-bottom: 0;">
+                        <thead>
+                            <tr><th>Produk</th><th style="text-align: center;">Unit Terjual</th></tr>
+                        </thead>
+                        <tbody>
+                            @forelse($analytics['top_products'] ?? [] as $p)
+                                <tr>
+                                    <td style="font-size: 11px;">{{ $p['product_name'] }}<br><span style="color: #666; font-size: 9px;">{{ $p['merchant_name'] }}</span></td>
+                                    <td style="text-align: center;">{{ number_format($p['total_qty'], 0, ',', '.') }}</td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="2" style="text-align: center;">Belum ada data produk.</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </div>
+    @endif
 
     <div class="footer">
         Halaman 1 dari 1 | SUMILIR - Digital Ecosystem for UMKM | &copy; {{ date('Y') }}

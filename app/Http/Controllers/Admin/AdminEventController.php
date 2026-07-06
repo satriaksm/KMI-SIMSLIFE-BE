@@ -886,11 +886,19 @@ class AdminEventController extends Controller
                 $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);
             }
 
+            // Generate Analytics Data
+            $response = $this->analytics($request, $id);
+            $analyticsData = [];
+            if ($response->getStatusCode() === 200) {
+                $analyticsData = json_decode($response->getContent(), true);
+            }
+
             // Generate PDF
             $pdf = Pdf::loadView('exports.admin.admin-event-detail', [
                 'event' => $event,
                 'metadata' => $metadata,
                 'logoBase64' => $logoBase64,
+                'analytics' => $analyticsData,
             ])
             ->setPaper('a4', 'portrait')
             ->setOption('margin-top', 10)
@@ -910,6 +918,37 @@ class AdminEventController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal membuat laporan detail PDF',
+            ], 500);
+        }
+    }
+
+    /**
+     * Export single event detail and analytics to Excel
+     */
+    public function exportEventDetailExcel(Request $request, $id)
+    {
+        try {
+            // Re-use analytics data generation logic
+            $response = $this->analytics($request, $id);
+            if ($response->getStatusCode() !== 200) {
+                return $response;
+            }
+            
+            $data = json_decode($response->getContent(), true);
+            
+            return \Maatwebsite\Excel\Facades\Excel::download(
+                new \App\Exports\EventDetailExport($data), 
+                'event-analytics-' . $id . '-' . now()->format('Ymd-His') . '.xlsx'
+            );
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('[AdminEvent] Export Detail Excel failed', [
+                'event_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat laporan detail Excel',
             ], 500);
         }
     }
@@ -994,7 +1033,7 @@ class AdminEventController extends Controller
                 ->whereIn('merchants.id', $merchantStats->pluck('merchant_id'))
                 ->pluck('segmentations.name', 'merchants.id');
 
-            $topMerchantsRevenue = $merchantStats->sortByDesc('total_revenue')->take(5)->values()->map(fn($m) => [
+            $topMerchantsRevenue = $merchantStats->sortByDesc('total_revenue')->values()->map(fn($m) => [
                 'merchant_id'    => $m->merchant_id,
                 'name'           => $merchantNames[$m->merchant_id] ?? 'Unknown',
                 'segmentation'   => $merchantSegmentations[$m->merchant_id] ?? '-',
@@ -1003,7 +1042,7 @@ class AdminEventController extends Controller
                 'unique_buyers'  => $m->unique_buyers,
             ]);
 
-            $topMerchantsTransactions = $merchantStats->sortByDesc('total_orders')->take(5)->values()->map(fn($m) => [
+            $topMerchantsTransactions = $merchantStats->sortByDesc('total_orders')->values()->map(fn($m) => [
                 'merchant_id'   => $m->merchant_id,
                 'name'          => $merchantNames[$m->merchant_id] ?? 'Unknown',
                 'segmentation'  => $merchantSegmentations[$m->merchant_id] ?? '-',
@@ -1055,13 +1094,12 @@ class AdminEventController extends Controller
                 ->where('orders.status', 'completed')
                 ->groupBy('product_order_items.product_id', 'product_order_items.product_name_snapshot', 'orders.merchant_id')
                 ->orderByDesc('total_qty')
-                ->limit(10)
                 ->get()
                 ->map(fn($p) => [
                     'product_id'    => $p->product_id,
                     'product_name'  => $p->product_name,
                     'merchant_name' => $merchantNames[$p->merchant_id] ?? 'Unknown',
-                    'total_qty'     => $p->total_qty,
+                    'total_qty'     => (int) $p->total_qty,
                     'total_revenue' => (float) $p->total_revenue,
                 ]);
 
@@ -1070,7 +1108,7 @@ class AdminEventController extends Controller
                 ->join('orders', 'orders.id', '=', 'product_order_items.order_id')
                 ->join('categorizables', function ($join) {
                     $join->on('categorizables.categorizable_id', '=', 'product_order_items.product_id')
-                        ->where('categorizables.categorizable_type', 'App\\Models\\Product');
+                        ->whereIn('categorizables.categorizable_type', ['App\\Models\\Product', 'product']);
                 })
                 ->join('categories', 'categories.id', '=', 'categorizables.category_id')
                 ->whereIn('product_order_items.order_id', $orderIds)
@@ -1078,26 +1116,34 @@ class AdminEventController extends Controller
                 ->selectRaw('categories.name as category_name, SUM(product_order_items.quantity) as total_qty, SUM(product_order_items.subtotal_snapshot) as total_revenue')
                 ->groupBy('categories.name')
                 ->orderByDesc('total_qty')
-                ->limit(8)
                 ->get()
                 ->map(fn($c) => [
                     'category_name' => $c->category_name,
-                    'total_qty'     => $c->total_qty,
+                    'total_qty'     => (int) $c->total_qty,
                     'total_revenue' => (float) $c->total_revenue,
                 ]);
 
             // ── 6. DAILY TREND ───────────────────────────────────────────────
-            $dailyTrend = DB::table('orders')
+            $dailyTrendData = DB::table('orders')
                 ->whereIn('id', $orderIds)
                 ->selectRaw('DATE(created_at) as date, COUNT(*) as transactions, SUM(CASE WHEN status = "completed" THEN gross_amount ELSE 0 END) as revenue')
                 ->groupByRaw('DATE(created_at)')
-                ->orderBy('date')
                 ->get()
-                ->map(fn($d) => [
-                    'date'         => $d->date,
-                    'transactions' => $d->transactions,
-                    'revenue'      => (float) $d->revenue,
-                ]);
+                ->keyBy('date');
+                
+            $start = \Carbon\Carbon::parse($event->event_start_date);
+            $end = \Carbon\Carbon::parse($event->event_end_date);
+
+            $dailyTrend = [];
+            for ($d = clone $start; $d->lte($end); $d->addDay()) {
+                $dateStr = $d->format('Y-m-d');
+                $data = $dailyTrendData->get($dateStr);
+                $dailyTrend[] = [
+                    'date'         => $dateStr,
+                    'transactions' => $data ? $data->transactions : 0,
+                    'revenue'      => $data ? (float) $data->revenue : 0,
+                ];
+            }
 
             // ── 7. RATINGS ───────────────────────────────────────────────────
             $ratings = DB::table('ratings')
