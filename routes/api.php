@@ -660,6 +660,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/{event}/merchants/{merchant}', [AdminEventController::class, 'removeMerchant']);
             Route::post('/{event}/merchants/{merchant}/restore', [AdminEventController::class, 'restoreMerchant']);
             Route::get('/{event}/merchants/removed', [AdminEventController::class, 'removedMerchants']);
+            Route::get('/{id}/analytics', [AdminEventController::class, 'analytics'])->name('analytics');
+
 
             // Removed streaming routes from here to public area
         });

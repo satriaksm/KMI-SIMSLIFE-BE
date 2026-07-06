@@ -34,6 +34,7 @@ class DatabaseSeeder extends Seeder
             PostCommentSeeder::class,
             // ContentReportSeeder::class,
             EventSeeder::class,
+            EventAnalyticsSeeder::class,
         ]);
     }
 }
