@@ -19,7 +19,6 @@ return new class extends Migration
                 'unsuspend_user',
                 'limit_posting',
                 'remove_limit',
-                'invite_paguyuban',
                 'invite_event',
                 'send_notification',
                 'assign_case',

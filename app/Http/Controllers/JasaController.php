@@ -355,7 +355,12 @@ class JasaController extends Controller
     {
         $merchant = Merchant::where('slug', $merchantSlug)->firstOrFail();
 
-        $jasas = Jasa::with([
+        $data = $request->validate([
+            'sort' => ['nullable', 'in:newest,price_asc,price_desc,name_asc'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+        ]);
+
+        $query = Jasa::with([
             'categories',
             'merchant.segmentation',
             'merchant.primaryAddress',
@@ -371,11 +376,31 @@ class JasaController extends Controller
                     ->orWhere(function ($sub) {
                         $sub->whereNull('status')->where('is_active', true);
                     });
-            })
-            ->orderBy('id', 'desc')
-            ->get();
+            });
 
-        $jasas->each(function ($jasa) {
+        // Add a computed price field for sorting: coalesce fixed_price, then base_price, then 0
+        $query->selectRaw('jasas.*, COALESCE(NULLIF(fixed_price, 0), NULLIF(base_price, 0), 0) as sort_price');
+
+        switch ($data['sort'] ?? 'newest') {
+            case 'price_asc':
+                $query->orderBy('sort_price', 'asc');
+                break;
+            case 'price_desc':
+                $query->orderBy('sort_price', 'desc');
+                break;
+            case 'name_asc':
+                $query->orderBy('title', 'asc');
+                break;
+            case 'newest':
+            default:
+                $query->orderBy('id', 'desc');
+                break;
+        }
+
+        $perPage = $data['per_page'] ?? 20;
+        $jasas = $query->paginate($perPage);
+
+        $jasas->getCollection()->each(function ($jasa) {
             $this->attachCategoryAliases($jasa);
 
             if ($jasa->images) {

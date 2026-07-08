@@ -50,7 +50,6 @@ class Order extends Model
         'net_amount',
         'delivery_type',
 
-        // Other
         'notes',
         'order_code',
         'proof_image_path',
@@ -196,6 +195,10 @@ class Order extends Model
                         (int) $update['variant_id'],
                         $stock
                     ));
+                }
+
+                if ($order->voucher_id) {
+                    \App\Models\VoucherUsage::where('order_id', $order->id)->delete();
                 }
             }
         });

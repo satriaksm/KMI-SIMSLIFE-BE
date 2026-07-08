@@ -264,6 +264,32 @@ class WebhookController extends Controller
 
             // 3. For product orders, increment balance_pending and record wallet history
             if (!$isJasa) {
+                // Decrement product variant stock (from staging-ta)
+                $order->load('items');
+                foreach ($order->items as $item) {
+                    if (!$item->product_variant_id) {
+                        continue;
+                    }
+
+                    $quantity = (int) $item->quantity;
+                    if ($quantity <= 0) {
+                        continue;
+                    }
+
+                    $optionValue = \App\Models\ProductOptionValue::find($item->product_variant_id);
+                    if ($optionValue) {
+                        if ($optionValue->stock < $quantity) {
+                            Log::error('[WebhookController] Stock not enough for variant', [
+                                'item_id' => $item->id,
+                                'variant_id' => $item->product_variant_id,
+                                'available' => $optionValue->stock,
+                                'requested' => $quantity,
+                            ]);
+                        }
+                        $optionValue->decrement('stock', $quantity);
+                    }
+                }
+
                 $merchant = $order->merchant;
                 if ($merchant) {
                     $netAmount = (float) ($order->net_amount ?? 0);

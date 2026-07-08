@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use enshrined\svgSanitize\Sanitizer;
+use App\Services\ImageOptimizationService;
 
 class EventController extends Controller
 {
@@ -299,10 +300,20 @@ class EventController extends Controller
             } else {
                 // Delete old banner
                 if ($event->banner_img_path) {
-                    Storage::disk('public')->delete($event->banner_img_path);
+                    app(ImageOptimizationService::class)->deleteImages($event->banner_img_path, 'public');
                 }
 
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                if ($file->getClientOriginalExtension() === 'svg') {
+                    $sanitizer = new Sanitizer();
+                    $cleanSVG = $sanitizer->sanitize(file_get_contents($file->getRealPath()));
+                    if ($cleanSVG !== false) {
+                        $path = 'events/banners/' . uniqid() . '.svg';
+                        Storage::disk('public')->put($path, $cleanSVG);
+                        $validated['banner_img_path'] = $path;
+                    }
+                } else {
+                    $validated['banner_img_path'] = app(ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
+                }
             }
         }
 
@@ -323,7 +334,7 @@ class EventController extends Controller
 
         // Delete banner image
         if ($event->banner_img_path) {
-            Storage::disk('public')->delete($event->banner_img_path);
+            app(ImageOptimizationService::class)->deleteImages($event->banner_img_path, 'public');
         }
 
         // Detach merchants
@@ -378,7 +389,7 @@ class EventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $validated['banner_img_path'] = app(ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
             }
         }
 
@@ -426,11 +437,7 @@ class EventController extends Controller
             ->orderBy('event_start_date', 'desc')
             ->get();
 
-        $events->transform(function ($event) {
-            $event->banner_url = route('event_banners.show', ['event' => $event->id]);
-            unset($event->banner_img_path);
-            return $event;
-        });
+        // The Model's $appends will handle banner_url and banner_urls automatically.
 
         return response()->json([
             'data' => $events,
@@ -456,7 +463,7 @@ class EventController extends Controller
             ])
             ->findOrFail($id);
 
-        $event->banner_url = route('event_banners.show', ['event' => $event->id]);
+        // The Model's $appends will handle banner_url and banner_urls automatically.
         
         // Flatten unique products from all vouchers
         $allProducts = collect();

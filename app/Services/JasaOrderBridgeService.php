@@ -40,9 +40,11 @@ class JasaOrderBridgeService
             'merchant_id' => $serviceOrder->merchant_id,
             'order_type' => 'jasa', // PRIMARY: jenis order (jasa/product)
             'total_price' => $serviceOrder->total_price,
+            'total' => $serviceOrder->total_price,
             'payment_method' => $attributes['payment_method'] ?? $serviceOrder->payment_method ?? 'COD',
-            'payment_status' => $attributes['payment_status'] ?? 'PENDING',
+            'payment_status' => $attributes['payment_status'] ?? 'unpaid',
             'status' => $attributes['status'] ?? 'pending',
+            'promo_code' => $attributes['promo_code'] ?? null,
         ]);
 
         // Create jasa_order_items with order_method

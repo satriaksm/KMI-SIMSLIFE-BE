@@ -24,6 +24,7 @@ class CommunityPostImage extends Model
 
     protected $appends = [
         'image_url',
+        'image_urls',
     ];
 
     /**
@@ -39,9 +40,24 @@ class CommunityPostImage extends Model
      */
     public function getImageUrlAttribute(): string
     {
-        return Storage::disk('public')->exists($this->post_image_path)
-            ? asset('storage/' . $this->post_image_path)
-            : asset('images/placeholder.jpg');
+        return route('community-images.show', [
+            'image' => $this->id,
+            'v' => $this->updated_at ? $this->updated_at->timestamp : time()
+        ]);
+    }
+
+    /**
+     * Get responsive image URLs.
+     */
+    public function getImageUrlsAttribute(): array
+    {
+        $v = $this->updated_at ? $this->updated_at->timestamp : time();
+
+        return [
+            'original' => route('community-images.show', ['image' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('community-images.show', ['image' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('community-images.show', ['image' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
     }
 
     /**

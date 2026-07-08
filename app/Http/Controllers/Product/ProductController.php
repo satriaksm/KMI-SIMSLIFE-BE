@@ -26,6 +26,7 @@ use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use App\Helpers\ApiResponse;
+use App\Services\ImageOptimizationService;
 use App\Services\Moderation\ContentModerationService;
 
 class ProductController extends Controller
@@ -144,6 +145,9 @@ class ProductController extends Controller
                         ]);
                 },
 
+                // Categories
+                'categories:id,parent_id,name,slug',
+
                 // Rating summary
                 'ratingSummary',
 
@@ -166,6 +170,14 @@ class ProductController extends Controller
             $product->coverImage->src_url = $isPublic
                 ? route('images.show', ['image' => $product->coverImage->id])
                 : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+                
+            $product->coverImage->medium_url = $isPublic
+                ? route('images.show', ['image' => $product->coverImage->id, 'size' => 'medium'])
+                : URL::signedRoute('images.show', ['image' => $product->coverImage->id, 'size' => 'medium'], now()->addMinutes(60));
+                
+            $product->coverImage->thumb_url = $isPublic
+                ? route('images.show', ['image' => $product->coverImage->id, 'size' => 'thumb'])
+                : URL::signedRoute('images.show', ['image' => $product->coverImage->id, 'size' => 'thumb'], now()->addMinutes(60));
 
             $product->coverImage->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
         }
@@ -176,6 +188,14 @@ class ProductController extends Controller
                 $image->src_url = $isPublic
                     ? route('images.show', ['image' => $image->id])
                     : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+                    
+                $image->medium_url = $isPublic
+                    ? route('images.show', ['image' => $image->id, 'size' => 'medium'])
+                    : URL::signedRoute('images.show', ['image' => $image->id, 'size' => 'medium'], now()->addMinutes(60));
+                    
+                $image->thumb_url = $isPublic
+                    ? route('images.show', ['image' => $image->id, 'size' => 'thumb'])
+                    : URL::signedRoute('images.show', ['image' => $image->id, 'size' => 'thumb'], now()->addMinutes(60));
 
                 $image->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
                 return $image;
@@ -191,8 +211,13 @@ class ProductController extends Controller
                             $value->src_url = $isPublic
                                 ? route('images.product-option-value.show', ['optionValue' => $value->id])
                                 : URL::signedRoute('images.product-option-value.show', ['optionValue' => $value->id], now()->addMinutes(60));
+                            
+                            $value->thumb_url = $isPublic
+                                ? route('images.product-option-value.show', ['optionValue' => $value->id, 'size' => 'thumb'])
+                                : URL::signedRoute('images.product-option-value.show', ['optionValue' => $value->id, 'size' => 'thumb'], now()->addMinutes(60));
                         } else {
                             $value->src_url = null;
+                            $value->thumb_url = null;
                         }
 
                         $value->makeHidden(['image_path', 'created_at', 'updated_at', 'image_url']); // hide accessor image_url if exists
@@ -326,6 +351,8 @@ class ProductController extends Controller
                     'cover_image' => $p->coverImage ? [
                         'id' => $p->coverImage->id,
                         'src_url' => $coverUrl,
+                        'medium_url' => route('images.show', ['image' => $p->coverImage->id, 'size' => 'medium']),
+                        'thumb_url' => route('images.show', ['image' => $p->coverImage->id, 'size' => 'thumb']),
                     ] : null,
                 ];
             })
@@ -469,7 +496,12 @@ class ProductController extends Controller
         $items = collect($result->items())
             ->map(function ($product) {
                 if ($product->coverImage) {
-                    $product->cover_image = route('images.show', ['image' => $product->coverImage->id]);
+                    $product->cover_image = [
+                        'id' => $product->coverImage->id,
+                        'src_url' => route('images.show', ['image' => $product->coverImage->id]),
+                        'medium_url' => route('images.show', ['image' => $product->coverImage->id, 'size' => 'medium']),
+                        'thumb_url' => route('images.show', ['image' => $product->coverImage->id, 'size' => 'thumb']),
+                    ];
                 } else {
                     $product->cover_image = null;
                 }
@@ -575,6 +607,14 @@ class ProductController extends Controller
                 $product->coverImage->src_url = $isPublic
                     ? route('images.show', ['image' => $product->coverImage->id])
                     : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+                
+                $product->coverImage->medium_url = $isPublic
+                    ? route('images.show', ['image' => $product->coverImage->id, 'size' => 'medium'])
+                    : URL::signedRoute('images.show', ['image' => $product->coverImage->id, 'size' => 'medium'], now()->addMinutes(60));
+                
+                $product->coverImage->thumb_url = $isPublic
+                    ? route('images.show', ['image' => $product->coverImage->id, 'size' => 'thumb'])
+                    : URL::signedRoute('images.show', ['image' => $product->coverImage->id, 'size' => 'thumb'], now()->addMinutes(60));
 
                 $product->coverImage->makeHidden(['imageable_id', 'imageable_type', 'image_path', 'created_at', 'updated_at']);
             }
@@ -923,7 +963,7 @@ class ProductController extends Controller
 
         foreach ($images as $index => $imageData) {
             $file = $imageData['file'];
-            $path = $file->store("products/{$product->id}", 'public');
+            $path = app(ImageOptimizationService::class)->processAndStore($file, "products/{$product->id}", 'public', true);
 
             $imagesToInsert[] = [
                 'imageable_type' => 'product',
@@ -1038,7 +1078,7 @@ class ProductController extends Controller
                 // Upload image jika ada (hanya untuk option pertama)
                 if ($usesImages && !empty($optionData['images'])) {
                     $imageFile = $optionData['images'][0]['file'];
-                    $path = $imageFile->store("option-values/{$value->id}", 'public');
+                    $path = app(ImageOptimizationService::class)->processAndStore($imageFile, "option-values/{$value->id}", 'public', true);
                     $value->update(['image_path' => $path]);
                 }
 
@@ -1247,6 +1287,15 @@ class ProductController extends Controller
                 $image->src_url = $isPublic
                     ? route('images.show', ['image' => $image->id])
                     : URL::signedRoute('images.show', ['image' => $image->id], now()->addMinutes(60));
+                    
+                $image->medium_url = $isPublic
+                    ? route('images.show', ['image' => $image->id, 'size' => 'medium'])
+                    : URL::signedRoute('images.show', ['image' => $image->id, 'size' => 'medium'], now()->addMinutes(60));
+                    
+                $image->thumb_url = $isPublic
+                    ? route('images.show', ['image' => $image->id, 'size' => 'thumb'])
+                    : URL::signedRoute('images.show', ['image' => $image->id, 'size' => 'thumb'], now()->addMinutes(60));
+                    
                 return $image;
             });
         }
@@ -1255,6 +1304,14 @@ class ProductController extends Controller
             $product->coverImage->src_url = $isPublic
                 ? route('images.show', ['image' => $product->coverImage->id])
                 : URL::signedRoute('images.show', ['image' => $product->coverImage->id], now()->addMinutes(60));
+                
+            $product->coverImage->medium_url = $isPublic
+                ? route('images.show', ['image' => $product->coverImage->id, 'size' => 'medium'])
+                : URL::signedRoute('images.show', ['image' => $product->coverImage->id, 'size' => 'medium'], now()->addMinutes(60));
+                
+            $product->coverImage->thumb_url = $isPublic
+                ? route('images.show', ['image' => $product->coverImage->id, 'size' => 'thumb'])
+                : URL::signedRoute('images.show', ['image' => $product->coverImage->id, 'size' => 'thumb'], now()->addMinutes(60));
         }
 
         if ($product->options) {
@@ -1265,8 +1322,13 @@ class ProductController extends Controller
                             $value->src_url = $isPublic
                                 ? route('images.product-option-value.show', ['optionValue' => $value->id])
                                 : URL::signedRoute('images.product-option-value.show', ['optionValue' => $value->id], now()->addMinutes(60));
+                            
+                            $value->thumb_url = $isPublic
+                                ? route('images.product-option-value.show', ['optionValue' => $value->id, 'size' => 'thumb'])
+                                : URL::signedRoute('images.product-option-value.show', ['optionValue' => $value->id, 'size' => 'thumb'], now()->addMinutes(60));
                         } else {
                             $value->src_url = null;
+                            $value->thumb_url = null;
                         }
                         return $value;
                     });
@@ -1637,8 +1699,12 @@ class ProductController extends Controller
                 // upload image jika ada
                 $imagePath = null;
                 if (!empty($opt['images'][0]['file'])) {
-                    $imagePath = $opt['images'][0]['file']
-                        ->store("product-options/{$product->id}", 'public');
+                    $imagePath = app(ImageOptimizationService::class)->processAndStore(
+                        $opt['images'][0]['file'], 
+                        "product-options/{$product->id}", 
+                        'public',
+                        true
+                    );
                 }
 
                 if (!empty($opt['id']) && $existingValues->has($opt['id'])) {
@@ -2062,7 +2128,7 @@ class ProductController extends Controller
                     'is_cover' => $isCover,
                 ]);
             } else {
-                $path = $entry['file']->store("products/{$product->id}", 'public');
+                $path = app(ImageOptimizationService::class)->processAndStore($entry['file'], "products/{$product->id}", 'public', true);
 
                 $product->images()->create([
                     'image_path' => $path,

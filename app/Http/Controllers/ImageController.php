@@ -15,11 +15,12 @@ class ImageController extends Controller
 {
     public function show(Request $request, Image $image)
     {
+        $size = $request->query('size', 'original');
         // 1. CEK SIGNED URL (PENTING UNTUK DRAFT)
         // Jika URL memiliki tanda tangan valid dari Laravel, langsung izinkan stream.
         // Ini memintas kebutuhan login/token di header request.
         if ($request->hasValidSignature()) {
-            return $this->stream($image, $this->resolveDiskForImage($image));
+            return $this->stream($image, $this->resolveDiskForImage($image), $size);
         }
 
         $imageable = $image->imageable;
@@ -28,7 +29,7 @@ class ImageController extends Controller
 
             // 2. LOGIKA BARU: Published DAN Archived adalah PUBLIC
             if (in_array($imageable->status, ['published', 'archived'])) {
-                return $this->stream($image, $this->resolveDiskForImage($image));
+                return $this->stream($image, $this->resolveDiskForImage($image), $size);
             }
 
             // 3. Jika status DRAFT, cek ownership
@@ -37,7 +38,7 @@ class ImageController extends Controller
             $user = $request->user();
 
             if ($user && $imageable->merchant && $user->id === $imageable->merchant->user_id) {
-                return $this->stream($image, $this->resolveDiskForImage($image));
+                return $this->stream($image, $this->resolveDiskForImage($image), $size);
             }
 
             return response()->json(['message' => 'Tidak boleh mengakses gambar ini (Draft)'], 403);
@@ -50,7 +51,7 @@ class ImageController extends Controller
                 in_array($imageable->status, ['published', 'active', 'archived'], true)
                 || ($imageable->status === null && (bool) $imageable->is_active)
             ) {
-                return $this->stream($image, $this->resolveDiskForImage($image));
+                return $this->stream($image, $this->resolveDiskForImage($image), $size);
             }
 
             // Draft/non-public: cek ownership
@@ -58,7 +59,7 @@ class ImageController extends Controller
             $imageable->loadMissing('merchant:id,user_id');
 
             if ($user && $imageable->merchant && (int) $user->id === (int) $imageable->merchant->user_id) {
-                return $this->stream($image, $this->resolveDiskForImage($image));
+                return $this->stream($image, $this->resolveDiskForImage($image), $size);
             }
 
             return response()->json(['message' => 'Tidak boleh mengakses gambar ini (Draft)'], 403);
@@ -69,8 +70,9 @@ class ImageController extends Controller
 
     public function cartSnapshot(Request $request, CartItem $cartItem)
     {
+        $size = $request->query('size', 'original');
         if ($request->hasValidSignature()) {
-            return $this->streamSnapshot($cartItem);
+            return $this->streamSnapshot($cartItem, $size);
         }
 
         $userId = $request->user()?->id ?? Auth::id();
@@ -79,13 +81,14 @@ class ImageController extends Controller
         $cartItem->loadMissing('cart:id,user_id');
         abort_if((int) $cartItem->cart?->user_id !== (int) $userId, 403, 'Forbidden');
 
-        return $this->streamSnapshot($cartItem);
+        return $this->streamSnapshot($cartItem, $size);
     }
 
     public function orderSnapshot(Request $request, \App\Models\ProductOrderItem $orderItem)
     {
+        $size = $request->query('size', 'original');
         if ($request->hasValidSignature()) {
-            return $this->streamSnapshot($orderItem);
+            return $this->streamSnapshot($orderItem, $size);
         }
 
         $userId = $request->user()?->id ?? Auth::id();
@@ -101,13 +104,14 @@ class ImageController extends Controller
 
         abort_if(!$isCustomer && !$isMerchant, 403, 'Forbidden');
 
-        return $this->streamSnapshot($orderItem);
+        return $this->streamSnapshot($orderItem, $size);
     }
 
     public function orderProof(Request $request, \App\Models\Order $order)
     {
+        $size = $request->query('size', 'original');
         if ($request->hasValidSignature()) {
-            return $this->streamOrderProof($order);
+            return $this->streamOrderProof($order, $size);
         }
 
         $userId = $request->user()?->id ?? Auth::id();
@@ -120,7 +124,7 @@ class ImageController extends Controller
 
         abort_if(!$isCustomer && !$isMerchant, 403, 'Forbidden');
 
-        return $this->streamOrderProof($order);
+        return $this->streamOrderProof($order, $size);
     }
 
     private function resolveDiskForImage(Image $image): string
@@ -136,35 +140,43 @@ class ImageController extends Controller
         return config('filesystems.product_disk', 'private');
     }
 
-    private function stream(Image $image, string $disk)
+    private function stream(Image $image, string $disk, string $size = 'original')
     {
-        // Pastikan disk sesuai tipe image
+        $path = $this->resolveSizePath($image->image_path, $size);
 
-        if (!Storage::disk($disk)->exists($image->image_path)) {
-            abort(404);
+        if (!Storage::disk($disk)->exists($path)) {
+            $path = $image->image_path; // fallback
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
-        $stream = Storage::disk($disk)->readStream($image->image_path);
+        $stream = Storage::disk($disk)->readStream($path);
+        $mime = pathinfo($path, PATHINFO_EXTENSION) === 'webp' ? 'image/webp' : ($image->mime_type ?? 'image/jpeg');
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
         }, 200, [
-            'Content-Type' => $image->mime_type ?? 'image/jpeg',
+            'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=31536000',
         ]);
     }
 
-    private function streamSnapshot($item)
+    private function streamSnapshot($item, string $size = 'original')
     {
-        $path = $item->image_snapshot_path;
+        $path = $this->resolveSizePath($item->image_snapshot_path, $size);
         abort_if(empty($path), 404);
 
         /** @var FilesystemAdapter $disk */
         $disk = Storage::disk('public');
-        abort_if(!$disk->exists($path), 404);
+        
+        if (!$disk->exists($path)) {
+            $path = $item->image_snapshot_path;
+            abort_if(!$disk->exists($path), 404);
+        }
 
         $stream = $disk->readStream($path);
-        $mime = $disk->mimeType($path) ?: 'image/jpeg';
+        $mime = pathinfo($path, PATHINFO_EXTENSION) === 'webp' ? 'image/webp' : ($disk->mimeType($path) ?: 'image/jpeg');
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
@@ -174,17 +186,21 @@ class ImageController extends Controller
         ]);
     }
 
-    private function streamOrderProof($order)
+    private function streamOrderProof($order, string $size = 'original')
     {
-        $path = $order->proof_image_path;
+        $path = $this->resolveSizePath($order->proof_image_path, $size);
         abort_if(empty($path), 404);
 
         /** @var FilesystemAdapter $disk */
         $disk = Storage::disk('public');
-        abort_if(!$disk->exists($path), 404);
+        
+        if (!$disk->exists($path)) {
+            $path = $order->proof_image_path;
+            abort_if(!$disk->exists($path), 404);
+        }
 
         $stream = $disk->readStream($path);
-        $mime = $disk->mimeType($path) ?: 'image/jpeg';
+        $mime = pathinfo($path, PATHINFO_EXTENSION) === 'webp' ? 'image/webp' : ($disk->mimeType($path) ?: 'image/jpeg');
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
@@ -192,5 +208,20 @@ class ImageController extends Controller
             'Content-Type' => $mime,
             'Cache-Control' => 'private, max-age=31536000',
         ]);
+    }
+
+    private function resolveSizePath(?string $path, string $size): ?string
+    {
+        if (empty($path) || $size === 'original') {
+            return $path;
+        }
+
+        if ($size === 'thumb') {
+            return preg_replace('/\.([a-zA-Z0-9]+)$/', '_thumb.$1', $path);
+        } elseif ($size === 'medium') {
+            return preg_replace('/\.([a-zA-Z0-9]+)$/', '_medium.$1', $path);
+        }
+
+        return $path;
     }
 }

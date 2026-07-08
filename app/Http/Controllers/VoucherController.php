@@ -21,7 +21,22 @@ class VoucherController extends Controller
 
         $data = $request->validate([
             'voucher_name' => 'required|string|max:100',
-            'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) use ($merchant) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],
             'voucher_description' => 'nullable|string',
             'voucher_type' => 'required|in:percent,fixed',
             'value' => 'required|numeric|min:0',
@@ -197,7 +212,23 @@ class VoucherController extends Controller
 
         $validated = $request->validate([
             'voucher_name' => 'required|string|max:255',
-            'voucher_code' => 'required|string|max:255',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:255',
+                function ($attribute, $value, $fail) use ($merchant, $voucher) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where('id', '!=', $voucher->id)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],
             'voucher_description' => 'required|string',
             'voucher_type' => 'required|in:percent,fixed',
             'value' => 'required|numeric|min:1',
