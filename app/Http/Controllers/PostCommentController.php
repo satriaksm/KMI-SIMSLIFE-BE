@@ -28,8 +28,10 @@ class PostCommentController extends Controller
 
         // Only load top-level comments with their direct replies
         $query = $post->topLevelComments()->with([
-            'user:id,name,profile_picture_path,updated_at',
-            'replies.user:id,name,profile_picture_path,updated_at',
+            'user:id,name,profile_picture_path,is_super_admin,updated_at',
+            'user.roles:id,name',
+            'replies.user:id,name,profile_picture_path,is_super_admin,updated_at',
+            'replies.user.roles:id,name',
             'replies.replyToUser:id,name', 
         ]);
 
@@ -101,7 +103,21 @@ class PostCommentController extends Controller
                 'comment_content' => trim($request->comment_content),
             ]);
 
-            $comment->load(['user:id,name,profile_picture_path']);
+            $comment->load(['user:id,name,profile_picture_path,is_super_admin', 'user.roles:id,name']);
+
+            // Notify post owner (if not commenting on own post)
+            try {
+                $post->load('user:id');
+                if ($post->user_id && $post->user_id !== Auth::id()) {
+                    broadcast(new \App\Events\CommunityCommentCreated(
+                        $comment,
+                        $post->user_id,
+                        'comment_on_post'
+                    ))->toOthers();
+                }
+            } catch (\Exception $broadcastEx) {
+                Log::warning('[Community] Comment broadcast failed', ['error' => $broadcastEx->getMessage()]);
+            }
 
             return response()->json($this->formatCommentResource($comment), 201);
         } catch (\Exception $e) {
@@ -167,7 +183,20 @@ class PostCommentController extends Controller
                 'comment_content' => trim($request->comment_content),
             ]);
 
-            $comment->load(['user:id,name,profile_picture_path,updated_at', 'replyToUser:id,name']);
+            $comment->load(['user:id,name,profile_picture_path,is_super_admin,updated_at', 'user.roles:id,name', 'replyToUser:id,name']);
+
+            // Notify parent comment owner
+            try {
+                if ($parentComment->user_id && $parentComment->user_id !== Auth::id()) {
+                    broadcast(new \App\Events\CommunityCommentCreated(
+                        $comment,
+                        $parentComment->user_id,
+                        'reply_to_comment'
+                    ))->toOthers();
+                }
+            } catch (\Exception $broadcastEx) {
+                Log::warning('[Community] Reply broadcast failed', ['error' => $broadcastEx->getMessage()]);
+            }
 
             return response()->json($this->formatCommentResource($comment), 201);
         } catch (\Exception $e) {
@@ -345,10 +374,12 @@ class PostCommentController extends Controller
             'created_at' => $comment->created_at->toISOString(),
             'updated_at' => $comment->updated_at->toISOString(),
             'author' => [
-                'id' => $comment->user->id,
-                'name' => $comment->user->name,
-                'profile_picture' => $comment->user->profile_picture,
+                'id'                   => $comment->user->id,
+                'name'                 => $comment->user->name,
+                'profile_picture'      => $comment->user->profile_picture,
                 'profile_picture_urls' => $comment->user->profile_picture_urls,
+                'is_admin'             => $comment->user->isAdmin(),
+                'is_super_admin'       => (bool) $comment->user->is_super_admin,
             ],
         ];
 

@@ -56,7 +56,9 @@ class CommunityPostController
     public function index(Request $request)
     {
         $query = CommunityPost::with([
-            'user:id,name,profile_picture_path,updated_at',
+            'user:id,name,profile_picture_path,is_super_admin,updated_at',
+            'user.roles:id,name',
+            'event:id,event_name,event_start_date,event_end_date',
             'images' => function ($query) {
                 $query->ordered()->limit(5);
             }
@@ -185,6 +187,13 @@ class CommunityPostController
 
             $resource = $this->formatPostResource($post, true);
 
+            // Broadcast to all community listeners
+            try {
+                broadcast(new \App\Events\CommunityPostCreated($post))->toOthers();
+            } catch (\Exception $broadcastEx) {
+                \Illuminate\Support\Facades\Log::warning('[Community] Broadcast failed', ['error' => $broadcastEx->getMessage()]);
+            }
+
             return response()->json($resource, 201)
                 ->header('Location', route('community.posts.show', ['slug' => $post->post_slug]));
         } catch (\Exception $e) {
@@ -238,7 +247,9 @@ class CommunityPostController
     {
 
         $post = CommunityPost::with([
-            'user:id,name,profile_picture_path,updated_at',
+            'user:id,name,profile_picture_path,is_super_admin,updated_at',
+            'user.roles:id,name',
+            'event:id,event_name,event_start_date,event_end_date,banner_img_path',
             'images' => fn($q) => $q->ordered()
         ])
             ->where('post_slug', $slug)
@@ -689,26 +700,44 @@ class CommunityPostController
     private function formatPostResource(CommunityPost $post, bool $includeAllImages = false): array
     {
         $resource = [
-            'id' => $post->id,
-            'post_title' => $post->post_title,
-            'post_content' => $post->post_content,
-            'post_slug' => $post->post_slug,
-            'post_status' => $post->post_status,
-            'views_count' => $post->views_count,
-            'images_count' => $post->images_count,
+            'id'            => $post->id,
+            'post_title'    => $post->post_title,
+            'post_content'  => $post->post_content,
+            'post_slug'     => $post->post_slug,
+            'post_status'   => $post->post_status,
+            'post_type'     => $post->post_type ?? 'general',
+            'views_count'   => $post->views_count,
+            'images_count'  => $post->images_count,
             'thumbnail_url' => $post->thumbnail_url,
-            'created_at' => $post->created_at->toISOString(),
-            'updated_at' => $post->updated_at->toISOString(),
+            'created_at'    => $post->created_at->toISOString(),
+            'updated_at'    => $post->updated_at->toISOString(),
             'author' => [
-                'id' => $post->user->id,
-                'name' => $post->user->name,
-                'profile_picture' => $post->user->profile_picture,
+                'id'                   => $post->user->id,
+                'name'                 => $post->user->name,
+                'profile_picture'      => $post->user->profile_picture,
                 'profile_picture_urls' => $post->user->profile_picture_urls,
+                'is_admin'             => $post->user->isAdmin(),
+                'is_super_admin'       => (bool) $post->user->is_super_admin,
             ],
             'links' => [
                 'self' => url("/api/community/posts/{$post->post_slug}"),
             ],
         ];
+
+        // Attach event data if this is an event post
+        if (($post->post_type === 'event') && $post->event_id) {
+            $eventData = null;
+            if ($post->relationLoaded('event') && $post->event) {
+                $eventData = [
+                    'id'               => $post->event->id,
+                    'event_name'       => $post->event->event_name,
+                    'event_start_date' => $post->event->event_start_date,
+                    'event_end_date'   => $post->event->event_end_date,
+                    'banner_url'       => $post->event->banner_url,
+                ];
+            }
+            $resource['event'] = $eventData;
+        }
 
         // ✅ UPDATED: Return image IDs for streaming API
         if ($includeAllImages || $post->relationLoaded('images')) {

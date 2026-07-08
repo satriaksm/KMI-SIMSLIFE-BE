@@ -19,6 +19,8 @@ class CommunityPost extends Model
         'post_content',
         'post_slug',
         'post_status',
+        'post_type',
+        'event_id',
         'views_count',
     ];
 
@@ -65,6 +67,14 @@ class CommunityPost extends Model
             // Delete comments (cascade will handle replies)
             $post->comments()->delete();
         });
+    }
+
+    /**
+     * Get the event linked to this post (if post_type === 'event').
+     */
+    public function event(): BelongsTo
+    {
+        return $this->belongsTo(Event::class);
     }
 
     /**

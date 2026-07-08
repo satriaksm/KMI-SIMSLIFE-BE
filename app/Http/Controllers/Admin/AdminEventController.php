@@ -954,6 +954,54 @@ class AdminEventController extends Controller
     }
 
     /**
+     * ADMIN: Post event to community feed
+     * POST /api/admin/events/{id}/post-to-community
+     */
+    public function postToCommunity(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+            $event = Event::findOrFail($id);
+
+            // Build post content
+            $content = $event->event_description ?: 'Yuk ikut meramaikan event ini! Temukan berbagai produk UMKM lokal dalam satu tempat.';
+
+            $post = \App\Models\CommunityPost::create([
+                'user_id'      => $admin->id,
+                'post_title'   => '🎉 Event: ' . $event->event_name,
+                'post_content' => $content,
+                'post_type'    => 'event',
+                'event_id'     => $event->id,
+                'post_status'  => 'published',
+            ]);
+
+            // Broadcast to all via community channel
+            broadcast(new \App\Events\CommunityPostCreated($post))->toOthers();
+
+            \Illuminate\Support\Facades\Log::info('[AdminEvent] Event posted to community', [
+                'event_id' => $event->id,
+                'post_id'  => $post->id,
+                'admin_id' => $admin->id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Event berhasil diposting ke komunitas.',
+                'post_id' => $post->id,
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('[AdminEvent] Post to community failed', [
+                'event_id' => $id,
+                'error'    => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memposting event ke komunitas: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * ADMIN: Get event analytics for evaluation
      * GET /api/admin/events/{id}/analytics
      */

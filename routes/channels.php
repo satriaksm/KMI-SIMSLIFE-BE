@@ -28,6 +28,10 @@ Broadcast::channel('users.{userId}.orders', function ($user, $userId) {
     return (int) $user->id === (int) $userId;
 });
 
+Broadcast::channel('users.{userId}.community', function ($user, $userId) {
+    return (int) $user->id === (int) $userId;
+});
+
 Broadcast::channel('merchants.{merchantId}.orders', function ($user, $merchantId) {
     return Merchant::query()
         ->where('id', $merchantId)
