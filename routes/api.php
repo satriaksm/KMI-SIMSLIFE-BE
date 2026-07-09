@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\AdminManagementController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminUserController;
+use App\Http\Controllers\Admin\AdminRefundController;
 use App\Http\Controllers\Admin\ReportAppealController as AdminReportAppealController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Admin\ContentReportController;
@@ -713,6 +714,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{voucher}/assign-merchants', [AdminVoucherController::class, 'assignMerchants']);
             Route::post('/{id}/activate', [AdminVoucherController::class, 'activate'])->name('activate');
             Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
+        });
+
+        // ===== REFUND MANAGEMENT =====
+        Route::prefix('refunds')->name('refunds.')->group(function () {
+            Route::get('/', [AdminRefundController::class, 'index']);
+            Route::post('/{payment}/process', [AdminRefundController::class, 'processManualRefund']);
         });
 
         // ===== CONTENT REPORTS =====

@@ -157,7 +157,7 @@ class Order extends Model
     protected $appends = [
         'proof_image_url',
         'order_type',
-        'items',
+        'items_text',
     ];
 
     // =================================================================
@@ -340,13 +340,7 @@ class Order extends Model
         return '';
     }
 
-    /**
-     * Alias for getItemsTextAttribute() - backward compatibility
-     */
-    public function getItemsAttribute(): string
-    {
-        return $this->getItemsTextAttribute();
-    }
+
 
     // =================================================================
     // SNAPSHOT ACCESSORS FOR SERVICE TRANSACTIONS

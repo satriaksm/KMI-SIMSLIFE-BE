@@ -474,7 +474,8 @@ class OrderController extends Controller
         }
 
         if ($newStatus === 'completed') {
-            if (!$request->hasFile('proof_image')) {
+            // Bukti foto wajib untuk delivery, opsional untuk pickup (pelanggan ambil sendiri)
+            if ($order->delivery_type === 'delivery' && !$request->hasFile('proof_image')) {
                 return ApiResponse::error('Bukti foto wajib diunggah saat pesanan diselesaikan/diambil.', 422);
             }
         }
