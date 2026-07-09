@@ -394,4 +394,64 @@ class WebPushService
             }
         }
     }
+
+    public function notifyCommunityPost(\App\Models\CommunityPost $post): void
+    {
+        $payload = json_encode([
+            'title' => 'Postingan baru di Komunitas',
+            'body'  => $post->post_title ?: str()->limit($post->post_content, 50),
+            'icon'  => '/icon192.png',
+            'badge' => '/icon192.png',
+            'tag'   => 'community-post-' . $post->id,
+            'data'  => [
+                'url' => rtrim((string) config('app.frontend_url'), '/') . '/community/' . $post->post_slug,
+            ],
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        $this->broadcastPayload($payload, 'Community post');
+    }
+
+    public function notifyCommunityComment(\App\Models\PostComment $comment, User $recipient): void
+    {
+        $typeLabel = $comment->parent_id ? 'membalas komentar Anda' : 'mengomentari postingan Anda';
+        $payload = json_encode([
+            'title' => 'Notifikasi Komunitas',
+            'body'  => $comment->user->name . ' ' . $typeLabel . ' di Komunitas.',
+            'icon'  => '/icon192.png',
+            'badge' => '/icon192.png',
+            'tag'   => 'community-comment-' . $comment->id,
+            'data'  => [
+                'url' => rtrim((string) config('app.frontend_url'), '/') . '/community/' . $comment->post->post_slug,
+            ],
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        $this->sendPayloadToUser($recipient, $payload, 'Community comment');
+    }
+
+    private function broadcastPayload(string $payload, string $context): void
+    {
+        $webPush = $this->makeWebPush();
+
+        // Process in chunks to avoid memory exhaustion
+        PushSubscription::chunkById(500, function ($subscriptions) use (&$webPush, $payload, $context) {
+            foreach ($subscriptions as $subscription) {
+                $webPush->queueNotification($this->toSubscription($subscription), $payload);
+            }
+            
+            foreach ($webPush->flush() as $report) {
+                if ($report->isSuccess()) {
+                    continue;
+                }
+                
+                if ($report->isSubscriptionExpired()) {
+                    PushSubscription::query()->where('endpoint', $report->getEndpoint())->delete();
+                } else {
+                    Log::warning("[WebPush] {$context} push failed", [
+                        'endpoint' => $report->getEndpoint(),
+                        'reason' => $report->getReason(),
+                    ]);
+                }
+            }
+        });
+    }
 }

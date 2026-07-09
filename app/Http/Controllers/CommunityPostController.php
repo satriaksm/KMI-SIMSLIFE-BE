@@ -149,9 +149,9 @@ class CommunityPostController
             'images' => 'nullable|array|max:5|',
             'images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:2048',
         ], [
-            'post_title.required' => 'The post title field is required.',
-            'post_title.max' => 'The post title must not exceed 255 characters.',
-            'post_content.required' => 'The post content field is required.',
+            'post_title.required' => 'Judul postingan wajib diisi.',
+            'post_title.max' => 'Judul postingan tidak boleh lebih dari 255 karakter.',
+            'post_content.required' => 'Konten postingan wajib diisi.',
             'post_status.in' => 'Invalid post status. Must be draft, published, or archived.',
             'images.max' => 'You can upload maximum 5 image per post',
             'images.*.image' => 'Each file must be an image.',
