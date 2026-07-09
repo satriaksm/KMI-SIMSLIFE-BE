@@ -13,9 +13,7 @@ class PaymentStatusUpdated implements ShouldBroadcastNow
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public function __construct(public Payment $payment)
-    {
-    }
+    public function __construct(public Payment $payment) {}
 
     public function broadcastOn(): array
     {
@@ -32,6 +30,11 @@ class PaymentStatusUpdated implements ShouldBroadcastNow
             if ($order->merchant_id) {
                 $channels[] = new PrivateChannel('merchants.' . $order->merchant_id . '.orders');
             }
+        }
+
+        // Broadcast payment status to payment channel
+        if ($this->payment->id) {
+            $channels[] = new PrivateChannel('payments.' . $this->payment->id);
         }
 
         return $channels;
@@ -51,8 +54,13 @@ class PaymentStatusUpdated implements ShouldBroadcastNow
             'order_id' => $order?->id,
             'status' => $this->payment->status,
             'payment_method' => $this->payment->payment_method,
-            'paid_at' => optional($this->payment->paid_at)->toISOString(),
-            'expired_at' => optional($this->payment->expired_at)->toISOString(),
+            'paid_at' => $this->payment->paid_at?->toISOString(),
+            'expired_at' => $this->payment->expired_at?->toISOString(),
+            'amount' => $this->payment->amount,
+            'invoice_url' => $this->payment->invoice_url,
+            'xendit_invoice_id' => $this->payment->xendit_invoice_id,
+            'xendit_refund_id' => $this->payment->xendit_refund_id ?? null,
+            'refund_status' => $this->payment->refund_status ?? null,
         ];
     }
 }

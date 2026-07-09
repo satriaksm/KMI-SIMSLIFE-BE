@@ -65,6 +65,12 @@ class ProductController extends Controller
      * Public: Get product detail by slug (PDP - Product Detail Page)
      * No authentication required
      */
+    public function publicShowById($productId)
+    {
+        $product = Product::where('id', $productId)->firstOrFail();
+        return $this->publicShow($product);
+    }
+
     public function publicShow(Product $product)
     {
         // 1. QUERY PRODUCT

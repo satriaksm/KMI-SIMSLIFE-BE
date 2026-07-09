@@ -31,7 +31,6 @@ return new class extends Migration {
 
             $table->string('refund_status')->nullable()->comment('processing, succeeded, failed, resolved');
 
-
             $table->timestamp('paid_at')->nullable();
 
             $table->json('raw_response')->nullable();

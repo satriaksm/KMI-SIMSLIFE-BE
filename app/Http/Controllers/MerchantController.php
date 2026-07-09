@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use App\Services\ImageOptimizationService;
 
 class MerchantController extends Controller
 {
@@ -48,18 +47,20 @@ class MerchantController extends Controller
 
     public function merchantProfilePictureShow(Request $request, Merchant $merchant)
     {
-        $size = $request->query('size', 'original');
-        $resolvedPath = app(\App\Services\ImageOptimizationService::class)->resolveSizePath($merchant->logo_path, $size);
-        
-        return $this->streamMerchantAsset($resolvedPath);
+        if ($request->hasValidSignature()) {
+            return $this->streamMerchantAsset($merchant->logo_path);
+        }
+
+        return $this->streamMerchantAsset($merchant->logo_path);
     }
 
     public function merchantBannerShow(Request $request, Merchant $merchant)
     {
-        $size = $request->query('size', 'original');
-        $resolvedPath = app(\App\Services\ImageOptimizationService::class)->resolveSizePath($merchant->cover_path, $size);
-        
-        return $this->streamMerchantAsset($resolvedPath);
+        if ($request->hasValidSignature()) {
+            return $this->streamMerchantAsset($merchant->cover_path);
+        }
+
+        return $this->streamMerchantAsset($merchant->cover_path);
     }
 
     public function mapIndex()
@@ -69,8 +70,12 @@ class MerchantController extends Controller
             ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
             ->with([
                 'segmentation:id,name',
-                'primaryAddress:id,addressable_id,addressable_type,latitude,longitude,label',
-                'addresses:id,addressable_id,addressable_type,latitude,longitude,label',
+                'primaryAddress:id,addressable_id,addressable_type,detail,latitude,longitude,label',
+                'primaryAddress.province:id,name',
+                'primaryAddress.city:id,name',
+                'primaryAddress.district:id,name',
+                'primaryAddress.village:id,name',
+                'addresses:id,addressable_id,addressable_type,detail,latitude,longitude,label',
             ])
             ->get();
 
@@ -289,6 +294,7 @@ class MerchantController extends Controller
 
             $merchant = Merchant::create([
                 'user_id' => $user->id,
+                'paguyuban_id' => null,
                 'segmentation_id' => $validated['segmentation_id'],
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
@@ -329,39 +335,97 @@ class MerchantController extends Controller
      */
     public function showMyMerchant(Request $request, Merchant $merchant)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
-        $this->authorize('view', $merchant);
+            $this->authorize('view', $merchant);
 
-        $merchant->load([
-            'segmentation',
-            'primaryAddress.province',
-            'primaryAddress.city',
-            'primaryAddress.district',
-            'primaryAddress.village',
-        ]);
+            // Load essential relations with fallbacks and null safety
+            $merchant->load([
+                'segmentation',
+                'paguyuban',
+                'primaryAddress.province',
+                'primaryAddress.city',
+                'primaryAddress.district',
+                'primaryAddress.village',
+            ]);
 
-        // Fallback: beberapa data lama mungkin tidak memakai label 'utama'
-        // sehingga relasi primaryAddress null. Untuk kebutuhan edit form,
-        // gunakan alamat terakhir bila primaryAddress tidak ditemukan.
-        if (!$merchant->primaryAddress) {
-            $fallback = $merchant->addresses()
-                ->with([
-                    'province:id,name',
-                    'city:id,name',
-                    'district:id,name',
-                    'village:id,name',
-                ])
-                ->latest('id')
-                ->first();
+            // Determine segmentation ID
+            $segmentationId = (int) ($merchant->segmentation_id ?? 0);
 
-            if ($fallback) {
-                $merchant->setRelation('primaryAddress', $fallback);
+            // Dynamically load counts depending on UMKM type
+            if ($segmentationId === 3) {
+                // Jasa
+                $merchant->loadCount('jasas');
+                $merchant->jasa_count = $merchant->jasas_count ?? 0;
+            } else {
+                // Toko/Kuliner
+                $merchant->loadCount('products');
             }
+
+            // Load ratings/reviews with user, media, and histories for review section, filtered by UMKM type
+            $merchant->load([
+                'ratings' => function ($query) use ($segmentationId) {
+                    $query->with(['user', 'media', 'histories']);
+                    
+                    if ($segmentationId === 3) {
+                        $query->where('rateable_type', 'App\\Models\\Jasa');
+                    } else {
+                        $query->where('rateable_type', 'App\\Models\\Product');
+                    }
+
+                    $query->orderByDesc('created_at')->limit(50);
+                },
+            ]);
+
+            // Calculate rating summary safely
+            $ratingsQuery = \App\Models\Rating::where('merchant_id', $merchant->id);
+            if ($segmentationId === 3) {
+                $ratingsQuery->where('rateable_type', 'App\\Models\\Jasa');
+            } else {
+                $ratingsQuery->where('rateable_type', 'App\\Models\\Product');
+            }
+            $ratings = $ratingsQuery->get();
+
+            $merchant->rating_summary = [
+                'average_rating' => $ratings->count() > 0 ? round($ratings->avg('rating'), 1) : 0,
+                'total_reviews' => $ratings->count(),
+            ];
+
+            // Fallback: beberapa data lama mungkin tidak memakai label 'utama'
+            // sehingga relasi primaryAddress null. Untuk kebutuhan edit form,
+            // gunakan alamat terakhir bila primaryAddress tidak ditemukan.
+            if (!$merchant->primaryAddress) {
+                $fallback = $merchant->addresses()
+                    ->with([
+                        'province:id,name',
+                        'city:id,name',
+                        'district:id,name',
+                        'village:id,name',
+                    ])
+                    ->latest('id')
+                    ->first();
+
+                if ($fallback) {
+                    $merchant->setRelation('primaryAddress', $fallback);
+                }
+            }
+
+            return ApiResponse::success($merchant, 'success');
+
+        } catch (\Throwable $e) {
+            Log::error('[MerchantController::showMyMerchant] Error loading merchant profile', [
+                'merchant_id' => $merchant->id ?? null,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return ApiResponse::error(
+                'Gagal memuat profil merchant.',
+                500,
+                config('app.debug') ? [$e->getMessage()] : null
+            );
         }
-
-        return ApiResponse::success($merchant, 'success');
-
     }
 
     // 🆕 ADDED from feat/rating-system: UMKM owner update profile
@@ -559,11 +623,11 @@ class MerchantController extends Controller
              * Logo Upload
              * =============================== */
             if ($request->hasFile('logo')) {
-                if ($merchant->logo_path) {
-                    app(ImageOptimizationService::class)->deleteImages($merchant->logo_path, 'public');
+                if ($merchant->logo_path && Storage::disk('public')->exists($merchant->logo_path)) {
+                    Storage::disk('public')->delete($merchant->logo_path);
                 }
 
-                $path = app(ImageOptimizationService::class)->processAndStore($request->file('logo'), 'merchants/logos', 'public', true);
+                $path = $request->file('logo')->store('merchants/logos', 'public');
 
                 $merchant->update([
                     'logo_path' => $path
@@ -575,11 +639,11 @@ class MerchantController extends Controller
              * =============================== */
             if ($request->hasFile('cover')) {
                 // Delete old cover if exists
-                if ($merchant->cover_path) {
-                    app(ImageOptimizationService::class)->deleteImages($merchant->cover_path, 'public');
+                if ($merchant->cover_path && Storage::disk('public')->exists($merchant->cover_path)) {
+                    Storage::disk('public')->delete($merchant->cover_path);
                 }
 
-                $path = app(ImageOptimizationService::class)->processAndStore($request->file('cover'), 'merchants/covers', 'public');
+                $path = $request->file('cover')->store('merchants/covers', 'public');
                 $merchant->update(['cover_path' => $path]);
             }
 

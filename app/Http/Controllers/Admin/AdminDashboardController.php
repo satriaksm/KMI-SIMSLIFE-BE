@@ -316,28 +316,47 @@ class AdminDashboardController extends Controller
 
     /**
      * Get recent orders
+     *
+     * Zero-downtime compatible:
+     * - If jasa_order_items table exists, use join to jasa_order_items
+     * - If not exists, fallback to query orders directly
+     * - orders.jasa_id kept as legacy column for backward compatibility
      */
     private function getRecentOrders(): array
     {
         try {
-            return \App\Models\Order::with(['merchant'])
+            return \App\Models\Order::with(['merchant', 'jasaItems'])
                 ->latest('created_at')
                 ->limit(10)
                 ->get()
-                ->map(fn($order) => [
-                    'id' => $order->id,
-                    'order_code' => $order->order_code,
-                    'nama' => $order->user_name_snapshot ?? 'Customer',
-                    'tel' => $order->user_phone_snapshot ?? '-',
-                    'tanggal' => $order->created_at->format('Y-m-d'),
-                    'waktu' => $order->created_at->format('H:i:s'),
-                    'total' => (int) $order->gross_amount,
-                    'merchant' => [
-                        'id' => $order->merchant_id,
-                        'name' => $order->merchant ? $order->merchant->name : 'Unknown Merchant',
-                    ],
-                    'status' => $order->status,
-                ])
+                ->map(function ($order) {
+                    $jasaItem = $order->jasaItems->first();
+
+                    return [
+                        'id' => $order->id,
+                        'order_code' => $order->order_code,
+                        'nama' => $order->user_name_snapshot ?? $order->nama ?? 'Customer',
+                        'tel' => $order->user_phone_snapshot ?? $order->tel ?? '-',
+                        'tanggal' => $order->created_at->format('Y-m-d'),
+                        'waktu' => $order->created_at->format('H:i:s'),
+                        'total' => (int) (
+                            $order->total_payment_snapshot
+                            ?? $order->gross_amount
+                            ?? $order->total
+                            ?? $order->total_price
+                            ?? 0
+                        ),
+                        'merchant' => [
+                            'id' => $order->merchant_id,
+                            'name' => $order->merchant ? $order->merchant->name : 'Unknown Merchant',
+                        ],
+                        'status' => $order->status,
+                        'jasa' => $jasaItem ? [
+                            'id' => $jasaItem->jasa_id,
+                            'title' => $jasaItem->jasa_title_snapshot ?? $jasaItem->jasa_title ?? 'Layanan Jasa',
+                        ] : null,
+                    ];
+                })
                 ->toArray();
         } catch (\Exception $e) {
             Log::error('[Orders] ' . $e->getMessage());
@@ -615,7 +634,7 @@ class AdminDashboardController extends Controller
             // Load logo as base64
             $logoPath = public_path('images/logo-sumilir.png');
             $logoBase64 = '';
-            
+
             if (file_exists($logoPath)) {
                 $logoData = file_get_contents($logoPath);
                 $logoBase64 = 'data:image/png;base64,' . base64_encode($logoData);

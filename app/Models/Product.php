@@ -18,12 +18,32 @@ class Product extends Model
 
     protected $table = 'products';
 
+    // Scope/Relation Appends
+    protected $appends = [
+        'image',
+    ];
+
     // ✅ Add this to check morphClass
     public function getMorphClass()
     {
         $class = parent::getMorphClass();
         Log::info('[Product] Morph class: ' . $class);
         return $class;
+    }
+
+    public function getImageAttribute()
+    {
+        $cover = $this->coverImage;
+        if ($cover) {
+            return $cover->image_path;
+        }
+        
+        $first = $this->images()->first();
+        if ($first) {
+            return $first->image_path;
+        }
+        
+        return null;
     }
 
     protected $fillable = [
@@ -125,6 +145,6 @@ class Product extends Model
 
     public function ratingSummary(): MorphOne
     {
-        return $this->morphOne(RatingSummary::class, 'summaryable');
+        return $this->morphOne(RatingSummary::class, 'rateable');
     }
 }

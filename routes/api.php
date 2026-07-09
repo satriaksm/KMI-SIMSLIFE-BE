@@ -6,10 +6,10 @@ use App\Http\Controllers\Admin\AdminManagementController;
 use App\Http\Controllers\Admin\AdminMerchantController;
 use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminUserController;
+use App\Http\Controllers\Admin\AdminRefundController;
 use App\Http\Controllers\Admin\ReportAppealController as AdminReportAppealController;
 use App\Http\Controllers\Admin\AdminVoucherController;
 use App\Http\Controllers\Admin\ContentReportController;
-use App\Http\Controllers\Admin\AdminRefundController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\PasswordResetController;
@@ -46,6 +46,7 @@ use App\Http\Controllers\VoucherController;
 use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\ServiceOrderController;
 use App\Http\Controllers\ServiceConsultationController;
+use App\Http\Controllers\JasaOrderController;
 use App\Models\Conversation;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -82,7 +83,10 @@ Route::prefix('public')->name('public.')->group(function () {
     // Jasa Ratings (public - view only) - MUST BE BEFORE ID/SLUG routes
     Route::get('/jasas/{jasaId}/ratings/summary', [RatingController::class, 'jasaSummary'])->name('jasas.ratings.summary');
     Route::get('/jasas/{jasaId}/ratings', [RatingController::class, 'indexForJasa'])->name('jasas.ratings');
-    
+
+    // Available slots for booking (public - must be BEFORE ID/SLUG routes)
+    Route::get('/jasas/{jasaId}/available-slots', [JasaController::class, 'getAvailableSlots'])->name('jasas.available-slots');
+
     // Jasa by ID (numeric only - must come FIRST so it matches before slug)
     Route::get('/jasas/{id}', [JasaController::class, 'publicShow'])
         ->whereNumber('id')
@@ -94,6 +98,10 @@ Route::prefix('public')->name('public.')->group(function () {
         ->name('jasas.show.slug');
 
     Route::prefix('products')->name('products.')->group(function () {
+
+        Route::get('/{productId}', [ProductController::class, 'publicShowById'])
+            ->where('productId', '^[0-9]+$')
+            ->name('show.id');
 
         Route::get('/{product:slug}', [ProductController::class, 'publicShow'])
             ->where('slug', '^[A-Za-z0-9-]+$')
@@ -262,7 +270,7 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-
+Route::get('/banks', [BankController::class, 'index']);
 
 // ============================================================
 // PROTECTED ROUTES (AUTH + VERIFIED)
@@ -270,8 +278,6 @@ Route::prefix('auth')->group(function () {
 Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('/me', [AuthController::class, 'me'])->name('me');
-
-    Route::get('/banks', [BankController::class, 'index']);
 
     Route::prefix('profile')->controller(UserController::class)->group(function () {
         Route::get('/', 'show')->name('profile.show');
@@ -376,12 +382,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/merchant-register', [MerchantController::class, 'register'])->name('merchant.register');
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
-        Route::post('checkout/{merchant:slug}/vouchers/validate', [VoucherController::class, 'validateVoucher']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
         Route::prefix('orders')->group(function () {
             Route::post('products/checkout', [OrderController::class, 'checkoutProductFromCart']);
-
             Route::get('/', [OrderController::class, 'customerIndex']);
             Route::get('/{order}', [OrderController::class, 'customerShow']);
             Route::post('/{order}/cancel', [OrderController::class, 'cancel']);
@@ -392,25 +396,38 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/settings', [ShippingController::class, 'settings']);
             Route::post('/calculate', [ShippingController::class, 'calculate']);
         });
-        // Orders (Product checkout)
 
-        Route::prefix('payments')->group(function () {
+        // ===== PAYMENT ENDPOINTS (ALL ORDERS) =====
+        Route::prefix('payments')->name('payments.')->group(function () {
+            Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice'])
+                ->name('create-invoice')
+                ->where('orderId', '[0-9]+');
 
-            // 🔹 Create Invoice (checkout)
-            Route::post('/{orderId}/invoice', [PaymentController::class, 'createInvoice']);
+            Route::match(['get', 'post'], '/{orderId}/verify', [PaymentController::class, 'verifyPayment'])
+                ->name('verify')
+                ->where('orderId', '[0-9]+');
 
-            // 🔹 Get Payment Status (dari DB)
-            Route::get('/{orderId}/status', [PaymentController::class, 'getStatus']);
+            Route::post('/{orderId}/cancel', [PaymentController::class, 'cancelPayment'])
+                ->name('cancel')
+                ->where('orderId', '[0-9]+');
 
-            // 🔹 Verify Payment — cek ke Xendit API & update status jika PAID
-            Route::post('/{orderId}/verify', [PaymentController::class, 'verifyPayment']);
-
-            // 🔹 Cancel Payment (optional)
-            Route::post('/{orderId}/cancel', [PaymentController::class, 'cancel']);
+            Route::get('/{orderId}/status', [PaymentController::class, 'getPaymentStatus'])
+                ->name('status')
+                ->where('orderId', '[0-9]+');
         });
-        // ===== SERVICE ORDERS (CUSTOMER) =====
-        // Service Orders (Customer)
-        // Full lifecycle: create → merchant accept/reject → evidence → customer confirm → review
+
+        // ===== JASA ORDERS (CUSTOMER) =====
+        Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
+            Route::post('/', [JasaOrderController::class, 'create'])->name('create');
+            Route::get('/', [JasaOrderController::class, 'customerHistory'])->name('customer-history');
+            Route::get('/{orderId}', [JasaOrderController::class, 'customerShow'])->name('show');
+            Route::post('/{orderId}/confirm', [JasaOrderController::class, 'confirmCompleted'])->name('confirm');
+            Route::post('/{orderId}/cancel', [JasaOrderController::class, 'cancelOrder'])->name('cancel');
+            Route::post('/{orderId}/review', [JasaOrderController::class, 'submitReview'])->name('review');
+            Route::put('/{orderId}/review', [JasaOrderController::class, 'updateReview'])->name('review.update');
+        });
+
+        // ===== SERVICE ORDERS (CUSTOMER - LEGACY) =====
         Route::prefix('service-orders')->name('service-orders.')->group(function () {
             Route::post('/', [ServiceOrderController::class, 'create'])->name('create');
             Route::get('/', [ServiceOrderController::class, 'getCustomerHistory'])->name('customer-history');
@@ -431,6 +448,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{id}/accept-offer', [ServiceConsultationController::class, 'acceptOffer'])->name('accept-offer');
             Route::post('/{id}/book', [ServiceConsultationController::class, 'bookConsultation'])->name('book');
             Route::post('/{id}/close', [ServiceConsultationController::class, 'closeConsultation'])->name('close');
+        });
+
+        // Ratings / Reviews (customer-owned)
+        Route::prefix('reviews')->group(function () {
+            Route::get('/{ratingId}', [RatingController::class, 'show'])->name('reviews.show');
+            Route::put('/{ratingId}', [RatingController::class, 'update'])->name('reviews.update');
+            Route::delete('/{ratingId}', [RatingController::class, 'destroy'])->name('reviews.destroy');
         });
 
     });
@@ -463,16 +487,33 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 [DashboardController::class, 'merchantDashboard']
             );
 
+            // ===== MERCHANT REPORTS =====
+            Route::prefix('reports')->name('merchant.reports.')->group(function () {
+                Route::get('/transactions', [MerchantReportController::class, 'transactions'])->name('transactions');
+            });
+
             Route::get('profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
             Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
             Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
 
+            // ===== MERCHANT ORDERS (JASA) =====
+            // Get merchant orders from orders table + jasa_order_items
+            Route::match(['patch', 'post'], 'orders/{id}/status', [ServiceOrderController::class, 'updateMerchantOrderStatus'])->name('orders.update-status');
+
+            // ===== MERCHANT REVIEWS (RATINGS) - Merchant reply to customer reviews =====
+            Route::prefix('reviews/{ratingId}')->name('reviews.')->group(function () {
+                Route::post('/reply', [RatingController::class, 'merchantReply'])->name('merchant-reply');
+            });
+
             // ===== SERVICE ORDERS (MERCHANT) =====
-            // Full lifecycle with status validation, evidence upload, rejection
-            Route::prefix('service-orders')->name('service-orders.')->group(function () {
-                Route::get('/', [ServiceOrderController::class, 'getMerchantHistory'])->name('merchant-history');
-                Route::get('/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('show');
-                Route::match(['patch', 'post'], '/{id}/status', [ServiceOrderController::class, 'updateStatus'])->name('update-status');
+            // REMOVED: Frontend now uses /api/merchant/{slug}/orders (ServiceOrderController::getMerchantOrders)
+            // No active routes here - service_orders no longer used as data source
+
+            // ===== JASA ORDERS (MERCHANT) =====
+            Route::prefix('jasa-orders')->name('jasa-orders.')->group(function () {
+                Route::get('/', [JasaOrderController::class, 'merchantOrders'])->name('merchant-history');
+                Route::get('/{orderId}', [JasaOrderController::class, 'merchantShow'])->name('show');
+                Route::patch('/{orderId}/status', [JasaOrderController::class, 'updateStatus'])->name('update-status');
             });
 
             // ===== SERVICE CONSULTATIONS (MERCHANT) =====
@@ -545,8 +586,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             });
 
             Route::prefix('orders')->group(function () {
-                Route::get('', [OrderController::class, 'merchantIndex']);
-                Route::get('/{order}', [OrderController::class, 'merchantShow']);
+                Route::get('', [OrderController::class, 'merchantIndex'])->name('orders.index');
+                Route::get('/{order}', [OrderController::class, 'merchantShow'])->name('orders.show');
                 Route::post('/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
             });
 
@@ -675,6 +716,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{id}/deactivate', [AdminVoucherController::class, 'deactivate'])->name('deactivate');
         });
 
+        // ===== REFUND MANAGEMENT =====
+        Route::prefix('refunds')->name('refunds.')->group(function () {
+            Route::get('/', [AdminRefundController::class, 'index']);
+            Route::post('/{payment}/process', [AdminRefundController::class, 'processManualRefund']);
+        });
+
         // ===== CONTENT REPORTS =====
         Route::prefix('reports')->name('reports.')->group(function () {
             Route::get('/', [ContentReportController::class, 'index'])->name('index');
@@ -718,11 +765,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/payment-fees', [AdminSettingsController::class, 'paymentFeesIndex'])->name('payment-fees.index');
             Route::put('/payment-fees/{id}', [AdminSettingsController::class, 'paymentFeeUpdate'])->name('payment-fees.update');
         });
-
-        // ===== REFUND MANAGEMENT =====
-        Route::prefix('refunds')->name('refunds.')->group(function () {
-            Route::get('/', [AdminRefundController::class, 'index'])->name('index');
-            Route::post('/{payment}/process', [AdminRefundController::class, 'processManualRefund'])->name('process');
-        });
     });
 });
+
+// ============================================================
+// XENDIT PAYMENT WEBHOOK (via WebhookController)
+// ============================================================
+// Public route - NO auth middleware, Xendit calls this without Bearer token
+// Xendit authenticates using callback token in header 'x-callback-token'
+Route::post('/payment/xendit/webhook', [WebhookController::class, 'callback'])
+    ->name('xendit.webhook');

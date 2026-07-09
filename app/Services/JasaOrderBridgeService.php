@@ -9,6 +9,16 @@ use App\Models\ServiceOrder;
 
 class JasaOrderBridgeService
 {
+    /**
+     * Create linked order from service_order (legacy migration helper)
+     *
+     * Maps service_orders data to unified orders + jasa_order_items structure.
+     *
+     * @param ServiceOrder $serviceOrder The source service order
+     * @param array $attributes Additional attributes (optional overrides)
+     * @param ServiceConsultation|null $consultation Related consultation (optional)
+     * @return Order
+     */
     public function createLinkedOrder(ServiceOrder $serviceOrder, array $attributes = [], ?ServiceConsultation $consultation = null): Order
     {
         $bookingDate = $attributes['tanggal']
@@ -16,28 +26,29 @@ class JasaOrderBridgeService
         $bookingTime = $attributes['waktu']
             ?? ($serviceOrder->booking_time?->format('H:i') ?? null);
 
+        // Map mekanisme_pemesanan (legacy) to order_method
+        // order_method values: keranjang, booking, konsultasi
+        $orderMethod = $this->mapMekanismeToOrderMethod(
+            $serviceOrder->mekanisme_pemesanan ?? $attributes['mekanisme_pemesanan'] ?? null
+        );
+
+        // Create order with order_type = 'jasa' (PRIMARY - jenis order)
+        // jasa_id disimpan di jasa_order_items, bukan di orders
+        // order_method disimpan di jasa_order_items, bukan di orders
         $order = Order::create([
             'user_id' => $serviceOrder->customer_id,
             'merchant_id' => $serviceOrder->merchant_id,
-            'jasa_id' => $serviceOrder->jasa_id,
-            'order_type' => 'jasa',
-            'nama' => $attributes['nama'] ?? ($serviceOrder->customer_name ?? 'Pelanggan'),
-            'tel' => $attributes['tel'] ?? ($serviceOrder->customer_phone ?? '0000000000'),
-            'alamat' => $attributes['alamat'] ?? ($serviceOrder->customer_address ?? $serviceOrder->service_location_address ?? 'Online'),
-            'catatan' => $attributes['catatan'] ?? $serviceOrder->booking_note ?? null,
-            'catatan_alamat' => $attributes['catatan_alamat'] ?? null,
-            'tanggal' => $bookingDate ?? now()->toDateString(),
-            'waktu' => $bookingTime ?? now()->format('H:i'),
-            'metode_pembayaran' => $attributes['metode_pembayaran'] ?? $serviceOrder->payment_method ?? 'COD',
+            'order_type' => 'jasa', // PRIMARY: jenis order (jasa/product)
+            'total_price' => $serviceOrder->total_price,
+            'total' => $serviceOrder->total_price,
             'payment_method' => $attributes['payment_method'] ?? $serviceOrder->payment_method ?? 'COD',
             'payment_status' => $attributes['payment_status'] ?? 'unpaid',
-            'promo_code' => $attributes['promo_code'] ?? null,
-            'total' => $serviceOrder->total_price,
             'status' => $attributes['status'] ?? 'pending',
-            'mekanisme_pemesanan' => $serviceOrder->mekanisme_pemesanan ?? $attributes['mekanisme_pemesanan'] ?? null,
+            'promo_code' => $attributes['promo_code'] ?? null,
         ]);
 
-        JasaOrderItem::create([
+        // Create jasa_order_items with order_method
+        $jasaOrderItem = JasaOrderItem::create([
             'order_id' => $order->id,
             'jasa_id' => $serviceOrder->jasa_id,
             'service_order_id' => $serviceOrder->id,
@@ -48,10 +59,42 @@ class JasaOrderBridgeService
             'booking_date' => $bookingDate,
             'booking_time' => $bookingTime,
             'service_type' => $serviceOrder->service_type ?? $attributes['service_type'] ?? null,
-            'service_type_booking' => $attributes['service_type_booking'] ?? null,
+            'order_method' => $orderMethod, // PRIMARY: keranjang | booking | konsultasi
             'note' => $attributes['note'] ?? $serviceOrder->booking_note ?? null,
+            'booking_note' => $serviceOrder->booking_note ?? null,
+            'service_location_address' => $serviceOrder->service_location_address ?? null,
+            'customer_latitude' => $serviceOrder->customer_latitude,
+            'customer_longitude' => $serviceOrder->customer_longitude,
         ]);
 
         return $order;
+    }
+
+    /**
+     * Map legacy mekanisme_pemesanan to order_method
+     *
+     * Accepts: konsultasi, booking, keranjang, langsung_pesan, consultation, scheduled, direct, dll.
+     * Returns: keranjang, booking, konsultasi (frontend display format)
+     */
+    private function mapMekanismeToOrderMethod(?string $mekanisme): string
+    {
+        if (!$mekanisme) {
+            return 'keranjang'; // Default
+        }
+
+        $mapping = [
+            'konsultasi' => 'konsultasi',
+            'booking' => 'booking',
+            'keranjang' => 'keranjang',
+            // Aliases
+            'langsung_pesan' => 'keranjang',
+            'direct_checkout' => 'keranjang',
+            'consultation' => 'konsultasi',
+            'scheduled' => 'booking',
+            'direct' => 'keranjang',
+            'memerlukan_konsultasi' => 'konsultasi',
+        ];
+
+        return $mapping[strtolower($mekanisme)] ?? 'keranjang';
     }
 }

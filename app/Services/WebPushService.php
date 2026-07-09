@@ -21,13 +21,12 @@ class WebPushService
         try {
             $webPush = new WebPush([
                 'VAPID' => [
-                    'subject'    => config('services.webpush.subject'),
-                    'publicKey'  => config('services.webpush.public_key'),
+                    'subject' => config('services.webpush.subject'),
+                    'publicKey' => config('services.webpush.public_key'),
                     'privateKey' => config('services.webpush.private_key'),
                 ],
             ]);
         } finally {
-            // Always restore the original error handler
             if ($previous !== null) {
                 set_error_handler($previous);
             } else {
@@ -45,7 +44,7 @@ class WebPushService
     }
 
     /**
-     * Setelah checkout: Transfer → ingatkan bayar (pembeli).
+     * Setelah checkout: Transfer → ingatkan bayar pembeli.
      * COD → beri tahu UMKM ada pesanan baru.
      */
     public function notifyOrderCreated(Order $order): void
@@ -67,13 +66,45 @@ class WebPushService
     }
 
     /**
-     * Setelah pembayaran transfer berhasil: hanya UMKM (pesanan baru).
-     * Pembeli tidak di-spam notifikasi "paid".
+     * Setelah pembayaran transfer berhasil: hanya UMKM yang diberi tahu ada pesanan baru.
+     * Pembeli tidak di-spam notifikasi paid.
      */
-    public function sendPaymentStatusUpdate(Order $order, Payment $payment): void
+    public function sendPaymentStatusUpdate(Order $order, ?Payment $payment = null, ?string $context = null): void
     {
         $order = $this->loadOrderRelations($order);
+
+        if (!$payment) {
+            $payment = $order->payment ?? Payment::where('order_id', $order->id)->latest('id')->first();
+        }
+
+        if (!$payment) {
+            Log::warning('[WebPushService] sendPaymentStatusUpdate failed: Payment not found', [
+                'order_id' => $order->id,
+                'context' => $context,
+            ]);
+            return;
+        }
+
         $paymentStatus = strtolower((string) $payment->status);
+
+        if ($order->order_type === 'jasa') {
+            if ($paymentStatus === 'paid') {
+                $this->notifyMerchantNewOrder($order);
+                return;
+            }
+
+            $messages = [
+                'expired' => ['Pembayaran jasa kedaluwarsa', 'Tagihan pesanan jasa Anda telah kedaluwarsa.'],
+                'failed' => ['Pembayaran jasa gagal', 'Pembayaran pesanan jasa gagal diproses.'],
+            ];
+
+            if (isset($messages[$paymentStatus])) {
+                [$title, $body] = $messages[$paymentStatus];
+                $this->notifyCustomer($order, $title, $body, 'payment-status-' . $payment->id);
+            }
+
+            return;
+        }
 
         if ($paymentStatus === 'paid') {
             if (!$this->isCod($order)) {
@@ -96,10 +127,6 @@ class WebPushService
     }
 
     /**
-     * Perubahan status pesanan (accepted, delivered, completed, cancelled).
-     * Status paid/pending tidak memicu push (hindari duplikat & "paid" langsung).
-     */
-    /**
      * @param  'merchant_reject'|'customer_cancel'|'auto'|null  $cancelContext
      */
     public function sendOrderStatusUpdate(Order $order, ?string $cancelContext = null): void
@@ -107,12 +134,27 @@ class WebPushService
         $order = $this->loadOrderRelations($order);
         $status = (string) $order->status;
 
+        if ($order->order_type === 'jasa') {
+            match ($status) {
+                'menunggu_konfirmasi_merchant' => $this->notifyMerchantNewOrder($order),
+                'diterima' => $this->notifyCustomer($order, 'Pesanan Jasa Diterima', 'Pesanan jasa Anda telah diterima oleh merchant.', 'jasa-accepted-' . $order->id),
+                'ditolak' => $this->notifyCustomer($order, 'Pesanan Jasa Ditolak', 'Pesanan jasa Anda ditolak oleh merchant.', 'jasa-rejected-' . $order->id),
+                'layanan_dikerjakan' => $this->notifyCustomer($order, 'Layanan Mulai Dikerjakan', 'Layanan jasa Anda sedang mulai dikerjakan.', 'jasa-started-' . $order->id),
+                'menunggu_konfirmasi_selesai' => $this->notifyCustomer($order, 'Konfirmasi Selesai', 'Merchant telah menandai pengerjaan selesai. Silakan konfirmasi.', 'jasa-completion-' . $order->id),
+                'selesai' => $this->notifyCustomer($order, 'Pesanan Jasa Selesai', 'Pesanan jasa Anda telah selesai.', 'jasa-completed-' . $order->id),
+                'dibatalkan' => $this->notifyCustomer($order, 'Pesanan Jasa Dibatalkan', 'Pesanan jasa Anda telah dibatalkan.', 'jasa-cancelled-' . $order->id),
+                'expired' => $this->notifyCustomer($order, 'Pesanan Jasa Kedaluwarsa', 'Pesanan jasa Anda telah kedaluwarsa.', 'jasa-expired-' . $order->id),
+                default => null,
+            };
+            return;
+        }
+
         if (in_array($status, ['pending', 'paid'], true)) {
             return;
         }
 
         match ($status) {
-            'accepted' => $this->notifyOrderAccepted($order),
+            'responsed', 'accepted' => $this->notifyOrderAccepted($order),
             'delivered' => $this->notifyOrderDelivered($order),
             'ready_to_pickup' => $this->notifyOrderReadyToPickup($order),
             'completed' => $this->notifyOrderCompleted($order),
@@ -193,11 +235,13 @@ class WebPushService
 
     private function notifyOrderCancelled(Order $order, ?string $cancelContext = null): void
     {
+        $hasMerchantAccepted = $order->accepted_at || $order->responsed_at;
+
         $body = match ($cancelContext) {
             'merchant_reject' => 'Pesanan Anda ditolak.',
             'customer_cancel' => 'Pesanan Anda dibatalkan.',
             'auto' => 'Pesanan Anda dibatalkan karena batas waktu habis.',
-            default => (!$order->accepted_at && $order->paid_at)
+            default => (!$hasMerchantAccepted && $order->paid_at)
                 ? 'Pesanan Anda ditolak.'
                 : 'Pesanan Anda dibatalkan.',
         };
@@ -267,7 +311,7 @@ class WebPushService
 
     private function loadOrderRelations(Order $order): Order
     {
-        return $order->loadMissing(['user', 'merchant.user', 'items']);
+        return $order->loadMissing(['user', 'merchant.user', 'items', 'jasaItems']);
     }
 
     private function isCod(Order $order): bool
@@ -305,9 +349,28 @@ class WebPushService
 
     private function orderProductLabel(Order $order): string
     {
+        if ($order->order_type === 'jasa') {
+            $order->loadMissing('jasaItems');
+            $names = $order->jasaItems
+                ->pluck('jasa_title_snapshot')
+                ->filter(fn($n) => is_string($n) && trim($n) !== '')
+                ->unique()
+                ->values();
+
+            if ($names->isEmpty()) {
+                return 'layanan jasa';
+            }
+
+            if ($names->count() === 1) {
+                return $names->first();
+            }
+
+            return $names->first() . ' +' . ($names->count() - 1) . ' lainnya';
+        }
+
         $names = $order->items
             ->pluck('product_name_snapshot')
-            ->filter(fn ($n) => is_string($n) && trim($n) !== '')
+            ->filter(fn($n) => is_string($n) && trim($n) !== '')
             ->unique()
             ->values();
 
@@ -364,7 +427,7 @@ class WebPushService
 
         if ($audience !== null) {
             $subscriptions = $subscriptions->filter(
-                fn (PushSubscription $sub) => $this->subscriptionMatchesAudience($sub, $audience),
+                fn(PushSubscription $sub) => $this->subscriptionMatchesAudience($sub, $audience),
             );
         }
 

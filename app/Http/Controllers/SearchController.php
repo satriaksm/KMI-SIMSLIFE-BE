@@ -68,7 +68,7 @@ class SearchController extends Controller
             $q = $data['q'];
             $query->where(function ($qBuilder) use ($q) {
                 $qBuilder->where('products.name', 'like', "%{$q}%")
-                  ->orWhere('products.description', 'like', "%{$q}%");
+                    ->orWhere('products.description', 'like', "%{$q}%");
             });
             $quotedQ = DB::getPdo()->quote("%{$q}%");
             $query->addSelect(DB::raw("(CASE WHEN products.name LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
@@ -570,11 +570,12 @@ class SearchController extends Controller
 
         if (!empty($data['q'])) {
             $q = $data['q'];
-            $query->where('merchants.name', 'like', "%{$q}%");
-            
-            // Relevance score can just be 1 since we only search by name,
-            // or we keep it 2 for consistency with the frontend.
-            $query->addSelect(DB::raw("2 as relevance_score"));
+            $query->where(function ($qBuilder) use ($q) {
+                $qBuilder->where('merchants.name', 'like', "%{$q}%")
+                    ->orWhere('merchants.description', 'like', "%{$q}%");
+            });
+            $quotedQ = DB::getPdo()->quote("%{$q}%");
+            $query->addSelect(DB::raw("(CASE WHEN merchants.name LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
             $query->orderByDesc('relevance_score');
         }
 
@@ -657,10 +658,12 @@ class SearchController extends Controller
                 ->orderBy('distance_km');
 
             // Secondary sort (tiebreaker) when nearest is active
-            foreach (array_values(array_filter([
-                is_string($secondarySort) ? $secondarySort : null,
-                is_string($tertiarySort) ? $tertiarySort : null,
-            ])) as $s) {
+            foreach (
+                array_values(array_filter([
+                    is_string($secondarySort) ? $secondarySort : null,
+                    is_string($tertiarySort) ? $tertiarySort : null,
+                ])) as $s
+            ) {
                 if (!is_string($s) || $s === 'nearest')
                     continue;
                 match ($s) {

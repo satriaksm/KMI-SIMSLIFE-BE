@@ -28,9 +28,7 @@ class Jasa extends Model
         'fixed_price',
         'base_price',
         'service_type',
-        'service_type_booking',
         'location_address',
-        'service_area',
         'special_notes',
         'payment_methods',
         'status',
@@ -201,6 +199,6 @@ class Jasa extends Model
 
     public function ratingSummary(): MorphOne
     {
-        return $this->morphOne(RatingSummary::class, 'summaryable');
+        return $this->morphOne(RatingSummary::class, 'rateable');
     }
 }

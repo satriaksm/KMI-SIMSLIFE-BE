@@ -34,8 +34,7 @@ class OrderController extends Controller
     public function __construct(
         private readonly XenditInvoiceService $xenditInvoiceService,
         private readonly WebPushService $webPushService
-    ) {
-    }
+    ) {}
 
     public function customerIndex(Request $request)
     {
@@ -47,6 +46,9 @@ class OrderController extends Controller
         $activeOrders = Order::query()
             ->where('user_id', $user->id)
             ->whereIn('status', ['pending', 'paid'])
+            ->where(function ($q) {
+                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
+            })
             ->with(['payment'])
             ->get();
 
@@ -56,8 +58,12 @@ class OrderController extends Controller
 
         $query = Order::query()
             ->where('user_id', $user->id)
+            ->where(function ($q) {
+                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
+            })
             ->with([
                 'merchant',
+                'orderItems.product',
                 'items.addons.addon',
                 'payment',
             ])
@@ -101,6 +107,10 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
+        if (($order->order_type ?? 'product') === 'jasa') {
+            return ApiResponse::error('Pesanan jasa harus diakses melalui endpoint jasa.', 404);
+        }
+
         if ($this->checkAndAutoCancelOrder($order)) {
             $order->refresh();
         }
@@ -111,9 +121,11 @@ class OrderController extends Controller
                 'merchant.primaryAddress.district',
                 'merchant.primaryAddress.city',
                 'merchant.primaryAddress.province',
+                'orderItems.product',
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
+                'items.review.media',
                 'payment',
             ]),
             'Order fetched'
@@ -177,7 +189,7 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
-        if (in_array($order->status, ['paid', 'delivered', 'completed', 'cancelled'], true)) {
+        if (in_array($order->status, ['paid', 'responsed', 'accepted', 'ready_to_pickup', 'delivered', 'completed', 'cancelled'], true)) {
             return ApiResponse::error('Order tidak bisa dibatalkan', 422);
         }
 
@@ -214,9 +226,16 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
+        if ($merchant->segmentation_id === 3) {
+            return app(\App\Http\Controllers\JasaOrderController::class)->merchantOrders($request, $merchant->slug);
+        }
+
         $activeOrders = Order::query()
             ->where('merchant_id', $merchant->id)
             ->whereIn('status', ['pending', 'paid'])
+            ->where(function ($q) {
+                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
+            })
             ->with(['payment'])
             ->get();
 
@@ -226,19 +245,23 @@ class OrderController extends Controller
 
         $query = Order::query()
             ->where('merchant_id', $merchant->id)
+            ->where(function ($q) {
+                $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
+            })
             ->with([
+                'orderItems.product',
                 'items.addons.addon',
                 'payment'
             ]);
 
         if ($request->filled('q')) {
             $search = $request->string('q');
-            $query->where(function($qBuilder) use ($search) {
+            $query->where(function ($qBuilder) use ($search) {
                 $qBuilder->where('order_code', 'like', "%{$search}%")
-                         ->orWhere('user_name_snapshot', 'like', "%{$search}%")
-                         ->orWhereHas('items', function($itemQ) use ($search) {
-                             $itemQ->where('product_name_snapshot', 'like', "%{$search}%");
-                         });
+                    ->orWhere('user_name_snapshot', 'like', "%{$search}%")
+                    ->orWhereHas('items', function ($itemQ) use ($search) {
+                        $itemQ->where('product_name_snapshot', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -248,17 +271,21 @@ class OrderController extends Controller
             $query->whereBetween('created_at', [$startDate, $endDate]);
         }
 
+        $waitingReviewStatuses = ['paid', 'sudah_bayar'];
+        $pendingReviewStatuses = ['pending', 'menunggu_konfirmasi', 'menunggu_konfirmasi_merchant', 'processing_payment'];
+
         if ($request->filled('status') && $request->input('status') !== 'all') {
             $reqStatus = $request->input('status');
             if ($reqStatus === 'waiting_review') {
-                $query->where(function ($q) {
-                    $q->where('status', 'paid')
-                      ->orWhere(function ($q2) {
-                          $q2->where('status', 'pending')->where('payment_method', 'COD');
-                      });
+                $query->where(function ($q) use ($waitingReviewStatuses, $pendingReviewStatuses) {
+                    $q->whereIn('status', $waitingReviewStatuses)
+                        ->orWhere('payment_status', 'PAID')
+                        ->orWhere(function ($q2) use ($pendingReviewStatuses) {
+                            $q2->whereIn('status', $pendingReviewStatuses)->where('payment_method', 'COD');
+                        });
                 });
             } elseif ($reqStatus === 'processing') {
-                $query->where('status', 'accepted');
+                $query->whereIn('status', ['responsed', 'accepted']);
             } elseif ($reqStatus === 'delivered') {
                 $query->whereIn('status', ['delivered', 'ready_to_pickup']);
             } elseif ($reqStatus === 'cancelled') {
@@ -267,9 +294,9 @@ class OrderController extends Controller
                 $query->where('status', $reqStatus);
             }
         } else {
-            $query->where(function ($qBuilder) {
-                $qBuilder->where('status', '!=', 'pending')
-                  ->orWhere('payment_method', 'COD');
+            $query->where(function ($qBuilder) use ($pendingReviewStatuses) {
+                $qBuilder->whereNotIn('status', $pendingReviewStatuses)
+                    ->orWhere('payment_method', 'COD');
             });
         }
 
@@ -289,14 +316,24 @@ class OrderController extends Controller
         $counts = [
             'waiting_review' => Order::where('merchant_id', $merchant->id)
                 ->where(function ($q) {
-                    $q->where('status', 'paid')
-                      ->orWhere(function ($q2) {
-                          $q2->where('status', 'pending')->where('payment_method', 'COD');
-                      });
+                    $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
+                })
+                ->where(function ($q) use ($waitingReviewStatuses, $pendingReviewStatuses) {
+                    $q->whereIn('status', $waitingReviewStatuses)
+                        ->orWhere('payment_status', 'PAID')
+                        ->orWhere(function ($q2) use ($pendingReviewStatuses) {
+                            $q2->whereIn('status', $pendingReviewStatuses)->where('payment_method', 'COD');
+                        });
                 })->count(),
             'processing' => Order::where('merchant_id', $merchant->id)
-                ->where('status', 'accepted')->count(),
+                ->where(function ($q) {
+                    $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
+                })
+                ->whereIn('status', ['responsed', 'accepted'])->count(),
             'delivered' => Order::where('merchant_id', $merchant->id)
+                ->where(function ($q) {
+                    $q->where('order_type', '!=', 'jasa')->orWhereNull('order_type');
+                })
                 ->whereIn('status', ['delivered', 'ready_to_pickup'])->count(),
         ];
 
@@ -329,7 +366,30 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
+        \Illuminate\Support\Facades\Log::info('Merchant order detail', [
+            'merchant' => $merchant->id ?? null,
+            'order_id' => $order->id ?? null,
+            'order_type' => $order->order_type ?? null,
+        ]);
+
+        $isJasaOrder = ($order->order_type === 'jasa' || $order->jasaItems()->exists() || $merchant->segmentation_id === 3);
+
+        if ($isJasaOrder) {
+            \Illuminate\Support\Facades\Log::info('Delegating order detail to JasaOrderController', [
+                'order_id' => $order->id,
+            ]);
+            return app(\App\Http\Controllers\JasaOrderController::class)->merchantShow(request(), $merchant->slug, $order->id);
+        }
+
+        \Illuminate\Support\Facades\Log::info('Handling order detail as product order', [
+            'order_id' => $order->id,
+        ]);
+
         if ((int) $order->merchant_id !== (int) $merchant->id) {
+            \Illuminate\Support\Facades\Log::warning('Order merchant mismatch', [
+                'order_merchant_id' => $order->merchant_id,
+                'request_merchant_id' => $merchant->id,
+            ]);
             return ApiResponse::error('Order tidak ditemukan', 404);
         }
 
@@ -340,9 +400,11 @@ class OrderController extends Controller
         return ApiResponse::success(
             $order->load([
                 'merchant.primaryAddress',
+                'orderItems.product',
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
+                'items.review',
                 'payment',
                 'user'
             ]),
@@ -356,12 +418,18 @@ class OrderController extends Controller
      * Flow baru:
      *   paid (Transfer) → accepted (terima) | cancelled (tolak)
      *   pending COD     → accepted (terima) | cancelled (tolak)
-     *   accepted        → delivered
+     *   accepted        → delivered / ready_to_pickup
+     *   delivered       → completed / undelivered
+     *   ready_to_pickup → completed / unpicked
      */
     public function updateStatus(Request $request, Merchant $merchant, Order $order)
     {
+        if ($merchant->segmentation_id === 3) {
+            return app(\App\Http\Controllers\JasaOrderController::class)->updateStatus($request, $merchant->slug, $order->id);
+        }
+
         $request->validate([
-            'status' => 'required|in:accepted,rejected,delivered,completed,cancelled,undelivered,ready_to_pickup,unpicked',
+            'status' => 'required|in:responsed,accepted,rejected,delivered,completed,cancelled,undelivered,ready_to_pickup,unpicked',
             'proof_image' => 'nullable|image|max:5120',
             'failed_reason' => 'nullable|string|max:1000',
         ]);
@@ -383,21 +451,21 @@ class OrderController extends Controller
 
         $allowed = match ($newStatus) {
             // UMKM bisa terima pesanan yang sudah bayar (paid) atau COD (pending delivery_type=pickup/delivery)
-            'accepted' => in_array($order->status, ['paid', 'pending'], true),
-            'rejected' => in_array($order->status, ['paid', 'pending', 'accepted'], true),
-            'delivered' => in_array($order->status, ['accepted'], true) && $order->delivery_type === 'delivery',
-            'ready_to_pickup' => in_array($order->status, ['accepted'], true) && $order->delivery_type === 'pickup',
-            'completed' => (in_array($order->status, ['delivered'], true) && $order->delivery_type === 'delivery') || 
-                           (in_array($order->status, ['ready_to_pickup'], true) && $order->delivery_type === 'pickup'),
+            'responsed', 'accepted' => in_array($order->status, ['paid', 'pending'], true),
+            'rejected' => in_array($order->status, ['paid', 'pending', 'responsed', 'accepted'], true),
+            'delivered' => in_array($order->status, ['responsed', 'accepted'], true) && $order->delivery_type === 'delivery',
+            'ready_to_pickup' => in_array($order->status, ['responsed', 'accepted'], true) && $order->delivery_type === 'pickup',
+            'completed' => (in_array($order->status, ['delivered'], true) && $order->delivery_type === 'delivery') ||
+                (in_array($order->status, ['ready_to_pickup'], true) && $order->delivery_type === 'pickup'),
             'undelivered' => in_array($order->status, ['delivered'], true) && $order->delivery_type === 'delivery',
             'unpicked' => in_array($order->status, ['ready_to_pickup'], true) && $order->delivery_type === 'pickup',
-            'cancelled' => in_array($order->status, ['paid', 'pending', 'accepted'], true),
+            'cancelled' => in_array($order->status, ['paid', 'pending', 'responsed', 'accepted'], true),
             default     => false,
         };
 
         // COD (pending + pickup/delivery) boleh diterima UMKM
         // Transfer (pending) TIDAK boleh diterima UMKM — harus bayar dulu
-        if (in_array($newStatus, ['accepted', 'rejected']) && $order->status === 'pending') {
+        if (in_array($newStatus, ['responsed', 'accepted', 'rejected']) && $order->status === 'pending') {
             // Hanya izinkan jika COD (belum ada payment)
             $hasPendingPayment = $order->payment()->where('status', 'pending')->exists();
             if ($hasPendingPayment) {
@@ -406,11 +474,12 @@ class OrderController extends Controller
         }
 
         if ($newStatus === 'completed') {
-            if (!$request->hasFile('proof_image')) {
+            // Bukti foto wajib untuk delivery, opsional untuk pickup (pelanggan ambil sendiri)
+            if ($order->delivery_type === 'delivery' && !$request->hasFile('proof_image')) {
                 return ApiResponse::error('Bukti foto wajib diunggah saat pesanan diselesaikan/diambil.', 422);
             }
         }
-        
+
         if ($newStatus === 'undelivered' && !$request->hasFile('proof_image')) {
             return ApiResponse::error('Bukti foto wajib diunggah untuk pesanan gagal kirim.', 422);
         }
@@ -420,9 +489,11 @@ class OrderController extends Controller
         }
 
         $order->status = $newStatus;
-        if ($newStatus === 'accepted') {
+        if ($newStatus === 'responsed' || $newStatus === 'accepted') {
             $order->status = 'accepted';
             $order->accepted_at = now();
+            // Backward compatibility
+            $order->responsed_at = now();
         } elseif ($newStatus === 'rejected') {
             $order->rejected_at = now();
             $this->refundBalancePendingIfNeeded($order);
@@ -439,7 +510,10 @@ class OrderController extends Controller
                 $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
                 $order->proof_image_path = $path;
             }
-            
+            if ($request->filled('failed_reason')) {
+                $order->failed_reason = $request->input('failed_reason');
+            }
+
             // Release funds for undelivered as the UMKM has prepared and tried to deliver
             $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'unpicked') {
@@ -463,14 +537,14 @@ class OrderController extends Controller
             $order->cancelled_at = now();
             $this->refundBalancePendingIfNeeded($order);
         }
-        
+
         // Simpan alasan pembatalan/penolakan jika ada
         if (in_array($newStatus, ['rejected', 'cancelled', 'undelivered', 'unpicked'])) {
             if ($request->filled('failed_reason')) {
                 $order->failed_reason = $request->input('failed_reason');
             }
         }
-        
+
         $order->save();
 
         $updatedOrder = $order->fresh();
@@ -499,14 +573,14 @@ class OrderController extends Controller
             'address_id'    => 'nullable|integer|exists:addresses,id',
             'voucher_id'    => 'nullable|integer|exists:vouchers,id',
             'delivery_type' => 'nullable|in:pickup,delivery',
-            'payment_method'=> 'nullable|string',
+            'payment_method' => 'nullable|string',
             'notes'         => 'nullable|string|max:500',
         ], [
             'cart_id.required' => 'Keranjang wajib dipilih.',
             'cart_id.integer'  => 'ID keranjang tidak valid.',
             'cart_id.exists'   => 'Keranjang tidak ditemukan. Silakan tambahkan produk ke keranjang lagi.',
-            'address_id.exists'=> 'Alamat pengiriman tidak valid.',
-            'voucher_id.exists'=> 'Voucher tidak valid.',
+            'address_id.exists' => 'Alamat pengiriman tidak valid.',
+            'voucher_id.exists' => 'Voucher tidak valid.',
         ]);
 
         $user = Auth::user();
@@ -647,7 +721,7 @@ class OrderController extends Controller
 
                 $baseGross = max(0, $subtotal - $discountTotal + $deliveryFee);
                 $paymentMethod = strtoupper($request->input('payment_method', 'Transfer'));
-                
+
                 $platformFee = 0;
                 if ($paymentMethod !== 'COD') {
                     $vaMethods = ['BCA', 'BNI', 'BRI', 'MANDIRI', 'PERMATA', 'CIMB'];
@@ -664,7 +738,7 @@ class OrderController extends Controller
                     }
 
                     $feeConfig = \App\Models\PaymentFee::where('method_code', $feeCode)->first();
-                    
+
                     if ($feeConfig) {
                         if ($feeConfig->type === 'percentage') {
                             $platformFee = (int) ceil($baseGross * ($feeConfig->value / 100));
@@ -676,7 +750,7 @@ class OrderController extends Controller
                         $platformFee = 4440;
                     }
                 }
-                
+
                 $grossAmount = $baseGross + $platformFee;
                 $netAmount   = max(0, $grossAmount - $platformFee);
 
@@ -684,6 +758,7 @@ class OrderController extends Controller
                 $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
 
                 $order = Order::query()->create([
+                    'order_type'              => 'product',
                     'address_id'              => $address?->id,
                     'user_id'                 => $user->id,
                     'merchant_id'             => $cart->merchant_id,
@@ -739,7 +814,7 @@ class OrderController extends Controller
                             ->update([
                                 'stock' => DB::raw('GREATEST(stock - ' . $quantity . ', 0)'),
                             ]);
-                        
+
                         $inventoryUpdates[] = [
                             'product_id' => $product->id,
                             'variant_id' => $cartItem->product_variant_id,
@@ -789,6 +864,13 @@ class OrderController extends Controller
                 return ApiResponse::error('Gagal membuat order', 500);
             }
         } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Checkout 500 error:', [
+                'request' => $request->all(),
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             return ApiResponse::error('Gagal checkout order', 500, [
                 'error' => $e->getMessage(),
             ]);
@@ -796,7 +878,7 @@ class OrderController extends Controller
 
         $freshOrder = $order->fresh();
         event(new OrderCreated($freshOrder));
-        
+
         foreach ($inventoryUpdates as $update) {
             $stock = (int) ProductVariant::query()
                 ->where('id', $update['variant_id'])
@@ -842,10 +924,9 @@ class OrderController extends Controller
         if (!$customerAddress->latitude || !$customerAddress->longitude) return 0;
 
         $setting = ShippingSetting::query()->where('status', 'active')->first();
-        if (!$setting) return 0;
 
-        $baseCost  = (float) $setting->base_cost;
-        $costPerKm = (float) $setting->cost_per_km;
+        $baseCost  = $setting ? (float) $setting->base_cost : 15000;
+        $costPerKm = $setting ? (float) $setting->cost_per_km : 5000;
 
         $distanceKm = ShippingController::haversineDistance(
             (float) $merchantAddress->latitude,
@@ -871,7 +952,7 @@ class OrderController extends Controller
     private function checkAndAutoCancelOrder(Order $order): bool
     {
         $changed = false;
-        
+
         // 1. Pending payment expired (Transfer belum bayar)
         if ($order->status === 'pending' && $order->payment && $order->payment->expired_at && now()->greaterThan($order->payment->expired_at)) {
             $order->status = 'cancelled';

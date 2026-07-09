@@ -1,0 +1,33 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class PaymentFee extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'method_code',
+        'method_name',
+        'type',
+        'value',
+        'description',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'value' => 'decimal:2',
+        'is_active' => 'boolean',
+    ];
+
+    public function getDisplayAttribute()
+    {
+        if ($this->type === 'percentage') {
+            return floatval($this->value) . '%';
+        }
+        return 'Rp ' . number_format($this->value, 0, ',', '.');
+    }
+}

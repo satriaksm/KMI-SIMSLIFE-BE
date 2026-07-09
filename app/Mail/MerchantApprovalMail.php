@@ -4,7 +4,6 @@ namespace App\Mail;
 
 use App\Models\Merchant;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
@@ -30,7 +29,7 @@ class MerchantApprovalMail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Notifikasi Pendaftaran UKMKM Disetujui',
+            subject: 'Notifikasi Pendaftaran UMKM Disetujui',
         );
     }
 

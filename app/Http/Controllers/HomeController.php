@@ -8,7 +8,6 @@ use App\Models\Category;
 use App\Models\Jasa;
 use App\Models\PaymentFee;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class HomeController extends Controller
@@ -23,7 +22,15 @@ class HomeController extends Controller
 
             $merchants = Merchant::query()
                 ->where('merchants.status', 'approved')
-                ->with(['segmentation', 'primaryAddress'])
+                ->with([
+                    'segmentation',
+                    'paguyuban',
+                    'primaryAddress',
+                    'primaryAddress.village:id,name',
+                    'primaryAddress.district:id,name',
+                    'primaryAddress.city:id,name',
+                    'primaryAddress.province:id,name',
+                ])
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
                         ->whereNotNull('longitude');
@@ -33,8 +40,7 @@ class HomeController extends Controller
                         $q->where('status', 'published');
                     },
                     'jasas' => function ($q) {
-                        // Count jasas where is_active=true (covers draft+active+published
-                        // since newly created jasas default to status='draft', is_active=true).
+                        // Count jasas where is_active=true
                         $q->where('is_active', true);
                     }
                 ])
@@ -42,12 +48,12 @@ class HomeController extends Controller
                 ->limit($limit)
                 ->get()
                 ->map(function ($merchant) {
-                    // Append coordinates dari primaryAddress ke merchant object
                     $address = $merchant->primaryAddress;
                     if ($address) {
                         $merchant->latitude = $address->latitude;
                         $merchant->longitude = $address->longitude;
                     }
+
                     return $merchant;
                 });
 
@@ -79,7 +85,14 @@ class HomeController extends Controller
 
             $query = Merchant::query()
                 ->where('merchants.status', 'approved')
-                ->with(['segmentation', 'primaryAddress'])
+                ->with([
+                    'segmentation',
+                    'primaryAddress',
+                    'primaryAddress.village:id,name',
+                    'primaryAddress.district:id,name',
+                    'primaryAddress.city:id,name',
+                    'primaryAddress.province:id,name',
+                ])
                 ->whereNotNull('logo_path')
                 ->whereNotNull('cover_path')
                 ->whereHas('primaryAddress', function ($query) {
@@ -98,6 +111,7 @@ class HomeController extends Controller
                     $merchant->latitude = $address->latitude;
                     $merchant->longitude = $address->longitude;
                 }
+
                 return $merchant;
             });
 
@@ -147,13 +161,15 @@ class HomeController extends Controller
     }
 
     /**
-     * Get public payment fees for checkout display
+     * Get active payment fees for frontend checkout.
+     * Endpoint: GET /api/public/home/payment-fees
      */
     public function paymentFees()
     {
         try {
             $fees = PaymentFee::where('is_active', true)
                 ->where('method_code', '!=', 'PAYOUT')
+                ->orderBy('method_code')
                 ->get()
                 ->map(function ($fee) {
                     return [
@@ -165,14 +181,19 @@ class HomeController extends Controller
                     ];
                 });
 
-            return response()->json(['data' => $fees]);
+            return response()->json([
+                'data' => $fees,
+            ]);
         } catch (\Exception $e) {
             Log::error('[HomeController] Failed to get payment fees', [
                 'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'message' => 'Failed to load payment fees',
+                'data' => [],
             ], 500);
         }
     }

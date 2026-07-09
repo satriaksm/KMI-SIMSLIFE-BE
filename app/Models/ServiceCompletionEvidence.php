@@ -17,6 +17,8 @@ class ServiceCompletionEvidence extends Model
     protected $appends = ['file_url', 'media_url', 'is_image', 'is_video'];
 
     protected $fillable = [
+        'jasa_order_item_id',
+        'order_id',
         'service_order_id',
         'file_name',
         'file_path',
@@ -25,9 +27,11 @@ class ServiceCompletionEvidence extends Model
         'mime_type',
         'file_size',
         'display_order',
+        'note',
     ];
 
     protected $casts = [
+        'jasa_order_item_id' => 'integer',
         'file_size' => 'integer',
         'display_order' => 'integer',
         'created_at' => 'datetime',
@@ -47,9 +51,29 @@ class ServiceCompletionEvidence extends Model
     // RELATIONSHIPS
     // ============================================================
 
+    /**
+     * @deprecated Gunakan jasaOrderItem() sebagai gantinya.
+     */
     public function serviceOrder(): BelongsTo
     {
         return $this->belongsTo(ServiceOrder::class, 'service_order_id');
+    }
+
+    /**
+     * Relasi ke JasaOrderItem.
+     * Gunakan ini sebagai pengganti serviceOrder().
+     */
+    public function jasaOrderItem(): BelongsTo
+    {
+        return $this->belongsTo(JasaOrderItem::class, 'jasa_order_item_id');
+    }
+
+    /**
+     * Relasi ke Order.
+     */
+    public function order(): BelongsTo
+    {
+        return $this->belongsTo(Order::class, 'order_id');
     }
 
     // ============================================================
@@ -58,12 +82,19 @@ class ServiceCompletionEvidence extends Model
 
     public function getFileUrlAttribute($value): ?string
     {
-        if ($value) {
-            return $value;
-        }
-
         if ($this->file_path) {
-            return Storage::url($this->file_path);
+            $path = $this->file_path;
+
+            // Jika file_path terlanjur berupa URL penuh (ngrok/domain lama), ambil path setelah /storage/
+            if (str_contains($path, '/storage/')) {
+                $path = explode('/storage/', $path)[1];
+            }
+
+            $path = ltrim($path, '/');
+            $path = preg_replace('#^public/#', '', $path);
+            $path = preg_replace('#^storage/#', '', $path);
+
+            return url('storage/' . $path);
         }
 
         return null;
