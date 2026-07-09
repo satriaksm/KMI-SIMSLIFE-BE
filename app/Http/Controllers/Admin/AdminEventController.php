@@ -968,7 +968,7 @@ class AdminEventController extends Controller
 
             $post = \App\Models\CommunityPost::create([
                 'user_id'      => $admin->id,
-                'post_title'   => '🎉 Event: ' . $event->event_name,
+                'post_title'   => $event->event_name,
                 'post_content' => $content,
                 'post_type'    => 'event',
                 'event_id'     => $event->id,
