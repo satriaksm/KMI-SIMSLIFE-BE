@@ -23,7 +23,7 @@ class HomeController extends Controller
 
             $merchants = Merchant::query()
                 ->where('merchants.status', 'approved')
-                ->with(['segmentation', 'primaryAddress'])
+                ->with(['segmentation', 'primaryAddress.village', 'primaryAddress.district', 'primaryAddress.city', 'primaryAddress.province'])
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
                         ->whereNotNull('longitude');
@@ -79,9 +79,16 @@ class HomeController extends Controller
 
             $query = Merchant::query()
                 ->where('merchants.status', 'approved')
-                ->with(['segmentation', 'primaryAddress'])
-                ->whereNotNull('logo_path')
-                ->whereNotNull('cover_path')
+                ->with(['segmentation', 'primaryAddress.village', 'primaryAddress.district', 'primaryAddress.city', 'primaryAddress.province'])
+                ->withCount([
+                    'products' => function ($q) {
+                        $q->where('status', 'published');
+                    },
+                    'jasas' => function ($q) {
+                        $q->where('is_active', true);
+                    }
+                ])
+
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
                         ->whereNotNull('longitude');

@@ -66,7 +66,7 @@ class MerchantController extends Controller
     {
         $merchants = Merchant::query()
             ->where('status', 'approved')
-            ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
+            ->select(['id', 'name', 'slug', 'description', 'segmentation_id', 'logo_path', 'operational_hours'])
             ->with([
                 'segmentation:id,name',
                 'primaryAddress:id,addressable_id,addressable_type,latitude,longitude,label',
@@ -86,6 +86,7 @@ class MerchantController extends Controller
                 'id' => $merchant->id,
                 'name' => $merchant->name,
                 'slug' => $merchant->slug,
+                'description' => $merchant->description,
                 'logo_url' => $merchant->logo_url,
                 'latitude' => $addr?->latitude,
                 'longitude' => $addr?->longitude,
@@ -96,6 +97,7 @@ class MerchantController extends Controller
                     'average_rating' => $averageRating,
                     'total_reviews' => $totalReviews,
                 ],
+                'is_open_now' => $merchant->is_open_now,
             ];
         });
 
