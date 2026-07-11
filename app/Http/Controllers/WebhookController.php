@@ -29,6 +29,12 @@ class WebhookController extends Controller
         $data = $request->all();
 
         $externalId = $data['external_id'] ?? null;
+        $event = $data['event'] ?? null;
+
+        // 🔹 HANDLE REFUND EVENT (AUTOMATIC REFUND)
+        if ($event && str_starts_with($event, 'refund.')) {
+            return $this->handleRefundWebhook($data);
+        }
 
         if (!$externalId) {
             return ApiResponse::error('Invalid payload', 400);
@@ -42,6 +48,11 @@ class WebhookController extends Controller
         // 🔹 HANDLE PAYOUT (payout-xxx)
         if (str_starts_with($externalId, 'payout-')) {
             return $this->handlePayoutWebhook($data);
+        }
+
+        // 🔹 HANDLE MANUAL REFUND DISBURSEMENT (refund-xxx)
+        if (str_starts_with($externalId, 'refund-')) {
+            return $this->handleManualRefundWebhook($data);
         }
 
         return ApiResponse::success(null, 'Ignored');
@@ -306,5 +317,104 @@ class WebhookController extends Controller
         }
 
         return ApiResponse::success(null, 'Unhandled payout status');
+    }
+
+    /**
+     * HANDLE REFUND WEBHOOK
+     */
+    private function handleRefundWebhook(array $payload)
+    {
+        $event = $payload['event'] ?? null;
+        $data = $payload['data'] ?? [];
+        $refundId = $data['id'] ?? null;
+        $invoiceId = $data['invoice_id'] ?? null;
+
+        if (!$refundId || !$invoiceId) {
+            return ApiResponse::error('Invalid refund payload', 400);
+        }
+
+        $payment = Payment::query()->where('xendit_invoice_id', $invoiceId)->first();
+
+        if (!$payment) {
+            return ApiResponse::error('Payment not found for invoice', 404);
+        }
+
+        if ($event === 'refund.succeeded') {
+            DB::transaction(function () use ($payment) {
+                $payment = Payment::query()->where('id', $payment->id)->lockForUpdate()->first();
+                if ($payment && $payment->refund_status !== 'succeeded') {
+                    $payment->update([
+                        'refund_status' => 'succeeded'
+                    ]);
+                }
+            });
+            return ApiResponse::success(null, 'Refund succeeded');
+        }
+
+        if ($event === 'refund.failed') {
+            DB::transaction(function () use ($payment) {
+                $payment = Payment::query()->where('id', $payment->id)->lockForUpdate()->first();
+                if ($payment && $payment->refund_status !== 'failed') {
+                    $payment->update([
+                        'refund_status' => 'failed'
+                    ]);
+                }
+            });
+            return ApiResponse::success(null, 'Refund failed');
+        }
+
+        return ApiResponse::success(null, 'Unhandled refund event');
+    }
+
+    /**
+     * HANDLE MANUAL REFUND WEBHOOK (DISBURSEMENT)
+     */
+    private function handleManualRefundWebhook(array $data)
+    {
+        $externalId = $data['external_id'] ?? null;
+        $status = $data['status'] ?? null; // COMPLETED, FAILED
+
+        if (!$externalId || !$status) {
+            return ApiResponse::error('Invalid payload', 400);
+        }
+
+        // external_id is format 'refund-{payment_id}-{random}'
+        $parts = explode('-', $externalId);
+        if (count($parts) < 2) {
+            return ApiResponse::error('Invalid external_id format', 400);
+        }
+
+        $paymentId = $parts[1];
+        $payment = Payment::find($paymentId);
+
+        if (!$payment) {
+            return ApiResponse::error('Payment not found', 404);
+        }
+
+        if ($status === 'COMPLETED') {
+            DB::transaction(function () use ($payment) {
+                $payment = Payment::query()->where('id', $payment->id)->lockForUpdate()->first();
+                if ($payment && $payment->refund_status !== 'succeeded') {
+                    $payment->update([
+                        'refund_status' => 'succeeded'
+                    ]);
+                }
+            });
+            return ApiResponse::success(null, 'Manual refund succeeded');
+        }
+
+        if ($status === 'FAILED') {
+            DB::transaction(function () use ($payment) {
+                $payment = Payment::query()->where('id', $payment->id)->lockForUpdate()->first();
+                if ($payment && $payment->refund_status !== 'failed') {
+                    $payment->update([
+                        'refund_status' => 'failed'
+                    ]);
+                }
+            });
+            return ApiResponse::success(null, 'Manual refund failed');
+        }
+
+        return ApiResponse::success(null, 'Unhandled manual refund status');
     }
 }

@@ -19,6 +19,7 @@ class Payment extends Model
         'refund_status',
         'paid_at',
         'raw_response',
+        'refund_destination',
     ];
 
     protected $casts = [

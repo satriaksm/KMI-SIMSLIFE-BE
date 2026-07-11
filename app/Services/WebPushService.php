@@ -116,7 +116,7 @@ class WebPushService
             'delivered' => $this->notifyOrderDelivered($order),
             'ready_to_pickup' => $this->notifyOrderReadyToPickup($order),
             'completed' => $this->notifyOrderCompleted($order),
-            'cancelled' => $this->notifyOrderCancelled($order, $cancelContext),
+            'cancelled', 'rejected' => $this->notifyOrderCancelled($order, $cancelContext),
             default => null,
         };
     }

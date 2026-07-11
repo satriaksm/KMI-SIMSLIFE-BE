@@ -41,7 +41,7 @@ class XenditRefundService
                 $data = $response->json();
                 
                 $payment->update([
-                    'refund_status' => $data['status'] === 'SUCCEEDED' ? 'succeeded' : 'processing',
+                    'refund_status' => 'processing',
                     'xendit_refund_id' => $data['id'] ?? null,
                 ]);
 

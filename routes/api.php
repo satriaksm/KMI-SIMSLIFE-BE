@@ -723,6 +723,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::prefix('refunds')->name('refunds.')->group(function () {
             Route::get('/', [AdminRefundController::class, 'index'])->name('index');
             Route::post('/{payment}/process', [AdminRefundController::class, 'processManualRefund'])->name('process');
+            Route::post('/{payment}/check-status', [AdminRefundController::class, 'checkStatus'])->name('check-status');
         });
     });
 });
