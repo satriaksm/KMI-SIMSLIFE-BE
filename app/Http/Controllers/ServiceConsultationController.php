@@ -375,7 +375,7 @@ class ServiceConsultationController extends Controller
         $perPage = $request->get('per_page', 10);
 
         $query = ServiceConsultation::with([
-            'jasa:id,title,price,base_price,fixed_price',
+            'jasa:id,title,base_price,fixed_price',
             'merchant:id,name,slug',
             'messages.media',
             'notes',
@@ -591,7 +591,7 @@ class ServiceConsultationController extends Controller
         $maxPrice = $request->get('max_price');
 
         $query = ServiceConsultation::with([
-            'jasa:id,title,price,base_price,fixed_price',
+            'jasa:id,title,base_price,fixed_price',
             'customer:id,name,phone',
             'messages.media',
             'notes',
