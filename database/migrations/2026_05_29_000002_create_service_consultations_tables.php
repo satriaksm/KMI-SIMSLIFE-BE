@@ -53,7 +53,6 @@ return new class extends Migration
             // Consultation status
             // Status flow:
             // PENDING → DAPAT_DIKERJAKAN | PERLU_PENYESUAIAN | DITOLAK
-            // DAPAT_DIKERJAKAN → (customer confirms) → ACCEPTTED → (service_order created)
             // PERLU_PENYESUAIAN → ACCEPTTED | DITOLAK
             // DITOLAK → (final, consultation closed)
             // ACCEPTED → (final, link to service order)
@@ -62,8 +61,8 @@ return new class extends Migration
             $table->timestamp('closed_at')->nullable();
 
             // Reference to the created service order (if any)
-            $table->foreignId('service_order_id')->nullable()
-                ->constrained('service_orders')->onDelete('set null');
+            $table->foreignId('order_id')->nullable()
+                ->constrained('orders')->onDelete('set null');
 
             $table->timestamps();
 
@@ -103,19 +102,10 @@ return new class extends Migration
 
             $table->index(['service_consultation_id']);
         });
-
-        Schema::table('service_orders', function (Blueprint $table) {
-            $table->foreign('consultation_id')->references('id')->on('service_consultations')->nullOnDelete();
-        });
     }
 
     public function down(): void
     {
-        Schema::table('service_orders', function (Blueprint $table) {
-            if (Schema::hasColumn('service_orders', 'consultation_id')) {
-                $table->dropForeign(['consultation_id']);
-            }
-        });
         Schema::dropIfExists('service_consultation_notes');
         Schema::dropIfExists('service_consultation_media');
         Schema::dropIfExists('service_consultations');

@@ -64,4 +64,3 @@ class Message extends Model
         return $query->where('type', 'message');
     }
 }
-

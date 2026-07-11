@@ -28,6 +28,7 @@ class Order extends Model
 
         'status',
         'accepted_at',
+        'on_progress_at',
         'rejected_at',
         'paid_at',
         'delivered_at',
@@ -53,6 +54,7 @@ class Order extends Model
 
     protected $casts = [
         'accepted_at' => 'datetime',
+        'on_progress_at' => 'datetime',
         'rejected_at' => 'datetime',
         'paid_at' => 'datetime',
         'delivered_at' => 'datetime',
@@ -152,6 +154,11 @@ class Order extends Model
     public function jasaItems(): HasMany
     {
         return $this->hasMany(JasaOrderItem::class);
+    }
+
+    public function serviceEvidences(): HasMany
+    {
+        return $this->hasMany(\App\Models\ServiceCompletionEvidence::class);
     }
 
     public function getOrderTypeAttribute(): string

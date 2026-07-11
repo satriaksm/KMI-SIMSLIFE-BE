@@ -41,10 +41,10 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\SegmentationController;
 use App\Http\Controllers\ShippingController;
+use App\Http\Controllers\ServiceOrderController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VoucherController;
 use App\Http\Controllers\WebhookController;
-use App\Http\Controllers\ServiceOrderController;
 use App\Http\Controllers\ServiceConsultationController;
 use App\Models\Conversation;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
@@ -379,6 +379,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('checkout/{merchant:slug}/vouchers/validate', [VoucherController::class, 'validateVoucher']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
+        Route::post('jasa-orders', [OrderController::class, 'checkoutJasaDirect']);
+
         Route::prefix('orders')->group(function () {
             Route::post('products/checkout', [OrderController::class, 'checkoutProductFromCart']);
 
@@ -407,16 +409,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
             // 🔹 Cancel Payment (optional)
             Route::post('/{orderId}/cancel', [PaymentController::class, 'cancel']);
-        });
-        // ===== SERVICE ORDERS (CUSTOMER) =====
-        // Service Orders (Customer)
-        // Full lifecycle: create → merchant accept/reject → evidence → customer confirm → review
-        Route::prefix('service-orders')->name('service-orders.')->group(function () {
-            Route::post('/', [ServiceOrderController::class, 'create'])->name('create');
-            Route::get('/', [ServiceOrderController::class, 'getCustomerHistory'])->name('customer-history');
-            Route::get('/{id}', [ServiceOrderController::class, 'getCustomerOrderDetail'])->name('show');
-            Route::post('/{id}/confirm', [ServiceOrderController::class, 'confirmCompleted'])->name('confirm');
-            Route::post('/{id}/review', [ServiceOrderController::class, 'submitReview'])->name('review');
         });
 
         // Service Consultations (Customer)
@@ -466,14 +458,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('profile', [MerchantController::class, 'showMyMerchant'])->name('show.profile');
             Route::post('update', [MerchantController::class, 'updateMyMerchant'])->name('edit.profile');
             Route::delete('', [MerchantController::class, 'destroyMyMerchant'])->name('merchant.destroy');
-
-            // ===== SERVICE ORDERS (MERCHANT) =====
-            // Full lifecycle with status validation, evidence upload, rejection
-            Route::prefix('service-orders')->name('service-orders.')->group(function () {
-                Route::get('/', [ServiceOrderController::class, 'getMerchantHistory'])->name('merchant-history');
-                Route::get('/{id}', [ServiceOrderController::class, 'getMerchantOrderDetail'])->name('show');
-                Route::match(['patch', 'post'], '/{id}/status', [ServiceOrderController::class, 'updateStatus'])->name('update-status');
-            });
 
             // ===== SERVICE CONSULTATIONS (MERCHANT) =====
             Route::prefix('service-consultations')->name('consultations.')->group(function () {
@@ -557,6 +541,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             });
 
             Route::post('payouts', [PayoutController::class, 'requestPayout'])->name('merchant.payouts');
+            Route::post('reviews/{ratingId}/reply', [RatingController::class, 'merchantReply']);
         });
     });
 

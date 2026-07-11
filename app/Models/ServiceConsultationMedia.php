@@ -51,7 +51,8 @@ class ServiceConsultationMedia extends Model
         }
 
         if ($this->file_path) {
-            return Storage::url($this->file_path);
+            // Use asset() to generate full URL (not Storage::url() which returns relative path)
+            return asset('storage/' . ltrim($this->file_path, '/'));
         }
 
         return null;

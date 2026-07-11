@@ -34,9 +34,9 @@ class DashboardController extends Controller
          */
         if ($isJasaMerchant) {
             $totalProducts = Jasa::where('merchant_id', $merchantId)->count();
-            $published = Jasa::where('merchant_id', $merchantId)->where('is_active', true)->count();
-            $draft = Jasa::where('merchant_id', $merchantId)->where('is_active', false)->count();
-            $archived = 0;
+            $published = Jasa::where('merchant_id', $merchantId)->where('status', 'published')->count();
+            $draft = Jasa::where('merchant_id', $merchantId)->where('status', 'draft')->count();
+            $archived = Jasa::where('merchant_id', $merchantId)->where('status', 'archived')->count();
         } else {
             $totalProducts = Product::where('merchant_id', $merchantId)->count();
             $published = Product::where('merchant_id', $merchantId)->published()->count();

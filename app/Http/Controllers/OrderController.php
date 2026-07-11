@@ -58,8 +58,10 @@ class OrderController extends Controller
             ->where('user_id', $user->id)
             ->with([
                 'merchant',
+                'items.product.categories',
                 'items.addons.addon',
-                'payment',
+                'jasaItems',
+                'payment'
             ])
             ->latest();
 
@@ -114,6 +116,7 @@ class OrderController extends Controller
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
+                'jasaItems.jasa',
                 'payment',
             ]),
             'Order fetched'
@@ -228,8 +231,16 @@ class OrderController extends Controller
             ->where('merchant_id', $merchant->id)
             ->with([
                 'items.addons.addon',
+                'jasaItems.jasa',
                 'payment'
             ]);
+
+        // Sembunyikan pesanan dengan metode non-COD yang belum dibayar dari daftar UMKM
+        $query->where(function($q) {
+            $q->where('payment_status', 'paid')
+              ->orWhere('payment_method', 'COD')
+              ->orWhere('status', '!=', 'pending');
+        });
 
         if ($request->filled('q')) {
             $search = $request->string('q');
@@ -255,10 +266,13 @@ class OrderController extends Controller
                     $q->where('status', 'paid')
                       ->orWhere(function ($q2) {
                           $q2->where('status', 'pending')->where('payment_method', 'COD');
+                      })
+                      ->orWhere(function ($q3) {
+                          $q3->where('status', 'pending')->where('order_type', 'jasa');
                       });
                 });
             } elseif ($reqStatus === 'processing') {
-                $query->where('status', 'accepted');
+                $query->whereIn('status', ['accepted', 'on-progress']);
             } elseif ($reqStatus === 'delivered') {
                 $query->whereIn('status', ['delivered', 'ready_to_pickup']);
             } elseif ($reqStatus === 'cancelled') {
@@ -295,7 +309,7 @@ class OrderController extends Controller
                       });
                 })->count(),
             'processing' => Order::where('merchant_id', $merchant->id)
-                ->where('status', 'accepted')->count(),
+                ->whereIn('status', ['accepted', 'on-progress'])->count(),
             'delivered' => Order::where('merchant_id', $merchant->id)
                 ->whereIn('status', ['delivered', 'ready_to_pickup'])->count(),
         ];
@@ -343,6 +357,7 @@ class OrderController extends Controller
                 'items.product',
                 'items.variant',
                 'items.addons.addon',
+                'jasaItems.jasa',
                 'payment',
                 'user'
             ]),
@@ -361,7 +376,7 @@ class OrderController extends Controller
     public function updateStatus(Request $request, Merchant $merchant, Order $order)
     {
         $request->validate([
-            'status' => 'required|in:accepted,rejected,delivered,completed,cancelled,undelivered,ready_to_pickup,unpicked',
+            'status' => 'required|in:accepted,rejected,on-progress,delivered,completed,cancelled,undelivered,ready_to_pickup,unpicked',
             'proof_image' => 'nullable|image|max:5120',
             'failed_reason' => 'nullable|string|max:1000',
         ]);
@@ -385,9 +400,10 @@ class OrderController extends Controller
             // UMKM bisa terima pesanan yang sudah bayar (paid) atau COD (pending delivery_type=pickup/delivery)
             'accepted' => in_array($order->status, ['paid', 'pending'], true),
             'rejected' => in_array($order->status, ['paid', 'pending', 'accepted'], true),
-            'delivered' => in_array($order->status, ['accepted'], true) && $order->delivery_type === 'delivery',
-            'ready_to_pickup' => in_array($order->status, ['accepted'], true) && $order->delivery_type === 'pickup',
-            'completed' => (in_array($order->status, ['delivered'], true) && $order->delivery_type === 'delivery') || 
+            'on-progress' => in_array($order->status, ['accepted'], true),
+            'delivered' => in_array($order->status, ['accepted', 'on-progress'], true) && $order->delivery_type === 'delivery',
+            'ready_to_pickup' => in_array($order->status, ['accepted', 'on-progress'], true) && $order->delivery_type === 'pickup',
+            'completed' => (in_array($order->status, ['delivered', 'on-progress', 'accepted'], true) && in_array($order->delivery_type, ['delivery', 'online', 'on-site', 'in-store'])) || 
                            (in_array($order->status, ['ready_to_pickup'], true) && $order->delivery_type === 'pickup'),
             'undelivered' => in_array($order->status, ['delivered'], true) && $order->delivery_type === 'delivery',
             'unpicked' => in_array($order->status, ['ready_to_pickup'], true) && $order->delivery_type === 'pickup',
@@ -421,8 +437,9 @@ class OrderController extends Controller
 
         $order->status = $newStatus;
         if ($newStatus === 'accepted') {
-            $order->status = 'accepted';
             $order->accepted_at = now();
+        } elseif ($newStatus === 'on-progress') {
+            $order->on_progress_at = now();
         } elseif ($newStatus === 'rejected') {
             $order->rejected_at = now();
             $this->refundBalancePendingIfNeeded($order);
@@ -1003,6 +1020,143 @@ class OrderController extends Controller
                     $admin->notify(new \App\Notifications\ManualRefundRequiredNotification($order));
                 }
             }
+        }
+    }
+
+    public function checkoutJasaDirect(Request $request)
+    {
+        $user = Auth::user();
+        if (!$user instanceof User) {
+            return ApiResponse::error('Unauthorized', 401);
+        }
+
+        $data = $request->validate([
+            'jasa_id' => 'required|integer|exists:jasas,id',
+            'service_name' => 'nullable|string',
+            'delivery_type' => 'nullable|string',
+            'customer_name' => 'required|string',
+            'customer_phone' => 'required|string',
+            'customer_address' => 'nullable|string',
+            'booking_date' => 'nullable|date',
+            'booking_time' => 'nullable|string',
+            'booking_note' => 'nullable|string',
+            'order_method' => 'nullable|string',
+            'payment_method' => 'nullable|string',
+            'payment_channel' => 'nullable|string',
+            'subtotal' => 'required|numeric',
+            'total_price' => 'required|numeric',
+            'voucher_id' => 'nullable|integer',
+            'voucher_code' => 'nullable|string',
+            'discount_amount' => 'nullable|numeric',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
+        ]);
+
+        $jasa = \App\Models\Jasa::with('merchant')->findOrFail($data['jasa_id']);
+        
+        $merchantId = $jasa->merchant_id;
+        $orderCode = 'JSA-' . strtoupper(Str::random(10));
+        
+        $paymentMethod = $data['payment_method'] ?? 'COD';
+        if (strtoupper($paymentMethod) !== 'COD') {
+            $paymentMethod = $data['payment_channel'] ?? 'Transfer';
+        }
+
+        $platformFee = max(0, $data['total_price'] - $data['subtotal'] + ($data['discount_amount'] ?? 0));
+        
+        $grossAmount = $data['total_price'];
+        $netAmount = max(0, $grossAmount - $platformFee);
+        
+        $confirmMinutes = (int) config('app.order_confirm_minutes', 10);
+
+        try {
+            DB::beginTransaction();
+
+            $order = Order::create([
+                'user_id' => $user->id,
+                'merchant_id' => $merchantId,
+                'jasa_id' => $jasa->id,
+                'order_type' => 'jasa',
+                'order_code' => $orderCode,
+                'subtotal' => $data['subtotal'],
+                'discount_total' => $data['discount_amount'] ?? 0,
+                'platform_fee' => $platformFee,
+                'gross_amount' => $grossAmount,
+                'net_amount' => $netAmount,
+                'status' => 'pending',
+                'payment_status' => 'unpaid',
+                'payment_method' => $paymentMethod,
+                'confirm_deadline' => strtoupper($paymentMethod) === 'COD' ? now()->addMinutes($confirmMinutes) : null,
+                'user_name_snapshot' => $data['customer_name'],
+                'user_phone_snapshot' => $data['customer_phone'],
+                'address_detail_snapshot' => (string) ($data['customer_address'] ?? ''),
+                'province_name_snapshot' => '',
+                'city_name_snapshot' => '',
+                'district_name_snapshot' => '',
+                'village_name_snapshot' => '',
+                'latitude_snapshot' => $data['latitude'] ?? null,
+                'longitude_snapshot' => $data['longitude'] ?? null,
+                'notes' => $data['booking_note'] ?? null,
+                'promo_code' => $data['voucher_code'] ?? null,
+                'delivery_type' => $data['delivery_type'] ?? $jasa->delivery_type,
+            ]);
+
+            \App\Models\JasaOrderItem::create([
+                'order_id' => $order->id,
+                'jasa_id' => $jasa->id,
+                'service_consultation_id' => null,
+                'price' => $data['subtotal'],
+                'subtotal' => $data['subtotal'],
+                'order_method' => $data['order_method'] ?? 'booking',
+                'booking_date' => $data['booking_date'] ?? null,
+                'booking_time' => $data['booking_time'] ?? null,
+                'jasa_title_snapshot' => $jasa->title ?? $data['service_name'],
+                'jasa_image_snapshot' => $jasa->coverImage ? $jasa->coverImage->image_path : null,
+                'jasa_price_snapshot' => $data['subtotal'],
+            ]);
+
+            if (!empty($data['voucher_id'])) {
+                VoucherUsage::create([
+                    'user_id' => $user->id,
+                    'voucher_id' => $data['voucher_id'],
+                    'order_id' => $order->id,
+                    'discount_amount' => $data['discount_amount'],
+                ]);
+            }
+
+            $payment = null;
+            if (strtoupper($paymentMethod) !== 'COD' && $grossAmount > 0) {
+                $payment = $this->xenditInvoiceService->createOrGetPendingInvoice($order);
+            }
+
+            DB::commit();
+
+            $freshOrder = $order->fresh();
+            event(new OrderCreated($freshOrder));
+
+            try {
+                $this->webPushService->notifyOrderCreated($freshOrder);
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] notifyOrderCreated failed', [
+                    'order_id' => $freshOrder->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            return ApiResponse::success([
+                'order_id' => $order->id,
+                'order' => $order,
+                'xendit' => [
+                    'payment_id' => $payment?->id,
+                    'external_id' => $payment?->external_id,
+                    'invoice_url' => $payment?->invoice_url,
+                ],
+            ], 'Order Jasa berhasil dibuat');
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('[CheckoutJasa] Error: ' . $e->getMessage());
+            return ApiResponse::error('Gagal membuat pesanan jasa', 500, ['error' => $e->getMessage()]);
         }
     }
 }

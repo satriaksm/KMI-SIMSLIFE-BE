@@ -15,8 +15,8 @@ return new class extends Migration
     {
         Schema::create('service_completion_evidences', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('service_order_id')
-                ->constrained('service_orders')->onDelete('cascade');
+            $table->foreignId('order_id')
+                ->constrained('orders')->onDelete('cascade');
             $table->string('file_name');  // Original filename
             $table->string('file_path');  // Storage path under public/services/completions/
             $table->string('file_url')->nullable();  // Full public URL via Storage::url()
@@ -26,7 +26,7 @@ return new class extends Migration
             $table->unsignedTinyInteger('display_order')->default(0);
             $table->timestamps();
 
-            $table->index(['service_order_id']);
+            $table->index(['order_id']);
         });
 
         // Add jasa field for cara_pemesanan validation
@@ -36,7 +36,7 @@ return new class extends Migration
             // - langsung_pesan: Keranjang tanpa jadwal
             // - booking: Booking dengan pilih jadwal
             // - memerlukan_konsultasi: Wajib konsultasi terlebih dahulu
-            $table->string('cara_pemesanan', 30)->default('langsung_pesan')->after('is_active');
+            $table->string('cara_pemesanan', 30)->default('langsung_pesan')->after('status');
         });
     }
 

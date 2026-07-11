@@ -84,8 +84,11 @@ class ImageController extends Controller
         return $this->streamSnapshot($cartItem, $size);
     }
 
-    public function orderSnapshot(Request $request, \App\Models\ProductOrderItem $orderItem)
+    public function orderSnapshot(Request $request, string $orderItemId)
     {
+        $orderItem = \App\Models\ProductOrderItem::find($orderItemId) ?? \App\Models\JasaOrderItem::find($orderItemId);
+        abort_if(!$orderItem, 404, 'Item not found');
+
         $size = $request->query('size', 'original');
         if ($request->hasValidSignature()) {
             return $this->streamSnapshot($orderItem, $size);
@@ -164,14 +167,15 @@ class ImageController extends Controller
 
     private function streamSnapshot($item, string $size = 'original')
     {
-        $path = $this->resolveSizePath($item->image_snapshot_path, $size);
+        $snapshotPath = $item->image_snapshot_path ?? $item->jasa_image_snapshot;
+        $path = $this->resolveSizePath($snapshotPath, $size);
         abort_if(empty($path), 404);
 
         /** @var FilesystemAdapter $disk */
         $disk = Storage::disk('public');
         
         if (!$disk->exists($path)) {
-            $path = $item->image_snapshot_path;
+            $path = $snapshotPath;
             abort_if(!$disk->exists($path), 404);
         }
 

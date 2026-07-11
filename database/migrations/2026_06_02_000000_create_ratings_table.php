@@ -13,8 +13,8 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete(); // Pemberi rating
             $table->foreignId('merchant_id')->constrained('merchants')->cascadeOnDelete(); // UMKM yang diratingkan
             $table->foreignId('order_id')->nullable()->constrained('orders')->cascadeOnDelete();
-            $table->foreignId('order_item_id')->nullable()->constrained('product_order_items')->cascadeOnDelete();
-            $table->unsignedBigInteger('service_order_id')->nullable();
+            $table->foreignId('product_order_item_id')->nullable()->constrained('product_order_items')->cascadeOnDelete();
+            $table->foreignId('jasa_order_item_id')->nullable()->constrained('jasa_order_items')->cascadeOnDelete();
             
             // Polymorphic untuk Product atau Jasa
             $table->morphs('rateable');
@@ -23,6 +23,10 @@ return new class extends Migration
             $table->string('title')->nullable(); // Judul review
             $table->text('comment')->nullable(); // Komentar review
             $table->boolean('is_anonymous')->default(false);
+            $table->text('merchant_reply')->nullable();
+            $table->timestamp('merchant_reply_at')->nullable();
+            $table->unsignedInteger('update_count')->default(0);
+            $table->timestamp('review_updated_at')->nullable();
             
             $table->timestamps();
             
@@ -31,8 +35,10 @@ return new class extends Migration
                 ['user_id', 'order_id', 'rateable_id', 'rateable_type'],
                 'ratings_user_order_rateable_unique'
             );
-            // Unique constraint for service_order_id
-            $table->unique(['user_id', 'service_order_id'], 'ratings_user_service_order_unique');
+            // Unique constraint for product order
+            $table->unique(['user_id', 'product_order_item_id'], 'ratings_user_product_order_unique');
+            // Unique constraint for jasa order
+            $table->unique(['user_id', 'jasa_order_item_id'], 'ratings_user_jasa_order_unique');
         });
     }
 

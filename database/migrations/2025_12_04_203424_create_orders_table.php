@@ -20,7 +20,7 @@ return new class extends Migration {
             $table->string('order_code');
             $table->decimal('subtotal', 12, 2)->default(0);
             $table->decimal('discount_total', 12, 2)->default(0);
-            $table->enum('delivery_type', ['pickup', 'delivery'])->default('pickup');
+            $table->enum('delivery_type', ['pickup', 'delivery', 'online', 'on-site', 'in-store'])->default('pickup');
             $table->string('payment_method')->nullable();
             $table->string('payment_status')->nullable();
             $table->decimal('delivery_fee_snapshot', 12, 2)->default(0);
@@ -30,6 +30,7 @@ return new class extends Migration {
             $table->enum('status', ['pending', 'accepted', 'rejected', 'on-progress', 'paid', 'delivered', 'undelivered', 'completed', 'cancelled', 'ready_to_pickup', 'unpicked'])->default('pending');
             $table->text('notes')->nullable();
             $table->timestamp('accepted_at')->nullable();
+            $table->timestamp('on_progress_at')->nullable();
             $table->timestamp('rejected_at')->nullable();
             $table->timestamp('paid_at')->nullable();
             $table->timestamp('delivered_at')->nullable();

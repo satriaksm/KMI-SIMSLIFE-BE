@@ -267,7 +267,7 @@ class SearchController extends Controller
             // Normalize jasa price so it works with filters/sorting.
             // Priority: fixed_price -> base_price -> price. Treat 0 as NULL.
             // NOTE: Do NOT default to 0, otherwise missing prices sort as the cheapest.
-            $priceExpr = "COALESCE(NULLIF(jasas.fixed_price, 0), NULLIF(jasas.base_price, 0), NULLIF(jasas.price, 0))";
+            $priceExpr = "COALESCE(NULLIF(jasas.fixed_price, 0), NULLIF(jasas.base_price, 0))";
 
             $jasaQuery = Jasa::query()
                 ->select([
@@ -275,10 +275,8 @@ class SearchController extends Controller
                     'jasas.slug',
                     'jasas.merchant_id',
                     'jasas.title',
-                    'jasas.image',
                     'jasas.fixed_price',
                     'jasas.base_price',
-                    'jasas.price',
                     'jasas.created_at',
                 ])
                 ->with([
@@ -287,10 +285,7 @@ class SearchController extends Controller
                     'images:id,imageable_id,imageable_type,image_path,is_cover',
                 ])
                 ->where(function ($q) {
-                    $q->whereIn('status', ['published', 'active'])
-                        ->orWhere(function ($sub) {
-                            $sub->whereNull('status')->where('is_active', true);
-                        });
+                    $q->whereIn('status', ['published', 'active']);
                 })
                 ->whereHas('merchant', function ($q) {
                     $q->where('status', 'approved');
@@ -560,10 +555,8 @@ class SearchController extends Controller
                         });
                 },
                 'jasas as jasas_count' => function ($q) {
-                    // Count jasas where is_active=true (this covers newly created jasas
-                    // that have default status='draft' but is_active=true, as well as
-                    // jasas with status='active'/'published' synced to is_active=true).
-                    $q->where('is_active', true);
+
+                    $q->where('status', 'published');
                 },
             ]);
 

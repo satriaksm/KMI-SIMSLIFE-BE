@@ -33,9 +33,7 @@ class HomeController extends Controller
                         $q->where('status', 'published');
                     },
                     'jasas' => function ($q) {
-                        // Count jasas where is_active=true (covers draft+active+published
-                        // since newly created jasas default to status='draft', is_active=true).
-                        $q->where('is_active', true);
+                        $q->where('status', 'published');
                     }
                 ])
                 ->inRandomOrder()
@@ -85,7 +83,7 @@ class HomeController extends Controller
                         $q->where('status', 'published');
                     },
                     'jasas' => function ($q) {
-                        $q->where('is_active', true);
+                        $q->where('status', 'published');
                     }
                 ])
 
@@ -130,7 +128,7 @@ class HomeController extends Controller
     {
         try {
             $totalProducts = Product::where('status', 'published')->count();
-            $totalJasas = Jasa::where('is_active', true)->count();
+            $totalJasas = Jasa::where('status', 'published')->count();
 
             $stats = [
                 'total_merchants' => Merchant::where('status', 'approved')->count(),

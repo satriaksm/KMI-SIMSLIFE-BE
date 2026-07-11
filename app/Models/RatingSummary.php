@@ -122,6 +122,9 @@ class RatingSummary extends Model
     /**
      * Update polymorphic rating summary for a specific model (Jasa, Product, Merchant)
      */
+    /**
+     * Update polymorphic rating summary for a specific model (Jasa, Product, Merchant)
+     */
     public static function updatePolymorphicSummary($model, ?int $merchantId = null)
     {
         $modelClass = get_class($model);
@@ -136,26 +139,37 @@ class RatingSummary extends Model
         $sum = $ratings->sum('rating');
         $average = $total > 0 ? round($sum / $total, 2) : 0;
 
-        // Update or create summary with polymorphic mapping
-        $summary = self::updateOrCreate(
-            [
-                'summaryable_id'   => $modelId,
-                'summaryable_type' => $modelClass,
-            ],
-            [
-                'merchant_id'    => $merchantId,
-                // rateable_id/type wajib diisi karena kolom NOT NULL (dari morphs())
-                'rateable_id'    => $modelId,
-                'rateable_type'  => $modelClass,
-                'average_rating' => $average,
-                'total_reviews'  => $total,
-                'rating_5_count' => $ratings->where('rating', 5)->count(),
-                'rating_4_count' => $ratings->where('rating', 4)->count(),
-                'rating_3_count' => $ratings->where('rating', 3)->count(),
-                'rating_2_count' => $ratings->where('rating', 2)->count(),
-                'rating_1_count' => $ratings->where('rating', 1)->count(),
-            ]
-        );
+        // Cari summary dari format baru atau legacy agar tidak membuat duplicate
+        $summary = self::where(function ($q) use ($modelId, $modelClass) {
+            $q->where('summaryable_id', $modelId)
+                ->where('summaryable_type', $modelClass);
+        })->orWhere(function ($q) use ($modelId, $modelClass) {
+            $q->where('rateable_id', $modelId)
+                ->where('rateable_type', $modelClass);
+        })->first();
+
+        if (!$summary) {
+            $summary = new self();
+        }
+
+        // Isi kedua format supaya kompatibel dengan query lama dan baru
+        $summary->merchant_id = $merchantId;
+        $summary->summaryable_id = $modelId;
+        $summary->summaryable_type = $modelClass;
+        $summary->rateable_id = $modelId;
+        $summary->rateable_type = $modelClass;
+
+        $summary->average_rating = $average;
+        $summary->total_reviews = $total;
+        $summary->total_ratings = $total;
+
+        $summary->rating_5_count = $ratings->where('rating', 5)->count();
+        $summary->rating_4_count = $ratings->where('rating', 4)->count();
+        $summary->rating_3_count = $ratings->where('rating', 3)->count();
+        $summary->rating_2_count = $ratings->where('rating', 2)->count();
+        $summary->rating_1_count = $ratings->where('rating', 1)->count();
+
+        $summary->save();
 
         return $summary;
     }
@@ -165,7 +179,29 @@ class RatingSummary extends Model
      */
     public static function updateMerchantOverall($merchantId)
     {
-        $ratings = Rating::where('merchant_id', $merchantId)->get();
+        $merchant = Merchant::find($merchantId);
+        if (!$merchant) {
+            return [
+                'average_rating' => 0,
+                'total_reviews' => 0,
+                'rating_5_count' => 0,
+                'rating_4_count' => 0,
+                'rating_3_count' => 0,
+                'rating_2_count' => 0,
+                'rating_1_count' => 0,
+            ];
+        }
+
+        $query = Rating::where('merchant_id', $merchantId);
+
+        // Filter ratings based on merchant segmentation type to avoid cross-UMKM reviews
+        if ($merchant->segmentation_id == 3) {
+            $query->where('rateable_type', 'App\\Models\\Jasa');
+        } else {
+            $query->where('rateable_type', 'App\\Models\\Product');
+        }
+
+        $ratings = $query->get();
 
         $total = $ratings->count();
         $sum = $ratings->sum('rating');
@@ -241,6 +277,13 @@ class RatingSummary extends Model
             ->where('summaryable_type', Product::class)
             ->first(['average_rating', 'total_reviews', 'total_ratings']);
 
+        if (!$summary) {
+            // Fallback to rateable
+            $summary = self::where('rateable_id', $productId)
+                ->where('rateable_type', Product::class)
+                ->first(['average_rating', 'total_reviews', 'total_ratings']);
+        }
+
         if ($summary) {
             return [
                 'average_rating' => round($summary->average_rating ?? 0, 1),
@@ -271,6 +314,13 @@ class RatingSummary extends Model
         $summary = self::where('summaryable_id', $jasaId)
             ->where('summaryable_type', Jasa::class)
             ->first(['average_rating', 'total_reviews', 'total_ratings']);
+
+        if (!$summary) {
+            // Fallback to rateable
+            $summary = self::where('rateable_id', $jasaId)
+                ->where('rateable_type', Jasa::class)
+                ->first(['average_rating', 'total_reviews', 'total_ratings']);
+        }
 
         if ($summary) {
             return [
