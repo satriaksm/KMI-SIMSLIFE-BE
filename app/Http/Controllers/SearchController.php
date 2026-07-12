@@ -289,7 +289,7 @@ class SearchController extends Controller
                 ->where(function ($q) {
                     $q->whereIn('status', ['published', 'active'])
                         ->orWhere(function ($sub) {
-                            $sub->whereNull('status')->where('is_active', true);
+                            $sub->where('status', 'published');
                         });
                 })
                 ->whereHas('merchant', function ($q) {
@@ -563,7 +563,7 @@ class SearchController extends Controller
                     // Count jasas where is_active=true (this covers newly created jasas
                     // that have default status='draft' but is_active=true, as well as
                     // jasas with status='active'/'published' synced to is_active=true).
-                    $q->where('is_active', true);
+                    $q->where('status', 'published');
                 },
             ]);
 

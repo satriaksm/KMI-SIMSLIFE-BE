@@ -26,6 +26,8 @@ class ContentReportFactory extends Factory
             'reviewed_by' => null,
             'admin_note' => null,
             'reviewed_at' => null,
+            'created_at' => $date = $this->faker->dateTimeBetween('2026-01-01', '2026-07-12'),
+            'updated_at' => $date,
         ];
     }
 
@@ -87,7 +89,8 @@ class ContentReportFactory extends Factory
             'status' => 'resolved',
             'reviewed_by' => User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->first()?->id,
             'admin_note' => $this->faker->sentence(),
-            'reviewed_at' => now(),
+            'reviewed_at' => fn (array $attributes) => $this->faker->dateTimeBetween($attributes['created_at'], '2026-07-12'),
+            'updated_at' => fn (array $attributes) => $attributes['reviewed_at'],
         ]);
     }
 
@@ -100,7 +103,8 @@ class ContentReportFactory extends Factory
             'status' => 'dismissed',
             'reviewed_by' => User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->first()?->id,
             'admin_note' => $this->faker->sentence(),
-            'reviewed_at' => now(),
+            'reviewed_at' => fn (array $attributes) => $this->faker->dateTimeBetween($attributes['created_at'], '2026-07-12'),
+            'updated_at' => fn (array $attributes) => $attributes['reviewed_at'],
         ]);
     }
 }

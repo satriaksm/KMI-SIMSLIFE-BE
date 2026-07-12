@@ -123,6 +123,10 @@ class AdminDashboardController extends Controller
                     'current' => $this->safeCount(Product::where('status', 'published')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(Product::where('status', 'published')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
                 ],
+                'transactions' => [
+                    'current' => $this->safeCount(Order::where('status', 'completed')->where('created_at', '>=', $startDate)),
+                    'previous' => $this->safeCount(Order::where('status', 'completed')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
+                ],
                 'pending_reports' => [
                     'current' => $this->safeCount(ContentReport::where('status', 'pending')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(ContentReport::where('status', 'pending')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
@@ -148,6 +152,11 @@ class AdminDashboardController extends Controller
             ],
             'products' => [
                 'current' => $this->safeCount(Product::where('status', 'published')),
+                'previous' => null,
+                'growth' => null
+            ],
+            'transactions' => [
+                'current' => $this->safeCount(Order::where('status', 'completed')),
                 'previous' => null,
                 'growth' => null
             ],

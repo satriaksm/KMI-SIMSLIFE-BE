@@ -30,9 +30,10 @@ class DatabaseSeeder extends Seeder
             VoucherSeeder::class,
             // JasaSeeder::class,
             ProductSeeder::class,
+            OrderSeeder::class,
             CommunityPostSeeder::class,
             PostCommentSeeder::class,
-            // ContentReportSeeder::class,
+            ContentReportSeeder::class,
             EventSeeder::class,
             EventAnalyticsSeeder::class,
         ]);
