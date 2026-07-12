@@ -1,0 +1,1002 @@
+Table addon_group_options {
+  id bigint unsigned [primary key, not null]
+  addon_group_id bigint unsigned [not null]
+  addon_id bigint unsigned [not null]
+  addon_price decimal(10,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table addon_groups {
+  id bigint unsigned [primary key, not null]
+  product_id bigint unsigned [not null]
+  addon_group_name varchar(100) [not null]
+  selection_type enum('single','multiple') [not null]
+  min_selection tinyint unsigned [not null]
+  max_selection tinyint unsigned [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table addons {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [not null]
+  addon_name varchar(100) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table addresses {
+  id bigint unsigned [primary key, not null]
+  addressable_type varchar(191) [not null]
+  addressable_id bigint unsigned [not null]
+  province_id bigint unsigned [not null]
+  city_id bigint unsigned [not null]
+  district_id bigint unsigned [not null]
+  village_id bigint unsigned [not null]
+  latitude decimal(10,7) [null]
+  longitude decimal(10,7) [null]
+  detail text [null]
+  label varchar(50) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table admin_actions {
+  id bigint unsigned [primary key, not null]
+  admin_id bigint unsigned [not null]
+  action_type enum('status_change','warn_user','suspend_user','unsuspend_user','limit_posting','remove_limit','invite_event','send_notification','assign_case','resolve_report','bulk_update','manual_override') [not null]
+  target_type varchar(191) [not null]
+  target_id bigint unsigned [not null]
+  reason text [null]
+  metadata json [null]
+  status_before varchar(191) [null]
+  status_after varchar(191) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table alerts {
+  id bigint unsigned [primary key, not null]
+  alertable_type varchar(191) [not null]
+  alertable_id bigint unsigned [not null]
+  alert_type enum('high_reports','declining_activity','dormant_user','watchlist_threshold','suspended_user','spam_pattern') [not null]
+  priority enum('low','medium','high','critical') [not null]
+  status enum('pending','in_progress','resolved','dismissed') [not null]
+  message text [not null]
+  recommended_actions json [null]
+  metadata json [null]
+  assigned_to bigint unsigned [null]
+  assigned_at timestamp [null]
+  resolved_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table cache {
+  key varchar(191) [primary key, not null]
+  value mediumtext [not null]
+  expiration int [not null]
+}
+
+Table cache_locks {
+  key varchar(191) [primary key, not null]
+  owner varchar(191) [not null]
+  expiration int [not null]
+}
+
+Table cart_item_addons {
+  id bigint unsigned [primary key, not null]
+  cart_item_id bigint unsigned [not null]
+  addon_group_id bigint unsigned [not null]
+  addon_id bigint unsigned [not null]
+  addon_name_snapshot varchar(191) [null]
+  addon_price_snapshot int [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table cart_items {
+  id bigint unsigned [primary key, not null]
+  cart_id bigint unsigned [not null]
+  itemable_type varchar(191) [not null]
+  itemable_id bigint unsigned [not null]
+  product_variant_id bigint unsigned [null]
+  itemable_name_snapshot varchar(191) [not null]
+  product_variant_name_snapshot varchar(191) [null]
+  image_snapshot_path varchar(191) [null]
+  price_snapshot int [not null]
+  quantity int unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table carts {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  merchant_id bigint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table categories {
+  id bigint unsigned [primary key, not null]
+  parent_id bigint unsigned [null]
+  name varchar(191) [not null]
+  slug varchar(191) [not null]
+  image_path varchar(191) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table categorizables {
+  id bigint unsigned [primary key, not null]
+  category_id bigint unsigned [not null]
+  categorizable_type varchar(191) [not null]
+  categorizable_id bigint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table cities {
+  id bigint unsigned [primary key, not null]
+  province_id bigint unsigned [not null]
+  name varchar(191) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table community_post_images {
+  id bigint unsigned [primary key, not null]
+  post_id bigint unsigned [not null]
+  post_image_path varchar(191) [not null]
+  alt_text varchar(191) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table community_posts {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  post_title varchar(191) [not null]
+  post_content text [not null]
+  post_slug varchar(191) [not null]
+  post_status enum('draft','published','archived') [not null]
+  views_count int unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table consultation_message_media {
+  id bigint unsigned [primary key, not null]
+  consultation_message_id bigint unsigned [not null]
+  file_name varchar(191) [not null]
+  file_path varchar(191) [not null]
+  file_url varchar(191) [null]
+  file_type varchar(20) [not null]
+  mime_type varchar(100) [null]
+  file_size bigint [not null]
+  display_order tinyint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table consultation_messages {
+  id bigint unsigned [primary key, not null]
+  service_consultation_id bigint unsigned [not null]
+  sender_id bigint unsigned [not null]
+  sender_type varchar(20) [not null]
+  message text [null]
+  message_type varchar(30) [not null]
+  proposed_price decimal(12,2) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table content_reports {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  report_reason_id tinyint unsigned [not null]
+  reportable_type varchar(191) [not null]
+  reportable_id bigint unsigned [not null]
+  report_comment text [null]
+  status enum('pending','in_review','resolved','dismissed') [not null]
+  reviewed_by bigint unsigned [null]
+  admin_note text [null]
+  reviewed_at timestamp [null]
+  action_taken varchar(191) [null]
+  original_content text [null]
+  forwarded_to bigint unsigned [null]
+  forwarded_by bigint unsigned [null]
+  forwarded_at timestamp [null]
+  forward_message text [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table districts {
+  id bigint unsigned [primary key, not null]
+  city_id bigint unsigned [not null]
+  name varchar(191) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table event_merchants {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [not null]
+  event_id bigint unsigned [not null]
+  status enum('pending','accepted','cancelled','rejected','removed') [not null]
+  removal_reason text [null]
+  removed_by bigint unsigned [null]
+  removed_at timestamp [null]
+  responded_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table events {
+  id bigint unsigned [primary key, not null]
+  event_name varchar(255) [not null]
+  event_description text [null]
+  event_start_date date [not null]
+  event_end_date date [not null]
+  banner_img_path varchar(191) [not null]
+  status enum('draft','published','archived') [not null]
+  created_by bigint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table images {
+  id bigint unsigned [primary key, not null]
+  imageable_type varchar(191) [not null]
+  imageable_id bigint unsigned [not null]
+  image_path varchar(191) [not null]
+  display_order smallint unsigned [not null]
+  is_cover tinyint(1) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table jasa_order_items {
+  id bigint unsigned [primary key, not null]
+  order_id bigint unsigned [not null]
+  jasa_id bigint unsigned [not null]
+  service_consultation_id bigint unsigned [null]
+  quantity int [not null]
+  price decimal(12,2) [not null]
+  subtotal decimal(12,2) [not null]
+  order_method varchar(191) [not null]
+  booking_date date [null]
+  booking_time time [null]
+  jasa_title_snapshot varchar(191) [null]
+  jasa_image_snapshot text [null]
+  jasa_price_snapshot decimal(12,2) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table jasas {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [not null]
+  title varchar(191) [not null]
+  slug varchar(191) [null]
+  description text [null]
+  fixed_price int [not null]
+  base_price int [not null]
+  delivery_type enum('online','on-site','in-store') [not null]
+  service_type_booking enum('keranjang','booking','konsultasi') [not null]
+  location_address varchar(191) [null]
+  special_notes text [null]
+  payment_methods varchar(191) [null]
+  status enum('draft','published','archived') [not null]
+  cara_pemesanan varchar(30) [not null]
+  operating_days varchar(191) [null]
+  operating_times varchar(191) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table job_batches {
+  id varchar(191) [primary key, not null]
+  name varchar(191) [not null]
+  total_jobs int [not null]
+  pending_jobs int [not null]
+  failed_jobs int [not null]
+  failed_job_ids longtext [not null]
+  options mediumtext [null]
+  cancelled_at int [null]
+  created_at int [not null]
+  finished_at int [null]
+}
+
+Table jobs {
+  id bigint unsigned [primary key, not null]
+  queue varchar(191) [not null]
+  payload longtext [not null]
+  attempts tinyint unsigned [not null]
+  reserved_at int unsigned [null]
+  available_at int unsigned [not null]
+  created_at int unsigned [not null]
+}
+
+Table merchant_wallet_histories {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [not null]
+  type enum('credit','debit','release','refund') [not null]
+  amount decimal(15,2) [not null]
+  reference_type varchar(191) [not null]
+  reference_id bigint unsigned [not null]
+  description text [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table merchants {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  segmentation_id bigint unsigned [not null]
+  name varchar(191) [not null]
+  slug varchar(191) [not null]
+  description text [null]
+  logo_path varchar(191) [null]
+  cover_path varchar(191) [null]
+  phone varchar(191) [null]
+  operational_hours json [null]
+  status enum('pending','approved','rejected','suspended','archived') [not null]
+  rejection_reason text [null]
+  reviewed_by bigint unsigned [null]
+  response_at timestamp [null]
+  NPWP varchar(191) [null]
+  bank_code varchar(191) [null]
+  bank_account_number varchar(191) [null]
+  bank_account_name varchar(191) [null]
+  balance_available decimal(15,2) [not null]
+  balance_pending decimal(15,2) [not null]
+  last_payout_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table notification_deliveries {
+  id bigint unsigned [primary key, not null]
+  notification_id char(36) [not null]
+  channel varchar(191) [not null]
+  status enum('pending','sent','failed','bounced') [not null]
+  provider_message text [null]
+  sent_at timestamp [null]
+  failed_at timestamp [null]
+  retry_count int [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table notifications {
+  id char(36) [primary key, not null]
+  type varchar(191) [not null]
+  notifiable_type varchar(191) [not null]
+  notifiable_id bigint unsigned [not null]
+  data text [not null]
+  read_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table orders {
+  id bigint unsigned [primary key, not null]
+  address_id bigint unsigned [null]
+  user_id bigint unsigned [null]
+  merchant_id bigint unsigned [null]
+  voucher_id bigint unsigned [null]
+  order_type varchar(191) [null]
+  order_code varchar(191) [not null]
+  subtotal decimal(12,2) [not null]
+  discount_total decimal(12,2) [not null]
+  delivery_type enum('pickup','delivery','online','on-site','in-store') [not null]
+  payment_method varchar(191) [null]
+  payment_status varchar(191) [null]
+  delivery_fee_snapshot decimal(12,2) [not null]
+  platform_fee decimal(12,2) [not null]
+  gross_amount decimal(12,2) [not null]
+  net_amount decimal(12,2) [not null]
+  status enum('pending','accepted','rejected','on-progress','paid','delivered','undelivered','completed','cancelled','ready_to_pickup','unpicked') [not null]
+  notes text [null]
+  accepted_at timestamp [null]
+  on_progress_at timestamp [null]
+  rejected_at timestamp [null]
+  paid_at timestamp [null]
+  delivered_at timestamp [null]
+  completed_at timestamp [null]
+  cancelled_at timestamp [null]
+  ready_to_pickup_at timestamp [null]
+  unpicked_at timestamp [null]
+  confirm_deadline timestamp [null]
+  user_name_snapshot varchar(191) [not null]
+  user_phone_snapshot varchar(191) [not null]
+  address_detail_snapshot text [not null]
+  province_name_snapshot varchar(191) [not null]
+  city_name_snapshot varchar(191) [not null]
+  district_name_snapshot varchar(191) [not null]
+  village_name_snapshot varchar(191) [not null]
+  latitude_snapshot decimal(10,7) [null]
+  longitude_snapshot decimal(10,7) [null]
+  proof_image_path varchar(191) [null]
+  proof_description varchar(191) [null]
+  failed_reason varchar(191) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table payment_fees {
+  id bigint unsigned [primary key, not null]
+  method_code varchar(191) [not null]
+  method_name varchar(191) [not null]
+  type enum('percentage','flat') [not null]
+  value decimal(10,2) [not null]
+  description varchar(191) [null]
+  is_active tinyint(1) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table payments {
+  id bigint unsigned [primary key, not null]
+  order_id bigint unsigned [not null]
+  external_id varchar(191) [not null]
+  xendit_invoice_id varchar(191) [null]
+  xendit_refund_id varchar(191) [null]
+  invoice_url varchar(191) [null]
+  payment_method varchar(191) [null]
+  expired_at timestamp [null]
+  amount decimal(15,2) [not null]
+  status enum('pending','paid','expired','failed') [not null]
+  refund_status varchar(191) [null]
+  refund_destination varchar(191) [null]
+  paid_at timestamp [null]
+  raw_response json [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table payouts {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [not null]
+  external_id varchar(191) [not null]
+  amount decimal(15,2) [not null]
+  bank_code varchar(191) [not null]
+  account_number varchar(191) [not null]
+  account_name varchar(191) [not null]
+  status enum('pending','processing','success','failed') [not null]
+  failure_reason text [null]
+  processed_at timestamp [null]
+  raw_response json [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table post_comments {
+  id bigint unsigned [primary key, not null]
+  post_id bigint unsigned [not null]
+  user_id bigint unsigned [not null]
+  parent_id bigint unsigned [null]
+  reply_to_user_id bigint unsigned [null]
+  comment_content text [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_option_values {
+  id bigint unsigned [primary key, not null]
+  product_option_id bigint unsigned [not null]
+  option_value varchar(191) [not null]
+  image_path varchar(191) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_options {
+  id bigint unsigned [primary key, not null]
+  product_id bigint unsigned [not null]
+  option_name varchar(191) [not null]
+  uses_image tinyint(1) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_order_item_addons {
+  id bigint unsigned [primary key, not null]
+  product_order_item_id bigint unsigned [null]
+  addon_id bigint unsigned [null]
+  addon_name_snapshot varchar(191) [not null]
+  addon_price_snapshot decimal(12,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_order_items {
+  id bigint unsigned [primary key, not null]
+  order_id bigint unsigned [null]
+  product_id bigint unsigned [null]
+  product_variant_id bigint unsigned [null]
+  product_name_snapshot varchar(191) [not null]
+  product_variant_snapshot varchar(191) [null]
+  sku_snapshot text [null]
+  image_snapshot_path text [not null]
+  quantity int [not null]
+  unit_price_snapshot decimal(12,2) [not null]
+  subtotal_snapshot decimal(12,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_variant_option_values {
+  id bigint unsigned [primary key, not null]
+  product_variant_id bigint unsigned [not null]
+  product_option_value_id bigint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table product_variants {
+  id bigint unsigned [primary key, not null]
+  product_id bigint unsigned [not null]
+  stock int unsigned [not null]
+  sku varchar(191) [null]
+  price decimal(12,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table products {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [not null]
+  name varchar(191) [not null]
+  slug varchar(191) [not null]
+  description text [null]
+  min_purchase int unsigned [not null]
+  status enum('draft','published','archived') [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table provinces {
+  id bigint unsigned [primary key, not null]
+  name varchar(191) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table push_subscriptions {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  audiences json [null]
+  endpoint varchar(512) [not null]
+  p256dh varchar(255) [not null]
+  auth varchar(255) [not null]
+  content_encoding varchar(20) [null]
+  expiration_time bigint unsigned [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table rating_summaries {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [not null]
+  rateable_type varchar(191) [not null]
+  rateable_id bigint unsigned [not null]
+  summaryable_id bigint unsigned [null]
+  summaryable_type varchar(191) [null]
+  average_rating decimal(3,2) [not null]
+  total_ratings int [not null]
+  total_reviews int [not null]
+  rating_5 int [not null]
+  rating_4 int [not null]
+  rating_3 int [not null]
+  rating_2 int [not null]
+  rating_1 int [not null]
+  rating_5_count int [not null]
+  rating_4_count int [not null]
+  rating_3_count int [not null]
+  rating_2_count int [not null]
+  rating_1_count int [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table ratings {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  merchant_id bigint unsigned [not null]
+  order_id bigint unsigned [null]
+  product_order_item_id bigint unsigned [null]
+  jasa_order_item_id bigint unsigned [null]
+  rateable_type varchar(191) [not null]
+  rateable_id bigint unsigned [not null]
+  rating int unsigned [not null]
+  title varchar(191) [null]
+  comment text [null]
+  is_anonymous tinyint(1) [not null]
+  merchant_reply text [null]
+  merchant_reply_at timestamp [null]
+  update_count int unsigned [not null]
+  review_updated_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table report_appeals {
+  id bigint unsigned [primary key, not null]
+  content_report_id bigint unsigned [not null]
+  user_id bigint unsigned [not null]
+  appeal_text text [not null]
+  status enum('pending','reviewed','accepted','rejected') [not null]
+  admin_response text [null]
+  responded_by bigint unsigned [null]
+  responded_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table report_reasons {
+  id tinyint unsigned [primary key, not null]
+  reason_title varchar(255) [not null]
+  reason_description text [null]
+  applies_to enum('product','service','merchant','post','post_comment','user') [not null]
+  is_active tinyint(1) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table review_histories {
+  id bigint unsigned [primary key, not null]
+  rating_id bigint unsigned [not null]
+  old_rating tinyint unsigned [null]
+  old_title varchar(80) [null]
+  old_comment text [null]
+  old_media json [null]
+  new_rating tinyint unsigned [null]
+  new_title varchar(80) [null]
+  new_comment text [null]
+  new_media json [null]
+  updated_by bigint unsigned [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table review_media {
+  id bigint unsigned [primary key, not null]
+  review_id bigint unsigned [not null]
+  file_path varchar(191) [null]
+  file_url varchar(191) [null]
+  file_type varchar(191) [null]
+  mime_type varchar(100) [null]
+  original_name varchar(191) [null]
+  file_size bigint unsigned [null]
+  display_order int [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table role_user {
+  user_id bigint unsigned [primary key, not null]
+  role_id bigint unsigned [primary key, not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table roles {
+  id bigint unsigned [primary key, not null]
+  name varchar(191) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table segmentations {
+  id bigint unsigned [primary key, not null]
+  name varchar(191) [not null]
+  image_path varchar(191) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table service_completion_evidences {
+  id bigint unsigned [primary key, not null]
+  order_id bigint unsigned [not null]
+  file_name varchar(191) [not null]
+  file_path varchar(191) [not null]
+  file_url varchar(191) [null]
+  file_type varchar(20) [not null]
+  mime_type varchar(100) [null]
+  file_size bigint [not null]
+  display_order tinyint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table service_consultation_media {
+  id bigint unsigned [primary key, not null]
+  service_consultation_id bigint unsigned [not null]
+  file_name varchar(191) [not null]
+  file_path varchar(191) [not null]
+  file_url varchar(191) [null]
+  file_type varchar(20) [not null]
+  mime_type varchar(100) [null]
+  file_size bigint [not null]
+  display_order tinyint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table service_consultation_notes {
+  id bigint unsigned [primary key, not null]
+  service_consultation_id bigint unsigned [not null]
+  sender_id bigint unsigned [null]
+  sender_type varchar(20) [not null]
+  note text [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table service_consultations {
+  id bigint unsigned [primary key, not null]
+  jasa_id bigint unsigned [not null]
+  customer_id bigint unsigned [not null]
+  merchant_id bigint unsigned [not null]
+  service_name varchar(191) [not null]
+  original_price decimal(12,2) [not null]
+  customer_description text [null]
+  customer_budget decimal(12,2) [null]
+  customer_deadline date [null]
+  customer_note text [null]
+  merchant_response varchar(30) [null]
+  merchant_offered_price decimal(12,2) [null]
+  merchant_note text [null]
+  negotiated_price decimal(12,2) [null]
+  negotiation_notes text [null]
+  agreed_deadline date [null]
+  proposed_date date [null]
+  proposed_time time [null]
+  proposed_notes text [null]
+  offer_status varchar(30) [null]
+  customer_accepted tinyint(1) [not null]
+  customer_accepted_at timestamp [null]
+  status varchar(30) [not null]
+  responded_at timestamp [null]
+  closed_at timestamp [null]
+  order_id bigint unsigned [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table sessions {
+  id varchar(191) [primary key, not null]
+  user_id bigint unsigned [null]
+  ip_address varchar(45) [null]
+  user_agent text [null]
+  payload longtext [not null]
+  last_activity int [not null]
+}
+
+Table shipping_settings {
+  id bigint unsigned [primary key, not null]
+  base_cost decimal(10,2) [not null]
+  cost_per_km decimal(10,2) [not null]
+  status enum('active','inactive') [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table user_activity_metrics {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  posts_30d int unsigned [not null]
+  comments_30d int unsigned [not null]
+  orders_30d int unsigned [not null]
+  total_activity_30d int unsigned [not null]
+  reports_validated_30d int unsigned [not null]
+  reports_total int unsigned [not null]
+  last_login_at timestamp [null]
+  last_login_days int unsigned [not null]
+  activity_score decimal(8,2) [not null]
+  pattern_spam_detected tinyint(1) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table user_activity_snapshots {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  period varchar(7) [not null]
+  posts_count int unsigned [not null]
+  comments_count int unsigned [not null]
+  orders_count int unsigned [not null]
+  total_activity int unsigned [not null]
+  activity_score decimal(8,2) [not null]
+  population_avg_activity int unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table user_login_events {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  logged_in_at timestamp [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table users {
+  id bigint unsigned [primary key, not null]
+  name varchar(191) [not null]
+  email varchar(191) [not null]
+  phone varchar(191) [null]
+  profile_picture_path varchar(191) [null]
+  nik varchar(191) [null]
+  status enum('active','declining','watchlist','suspended','inactive') [not null]
+  is_super_admin tinyint(1) [not null]
+  email_verified_at timestamp [null]
+  password varchar(191) [not null]
+  remember_token varchar(100) [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table villages {
+  id bigint unsigned [primary key, not null]
+  district_id bigint unsigned [not null]
+  name varchar(191) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table voucher_merchant_products {
+  id bigint unsigned [primary key, not null]
+  voucher_id bigint unsigned [not null]
+  merchant_id bigint unsigned [not null]
+  product_id bigint unsigned [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table voucher_merchants {
+  id bigint unsigned [primary key, not null]
+  voucher_id bigint unsigned [not null]
+  merchant_id bigint unsigned [not null]
+  status enum('active','inactive') [not null]
+  voucher_type enum('percent','fixed') [null]
+  discount_value decimal(15,2) [null]
+  activated_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table voucher_usages {
+  id bigint unsigned [primary key, not null]
+  user_id bigint unsigned [not null]
+  voucher_id bigint unsigned [not null]
+  order_id bigint unsigned [null]
+  discount_amount decimal(15,2) [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table vouchers {
+  id bigint unsigned [primary key, not null]
+  merchant_id bigint unsigned [null]
+  event_id bigint unsigned [null]
+  voucher_name varchar(100) [not null]
+  voucher_code varchar(100) [not null]
+  voucher_status enum('active','inactive') [not null]
+  is_secret tinyint(1) [not null]
+  voucher_type enum('percent','fixed') [not null]
+  voucher_description text [null]
+  voucher_start_date date [not null]
+  voucher_end_date date [not null]
+  value decimal(15,2) [not null]
+  max_discount_amount decimal(15,2) [null]
+  min_purchase_amount decimal(15,2) [not null]
+  usage_limit_per_user smallint unsigned [not null]
+  usage_limit smallint unsigned [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Ref: addon_group_options.addon_group_id > addon_groups.id
+Ref: addon_group_options.addon_id > addons.id
+Ref: addon_groups.product_id > products.id
+Ref: addons.merchant_id > merchants.id
+Ref: addresses.city_id > cities.id
+Ref: addresses.district_id > districts.id
+Ref: addresses.province_id > provinces.id
+Ref: addresses.village_id > villages.id
+Ref: admin_actions.admin_id > users.id
+Ref: alerts.assigned_to > users.id
+Ref: cart_item_addons.cart_item_id > cart_items.id
+Ref: cart_items.cart_id > carts.id
+Ref: carts.merchant_id > merchants.id
+Ref: carts.user_id > users.id
+Ref: categories.parent_id > categories.id
+Ref: categorizables.category_id > categories.id
+Ref: cities.province_id > provinces.id
+Ref: community_post_images.post_id > community_posts.id
+Ref: community_posts.user_id > users.id
+Ref: consultation_message_media.consultation_message_id > consultation_messages.id
+Ref: consultation_messages.sender_id > users.id
+Ref: consultation_messages.service_consultation_id > service_consultations.id
+Ref: content_reports.forwarded_by > users.id
+Ref: content_reports.forwarded_to > users.id
+Ref: content_reports.report_reason_id > report_reasons.id
+Ref: content_reports.reviewed_by > users.id
+Ref: content_reports.user_id > users.id
+Ref: districts.city_id > cities.id
+Ref: event_merchants.merchant_id > merchants.id
+Ref: event_merchants.removed_by > users.id
+Ref: events.created_by > users.id
+Ref: jasa_order_items.jasa_id > jasas.id
+Ref: jasa_order_items.order_id > orders.id
+Ref: jasa_order_items.service_consultation_id > service_consultations.id
+Ref: jasas.merchant_id > merchants.id
+Ref: merchant_wallet_histories.merchant_id > merchants.id
+Ref: merchants.reviewed_by > users.id
+Ref: merchants.segmentation_id > segmentations.id
+Ref: merchants.user_id > users.id
+Ref: notification_deliveries.notification_id > notifications.id
+Ref: orders.address_id > addresses.id
+Ref: orders.merchant_id > merchants.id
+Ref: orders.user_id > users.id
+Ref: orders.voucher_id > vouchers.id
+Ref: payments.order_id > orders.id
+Ref: payouts.merchant_id > merchants.id
+Ref: post_comments.parent_id > post_comments.id
+Ref: post_comments.post_id > community_posts.id
+Ref: post_comments.reply_to_user_id > users.id
+Ref: post_comments.user_id > users.id
+Ref: product_option_values.product_option_id > product_options.id
+Ref: product_options.product_id > products.id
+Ref: product_order_item_addons.addon_id > addons.id
+Ref: product_order_item_addons.product_order_item_id > product_order_items.id
+Ref: product_order_items.order_id > orders.id
+Ref: product_order_items.product_id > products.id
+Ref: product_order_items.product_variant_id > product_variants.id
+Ref: product_variant_option_values.product_option_value_id > product_option_values.id
+Ref: product_variant_option_values.product_variant_id > product_variants.id
+Ref: product_variants.product_id > products.id
+Ref: products.merchant_id > merchants.id
+Ref: push_subscriptions.user_id > users.id
+Ref: rating_summaries.merchant_id > merchants.id
+Ref: ratings.jasa_order_item_id > jasa_order_items.id
+Ref: ratings.merchant_id > merchants.id
+Ref: ratings.order_id > orders.id
+Ref: ratings.product_order_item_id > product_order_items.id
+Ref: ratings.user_id > users.id
+Ref: report_appeals.content_report_id > content_reports.id
+Ref: report_appeals.responded_by > users.id
+Ref: report_appeals.user_id > users.id
+Ref: review_histories.rating_id > ratings.id
+Ref: review_histories.updated_by > users.id
+Ref: review_media.review_id > ratings.id
+Ref: role_user.role_id > roles.id
+Ref: role_user.user_id > users.id
+Ref: service_completion_evidences.order_id > orders.id
+Ref: service_consultation_media.service_consultation_id > service_consultations.id
+Ref: service_consultation_notes.sender_id > users.id
+Ref: service_consultation_notes.service_consultation_id > service_consultations.id
+Ref: service_consultations.customer_id > users.id
+Ref: service_consultations.jasa_id > jasas.id
+Ref: service_consultations.merchant_id > merchants.id
+Ref: service_consultations.order_id > orders.id
+Ref: user_activity_metrics.user_id > users.id
+Ref: user_activity_snapshots.user_id > users.id
+Ref: user_login_events.user_id > users.id
+Ref: villages.district_id > districts.id
+Ref: voucher_merchant_products.merchant_id > merchants.id
+Ref: voucher_merchant_products.product_id > products.id
+Ref: voucher_merchant_products.voucher_id > vouchers.id
+Ref: voucher_merchants.merchant_id > merchants.id
+Ref: voucher_merchants.voucher_id > vouchers.id
+Ref: voucher_usages.order_id > orders.id
+Ref: voucher_usages.user_id > users.id
+Ref: voucher_usages.voucher_id > vouchers.id
+Ref: vouchers.event_id > events.id
+Ref: vouchers.merchant_id > merchants.id

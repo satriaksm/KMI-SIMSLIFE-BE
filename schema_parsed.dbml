@@ -119,17 +119,6 @@ Table villages {
   updated_at timestamp [null]
 }
 
-Table paguyubans {
-  id integer [primary key]
-  name varchar [not null]
-  description varchar [null]
-  image_path varchar [null]
-  contact_info varchar [null]
-  is_active boolean [not null]
-  created_at timestamp [null]
-  updated_at timestamp [null]
-}
-
 Table segmentations {
   id integer [primary key]
   name varchar [not null]
@@ -156,7 +145,6 @@ Table addresses {
 Table merchants {
   id integer [primary key]
   user_id integer [not null]
-  paguyuban_id integer [not null]
   segmentation_id integer [not null]
   name varchar [not null]
   slug varchar [not null]
@@ -321,36 +309,17 @@ Table jasas {
   merchant_id integer [not null]
   title varchar [not null]
   slug varchar [null, unique]
-  vendor varchar [null]
-  price integer [not null]
-  image varchar [null]
-  rating decimal [not null]
-  distance_km decimal [null]
-  duration_hours decimal [null]
   description varchar [null]
-  is_active boolean [not null]
   fixed_price integer [not null]
   base_price integer [not null]
-  service_type varchar [not null]
-  service_type_booking varchar [not null]
+  delivery_type enum [not null]
+  service_type_booking enum [not null]
   location_address varchar [null]
-  service_area varchar [null]
   special_notes varchar [null]
   payment_methods varchar [null]
-  status varchar [not null]
+  status enum [not null]
   operating_days varchar [null]
   operating_times varchar [null]
-  created_at timestamp [null]
-  updated_at timestamp [null]
-}
-
-Table packages {
-  id integer [primary key]
-  jasa_id integer [not null]
-  name varchar [not null]
-  description varchar [null]
-  price integer [not null]
-  image varchar [null]
   created_at timestamp [null]
   updated_at timestamp [null]
 }
@@ -416,8 +385,9 @@ Table vouchers {
   merchant_id integer [null]
   event_id integer [null]
   voucher_name varchar [not null]
-  voucher_code varchar [not null, unique]
+  voucher_code varchar [not null]
   voucher_status enum [not null]
+  is_secret boolean [not null]
   voucher_type enum [not null]
   voucher_description varchar [null]
   voucher_start_date timestamp [not null]
@@ -439,7 +409,6 @@ Table orders {
   voucher_id integer [null]
   order_type varchar [null]
   order_code varchar [not null]
-  total_price decimal [null]
   subtotal decimal [not null]
   discount_total decimal [not null]
   delivery_type enum [not null]
@@ -451,13 +420,15 @@ Table orders {
   net_amount decimal [not null]
   status enum [not null]
   notes varchar [null]
-  responsed_at timestamp [null]
   accepted_at timestamp [null]
+  on_progress_at timestamp [null]
   rejected_at timestamp [null]
   paid_at timestamp [null]
   delivered_at timestamp [null]
   completed_at timestamp [null]
   cancelled_at timestamp [null]
+  ready_to_pickup_at timestamp [null]
+  unpicked_at timestamp [null]
   confirm_deadline timestamp [null]
   user_name_snapshot varchar [not null]
   user_phone_snapshot varchar [not null]
@@ -469,6 +440,7 @@ Table orders {
   latitude_snapshot decimal [null]
   longitude_snapshot decimal [null]
   proof_image_path varchar [null]
+  proof_description varchar [null]
   failed_reason varchar [null]
   created_at timestamp [null]
   updated_at timestamp [null]
@@ -578,7 +550,7 @@ Table user_activity_metrics {
 }
 
 Table notifications {
-  id integer [primary key]
+  id varchar [not null]
   type varchar [not null]
   notifiable varchar [not null]
   data varchar [not null]
@@ -589,7 +561,7 @@ Table notifications {
 
 Table notification_deliveries {
   id integer [primary key]
-  notification_id integer [not null]
+  notification_id varchar [not null]
   channel varchar [not null]
   status enum [not null]
   provider_message varchar [null]
@@ -646,45 +618,6 @@ Table product_order_item_addons {
   updated_at timestamp [null]
 }
 
-Table ratings {
-  id integer [primary key]
-  user_id integer [not null]
-  merchant_id integer [not null]
-  order_id integer [null]
-  order_item_id integer [null]
-  service_order_id varchar [null]
-  rateable varchar [not null]
-  rating integer [not null]
-  title varchar [null]
-  comment varchar [null]
-  is_anonymous boolean [not null]
-  created_at timestamp [null]
-  updated_at timestamp [null]
-}
-
-Table rating_summaries {
-  id integer [primary key]
-  merchant_id integer [not null]
-  rateable varchar [not null]
-  summaryable_id varchar [null]
-  summaryable_type varchar [null]
-  average_rating decimal [not null]
-  total_ratings integer [not null]
-  total_reviews integer [not null]
-  rating_5 integer [not null]
-  rating_4 integer [not null]
-  rating_3 integer [not null]
-  rating_2 integer [not null]
-  rating_1 integer [not null]
-  rating_5_count integer [not null]
-  rating_4_count integer [not null]
-  rating_3_count integer [not null]
-  rating_2_count integer [not null]
-  rating_1_count integer [not null]
-  created_at timestamp [null]
-  updated_at timestamp [null]
-}
-
 Table shipping_settings {
   id integer [primary key]
   base_cost decimal [not null]
@@ -699,11 +632,14 @@ Table payments {
   order_id integer [not null]
   external_id varchar [not null, unique]
   xendit_invoice_id varchar [null]
+  xendit_refund_id varchar [null]
   invoice_url varchar [null]
   payment_method varchar [null]
   expired_at timestamp [null]
   amount decimal [not null]
   status enum [not null]
+  refund_status varchar [null]
+  refund_destination varchar [null]
   paid_at timestamp [null]
   raw_response json [null]
   created_at timestamp [null]
@@ -760,45 +696,6 @@ Table push_subscriptions {
   updated_at timestamp [null]
 }
 
-Table service_orders {
-  id integer [primary key]
-  customer_id integer [null]
-  merchant_id integer [not null]
-  jasa_id integer [not null]
-  consultation_id varchar [null]
-  order_number varchar [null, unique]
-  service_name varchar [not null]
-  service_type varchar [null]
-  service_image varchar [null]
-  merchant_name varchar [not null]
-  total_price decimal [not null]
-  status varchar [not null]
-  rejection_reason varchar [null]
-  rejected_at timestamp [null]
-  booking_date timestamp [null]
-  booking_time varchar [null]
-  booking_note varchar [null]
-  mekanisme_pemesanan varchar [null]
-  completion_note varchar [null]
-  customer_name varchar [null]
-  customer_phone varchar [null]
-  customer_address varchar [null]
-  customer_latitude decimal [null]
-  customer_longitude decimal [null]
-  service_location_address varchar [null]
-  whatsapp_redirect_url varchar [null]
-  payment_method varchar [null]
-  payment_status varchar [not null]
-  payment_reference varchar [null]
-  paid_at timestamp [null]
-  is_reviewed boolean [not null]
-  review_id integer [null]
-  customer_confirmed boolean [not null]
-  customer_confirmed_at timestamp [null]
-  created_at timestamp [null]
-  updated_at timestamp [null]
-}
-
 Table payment_fees {
   id integer [primary key]
   method_code varchar [not null, unique]
@@ -807,20 +704,6 @@ Table payment_fees {
   value decimal [not null]
   description varchar [null]
   is_active boolean [not null]
-  created_at timestamp [null]
-  updated_at timestamp [null]
-}
-
-Table review_media {
-  id integer [primary key]
-  review_id integer [not null]
-  file_path varchar [null]
-  file_url varchar [null]
-  file_type varchar [null]
-  mime_type varchar [null]
-  original_name varchar [null]
-  file_size varchar [null]
-  display_order integer [not null]
   created_at timestamp [null]
   updated_at timestamp [null]
 }
@@ -864,7 +747,7 @@ Table service_consultations {
   status varchar [not null]
   responded_at timestamp [null]
   closed_at timestamp [null]
-  service_order_id integer [null]
+  order_id integer [null]
   created_at timestamp [null]
   updated_at timestamp [null]
 }
@@ -895,7 +778,7 @@ Table service_consultation_notes {
 
 Table service_completion_evidences {
   id integer [primary key]
-  service_order_id integer [not null]
+  order_id integer [not null]
   file_name varchar [not null]
   file_path varchar [not null]
   file_url varchar [null]
@@ -937,16 +820,89 @@ Table jasa_order_items {
   id integer [primary key]
   order_id integer [not null]
   jasa_id integer [not null]
-  service_order_id integer [null]
   service_consultation_id integer [null]
   quantity integer [not null]
   price decimal [not null]
   subtotal decimal [not null]
+  order_method varchar [not null]
   booking_date timestamp [null]
   booking_time varchar [null]
-  service_type varchar [null]
-  service_type_booking varchar [null]
-  note varchar [null]
+  jasa_title_snapshot varchar [null]
+  jasa_image_snapshot varchar [null]
+  jasa_price_snapshot decimal [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table ratings {
+  id integer [primary key]
+  user_id integer [not null]
+  merchant_id integer [not null]
+  order_id integer [null]
+  product_order_item_id integer [null]
+  jasa_order_item_id integer [null]
+  rateable varchar [not null]
+  rating integer [not null]
+  title varchar [null]
+  comment varchar [null]
+  is_anonymous boolean [not null]
+  merchant_reply varchar [null]
+  merchant_reply_at timestamp [null]
+  update_count varchar [not null]
+  review_updated_at timestamp [null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table rating_summaries {
+  id integer [primary key]
+  merchant_id integer [not null]
+  rateable varchar [not null]
+  summaryable_id varchar [null]
+  summaryable_type varchar [null]
+  average_rating decimal [not null]
+  total_ratings integer [not null]
+  total_reviews integer [not null]
+  rating_5 integer [not null]
+  rating_4 integer [not null]
+  rating_3 integer [not null]
+  rating_2 integer [not null]
+  rating_1 integer [not null]
+  rating_5_count integer [not null]
+  rating_4_count integer [not null]
+  rating_3_count integer [not null]
+  rating_2_count integer [not null]
+  rating_1_count integer [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table review_media {
+  id integer [primary key]
+  review_id integer [not null]
+  file_path varchar [null]
+  file_url varchar [null]
+  file_type varchar [null]
+  mime_type varchar [null]
+  original_name varchar [null]
+  file_size varchar [null]
+  display_order integer [not null]
+  created_at timestamp [null]
+  updated_at timestamp [null]
+}
+
+Table review_histories {
+  id integer [primary key]
+  rating_id integer [not null]
+  old_rating varchar [null]
+  old_title varchar [null]
+  old_comment varchar [null]
+  old_media json [null]
+  new_rating varchar [null]
+  new_title varchar [null]
+  new_comment varchar [null]
+  new_media json [null]
+  updated_by integer [null]
   created_at timestamp [null]
   updated_at timestamp [null]
 }
@@ -962,7 +918,6 @@ Ref: addresses.city_id > cities.id
 Ref: addresses.district_id > districts.id
 Ref: addresses.village_id > villages.id
 Ref: merchants.user_id > users.id
-Ref: merchants.paguyuban_id > paguyubans.id
 Ref: merchants.segmentation_id > segmentations.id
 Ref: merchants.reviewed_by > users.id
 Ref: categories.parent_id > categories.id
@@ -984,7 +939,6 @@ Ref: post_comments.user_id > users.id
 Ref: post_comments.parent_id > post_comments.id
 Ref: post_comments.reply_to_user_id > users.id
 Ref: jasas.merchant_id > merchants.id
-Ref: packages.jasa_id > jasas.id
 Ref: content_reports.user_id > users.id
 Ref: content_reports.reviewed_by > users.id
 Ref: content_reports.forwarded_to > users.id
@@ -1019,11 +973,6 @@ Ref: voucher_merchants.voucher_id > vouchers.id
 Ref: voucher_merchants.merchant_id > merchants.id
 Ref: product_order_item_addons.product_order_item_id > product_order_items.id
 Ref: product_order_item_addons.addon_id > addons.id
-Ref: ratings.user_id > users.id
-Ref: ratings.merchant_id > merchants.id
-Ref: ratings.order_id > orders.id
-Ref: ratings.order_item_id > product_order_items.id
-Ref: rating_summaries.merchant_id > merchants.id
 Ref: payments.order_id > orders.id
 Ref: payouts.merchant_id > merchants.id
 Ref: merchant_wallet_histories.merchant_id > merchants.id
@@ -1031,26 +980,29 @@ Ref: voucher_merchant_products.voucher_id > vouchers.id
 Ref: voucher_merchant_products.merchant_id > merchants.id
 Ref: voucher_merchant_products.product_id > products.id
 Ref: push_subscriptions.user_id > users.id
-Ref: service_orders.customer_id > users.id
-Ref: service_orders.merchant_id > merchants.id
-Ref: service_orders.jasa_id > jasas.id
-Ref: service_orders.review_id > ratings.id
-Ref: review_media.review_id > ratings.id
 Ref: report_appeals.content_report_id > content_reports.id
 Ref: report_appeals.user_id > users.id
 Ref: report_appeals.responded_by > users.id
 Ref: service_consultations.jasa_id > jasas.id
 Ref: service_consultations.customer_id > users.id
 Ref: service_consultations.merchant_id > merchants.id
-Ref: service_consultations.service_order_id > service_orders.id
+Ref: service_consultations.order_id > orders.id
 Ref: service_consultation_media.service_consultation_id > service_consultations.id
 Ref: service_consultation_notes.service_consultation_id > service_consultations.id
 Ref: service_consultation_notes.sender_id > users.id
-Ref: service_completion_evidences.service_order_id > service_orders.id
+Ref: service_completion_evidences.order_id > orders.id
 Ref: consultation_messages.service_consultation_id > service_consultations.id
 Ref: consultation_messages.sender_id > users.id
 Ref: consultation_message_media.consultation_message_id > consultation_messages.id
 Ref: jasa_order_items.order_id > orders.id
 Ref: jasa_order_items.jasa_id > jasas.id
-Ref: jasa_order_items.service_order_id > service_orders.id
 Ref: jasa_order_items.service_consultation_id > service_consultations.id
+Ref: ratings.user_id > users.id
+Ref: ratings.merchant_id > merchants.id
+Ref: ratings.order_id > orders.id
+Ref: ratings.product_order_item_id > product_order_items.id
+Ref: ratings.jasa_order_item_id > jasa_order_items.id
+Ref: rating_summaries.merchant_id > merchants.id
+Ref: review_media.review_id > ratings.id
+Ref: review_histories.rating_id > ratings.id
+Ref: review_histories.updated_by > users.id

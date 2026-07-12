@@ -180,12 +180,12 @@ class OrderController extends Controller
             return ApiResponse::error('Forbidden', 403);
         }
 
-        if (in_array($order->status, ['paid', 'delivered', 'completed', 'cancelled'], true)) {
-            return ApiResponse::error('Order tidak bisa dibatalkan', 422);
+        if (in_array($order->status, ['paid', 'accepted', 'on-progress', 'delivered', 'completed', 'cancelled'], true)) {
+            return ApiResponse::error('Order tidak bisa dibatalkan pada tahap ini', 422);
         }
 
-
         $order->status = 'cancelled';
+        $order->failed_reason = 'Dibatalkan oleh pembeli.';
         $order->cancelled_at = now();
         $order->save();
 
@@ -427,8 +427,9 @@ class OrderController extends Controller
             }
         }
         
-        if ($newStatus === 'undelivered' && !$request->hasFile('proof_image')) {
-            return ApiResponse::error('Bukti foto wajib diunggah untuk pesanan gagal kirim.', 422);
+        if (($newStatus === 'undelivered' || $newStatus === 'unpicked') && !$request->hasFile('proof_image')) {
+            $errMessage = $newStatus === 'unpicked' ? 'Bukti foto wajib diunggah untuk pesanan yang tidak diambil.' : 'Bukti foto wajib diunggah untuk pesanan gagal kirim.';
+            return ApiResponse::error($errMessage, 422);
         }
 
         if (!$allowed) {
@@ -460,6 +461,13 @@ class OrderController extends Controller
             // Release funds for undelivered as the UMKM has prepared and tried to deliver
             $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'unpicked') {
+            if ($request->hasFile('proof_image')) {
+                if ($order->proof_image_path) {
+                    app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
+                }
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
+                $order->proof_image_path = $path;
+            }
             $order->unpicked_at = now();
             $this->moveBalanceToAvailable($order);
         } elseif ($newStatus === 'completed') {
@@ -923,8 +931,25 @@ class OrderController extends Controller
         if ($order->status === 'paid' && !$order->confirm_deadline && $order->paid_at && now()->diffInHours($order->paid_at) >= 24) {
             $this->refundBalancePendingIfNeeded($order);
             $order->status = 'cancelled';
+            $order->failed_reason = 'Dibatalkan otomatis karena penjual tidak mengkonfirmasi.';
             $order->cancelled_at = now();
             $changed = true;
+        }
+
+        // 4. Stuck in accepted, responsed or on-progress for too long (e.g. merchant forgot to process/ship)
+        if (in_array($order->status, ['accepted', 'responsed', 'on-progress'], true)) {
+            $referenceDate = $order->status === 'on-progress' && $order->on_progress_at 
+                ? $order->on_progress_at 
+                : ($order->accepted_at ?? $order->created_at);
+            
+            // Auto cancel after 2 hours of no updates in processing stage
+            if (now()->diffInHours($referenceDate) >= 2) {
+                $this->refundBalancePendingIfNeeded($order);
+                $order->status = 'cancelled';
+                $order->failed_reason = 'Dibatalkan otomatis karena melewati batas waktu proses/pengiriman (2 jam).';
+                $order->cancelled_at = now();
+                $changed = true;
+            }
         }
 
         if ($changed) {

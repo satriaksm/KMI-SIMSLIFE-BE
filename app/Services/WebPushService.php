@@ -58,10 +58,11 @@ class WebPushService
         }
 
         $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
         $this->notifyCustomer(
             $order,
             'Bayar tagihan pesanan Anda',
-            "Selesaikan pembayaran pesanan {$code} agar diproses penjual.",
+            "Selesaikan pembayaran pesanan {$code} ({$productLabel}) agar diproses penjual.",
             'order-pay-' . $order->id,
         );
     }
@@ -82,9 +83,12 @@ class WebPushService
             return;
         }
 
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
+
         $messages = [
-            'expired' => ['Pembayaran kedaluwarsa', 'Tagihan pesanan Anda telah kedaluwarsa.'],
-            'failed' => ['Pembayaran gagal', 'Pembayaran pesanan gagal diproses.'],
+            'expired' => ['Pembayaran kedaluwarsa', "Tagihan pesanan {$code} ({$productLabel}) Anda telah kedaluwarsa."],
+            'failed' => ['Pembayaran gagal', "Pembayaran pesanan {$code} ({$productLabel}) gagal diproses."],
         ];
 
         if (!isset($messages[$paymentStatus])) {
@@ -113,21 +117,37 @@ class WebPushService
 
         match ($status) {
             'accepted' => $this->notifyOrderAccepted($order),
+            'on-progress' => $this->notifyOrderOnProgress($order),
             'delivered' => $this->notifyOrderDelivered($order),
             'ready_to_pickup' => $this->notifyOrderReadyToPickup($order),
             'completed' => $this->notifyOrderCompleted($order),
             'cancelled', 'rejected' => $this->notifyOrderCancelled($order, $cancelContext),
+            'undelivered', 'unpicked' => $this->notifyOrderFailedDelivery($order),
             default => null,
         };
     }
 
     private function notifyOrderAccepted(Order $order): void
     {
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
         $this->notifyCustomer(
             $order,
-            'Pesanan diterima',
-            'Pesanan Anda diterima dan sedang diproses penjual.',
+            'Pesanan direspon',
+            "Pesanan {$code} ({$productLabel}) Anda telah diterima dan sedang diproses penjual.",
             'order-accepted-' . $order->id,
+        );
+    }
+
+    private function notifyOrderOnProgress(Order $order): void
+    {
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
+        $this->notifyCustomer(
+            $order,
+            'Pesanan sedang dikerjakan',
+            "Pesanan {$code} ({$productLabel}) Anda sedang dalam tahap pengerjaan/persiapan.",
+            'order-on-progress-' . $order->id,
         );
     }
 
@@ -137,10 +157,12 @@ class WebPushService
             return;
         }
 
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
         $this->notifyCustomer(
             $order,
             'Pesanan siap diambil',
-            'Silakan ambil pesanan Anda di toko.',
+            "Silakan ambil pesanan {$code} ({$productLabel}) Anda di toko.",
             'order-ready-' . $order->id,
         );
     }
@@ -151,27 +173,32 @@ class WebPushService
             return;
         }
 
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
         $this->notifyCustomer(
             $order,
             'Pesanan diantar',
-            'Pesanan Anda sedang dalam pengiriman.',
+            "Pesanan {$code} ({$productLabel}) Anda sedang dalam pengiriman.",
             'order-delivered-' . $order->id,
         );
     }
 
     private function notifyOrderCompleted(Order $order): void
     {
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
+
         if ($this->isCod($order)) {
             $this->notifyCustomer(
                 $order,
                 'Pesanan selesai',
-                'Pesanan telah diambil dan dibayar.',
+                "Pesanan {$code} ({$productLabel}) telah diambil dan dibayar.",
                 'order-completed-' . $order->id,
             );
             $this->notifyMerchant(
                 $order,
                 'Pesanan selesai',
-                'Pesanan COD telah diambil dan dibayar.',
+                "Pesanan COD {$code} ({$productLabel}) telah diambil dan dibayar.",
                 'order-completed-' . $order->id,
             );
             return;
@@ -180,43 +207,69 @@ class WebPushService
         $this->notifyCustomer(
             $order,
             'Pesanan selesai',
-            'Pesanan telah diterima.',
+            "Pesanan {$code} ({$productLabel}) telah Anda terima.",
             'order-completed-' . $order->id,
         );
         $this->notifyMerchant(
             $order,
             'Pesanan selesai',
-            'Pesanan telah diterima.',
+            "Pesanan {$code} ({$productLabel}) telah selesai.",
             'order-completed-' . $order->id,
         );
     }
 
     private function notifyOrderCancelled(Order $order, ?string $cancelContext = null): void
     {
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
+        
         $body = match ($cancelContext) {
-            'merchant_reject' => 'Pesanan Anda ditolak.',
-            'customer_cancel' => 'Pesanan Anda dibatalkan.',
-            'auto' => 'Pesanan Anda dibatalkan karena batas waktu habis.',
+            'merchant_reject' => "Pesanan {$code} ({$productLabel}) Anda telah ditolak penjual.",
+            'customer_cancel' => "Pesanan {$code} ({$productLabel}) Anda dibatalkan.",
+            'auto' => "Pesanan {$code} ({$productLabel}) Anda dibatalkan karena batas waktu habis.",
             default => (!$order->accepted_at && $order->paid_at)
-                ? 'Pesanan Anda ditolak.'
-                : 'Pesanan Anda dibatalkan.',
+                ? "Pesanan {$code} ({$productLabel}) Anda telah ditolak penjual."
+                : "Pesanan {$code} ({$productLabel}) Anda dibatalkan.",
         };
+
+        $title = in_array($cancelContext, ['merchant_reject']) || (!$order->accepted_at && $order->paid_at) 
+            ? 'Pesanan direspon' 
+            : 'Pesanan dibatalkan';
 
         $this->notifyCustomer(
             $order,
-            'Pesanan dibatalkan',
+            $title,
             $body,
             'order-cancelled-' . $order->id,
         );
     }
 
+    private function notifyOrderFailedDelivery(Order $order): void
+    {
+        $code = $order->order_code ?: ('#' . $order->id);
+        $productLabel = $this->orderProductLabel($order);
+
+        $title = $this->isPickup($order) ? 'Pesanan gagal diambil' : 'Pesanan gagal diantar';
+        $body = $order->failed_reason 
+            ? "Pesanan {$code} ({$productLabel}) gagal diselesaikan: {$order->failed_reason}" 
+            : "Pesanan {$code} ({$productLabel}) Anda gagal diselesaikan.";
+
+        $this->notifyCustomer(
+            $order,
+            $title,
+            $body,
+            'order-failed-' . $order->id,
+        );
+    }
+
     private function notifyMerchantNewOrder(Order $order): void
     {
+        $code = $order->order_code ?: ('#' . $order->id);
         $productLabel = $this->orderProductLabel($order);
         $this->notifyMerchant(
             $order,
             'Pesanan baru',
-            "Anda mendapatkan pesanan \"{$productLabel}\".",
+            "Anda mendapatkan pesanan {$code} ({$productLabel}).",
             'order-new-' . $order->id,
         );
     }
