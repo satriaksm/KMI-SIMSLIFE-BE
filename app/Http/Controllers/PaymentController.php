@@ -146,7 +146,7 @@ class PaymentController extends Controller
             $invoiceData = $response->json();
             $xenditStatus = strtoupper((string) ($invoiceData['status'] ?? ''));
 
-            if ($xenditStatus !== 'PAID') {
+            if (!in_array($xenditStatus, ['PAID', 'SETTLED'], true)) {
                 return ApiResponse::success([
                     'order_status'  => $order->status,
                     'xendit_status' => $xenditStatus,
@@ -174,7 +174,24 @@ class PaymentController extends Controller
                     'confirm_deadline' => now()->addMinutes($confirmMinutes),
                 ]);
 
+                $merchant = $order->merchant;
+                if ($merchant) {
+                    $netAmount = (float) ($order->net_amount ?? 0);
+                    if ($netAmount <= 0) {
+                        $netAmount = max(0, (float) $order->gross_amount - (float) $order->platform_fee);
+                    }
 
+                    $merchant->increment('balance_pending', $netAmount);
+
+                    \App\Models\MerchantWalletHistory::create([
+                        'merchant_id' => $merchant->id,
+                        'type' => 'credit',
+                        'amount' => $netAmount,
+                        'reference_type' => 'order',
+                        'reference_id' => $order->id,
+                        'description' => 'Payment received (pending)',
+                    ]);
+                }
             });
 
             $payment->refresh();
