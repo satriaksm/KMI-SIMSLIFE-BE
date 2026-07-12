@@ -34,9 +34,9 @@ class DashboardController extends Controller
          */
         if ($isJasaMerchant) {
             $totalProducts = Jasa::where('merchant_id', $merchantId)->count();
-            $published = Jasa::where('merchant_id', $merchantId)->where('is_active', true)->count();
-            $draft = Jasa::where('merchant_id', $merchantId)->where('is_active', false)->count();
-            $archived = 0;
+            $published = Jasa::where('merchant_id', $merchantId)->where('status', 'published')->count();
+            $draft = Jasa::where('merchant_id', $merchantId)->where('status', 'draft')->count();
+            $archived = Jasa::where('merchant_id', $merchantId)->where('status', 'archived')->count();
         } else {
             $totalProducts = Product::where('merchant_id', $merchantId)->count();
             $published = Product::where('merchant_id', $merchantId)->published()->count();
@@ -50,17 +50,8 @@ class DashboardController extends Controller
          * =========================
          */
         if ($isJasaMerchant) {
-            $lowStock = 0;
             $outOfStock = 0;
         } else {
-            $lowStock = DB::table('product_variants')
-                ->join('products', 'products.id', '=', 'product_variants.product_id')
-                ->where('products.merchant_id', $merchantId)
-                ->where('products.status', 'published')
-                ->whereBetween('product_variants.stock', [1, 5])
-                ->distinct('products.id')
-                ->count('products.id');
-
             $outOfStock = DB::table('product_variants')
                 ->join('products', 'products.id', '=', 'product_variants.product_id')
                 ->where('products.merchant_id', $merchantId)
@@ -72,82 +63,16 @@ class DashboardController extends Controller
 
         /**
          * =========================
-         * STAT VOUCHER
-         * =========================
-         */
-        $totalVouchers = Voucher::where('merchant_id', $merchantId)->count();
-        $activeVouchers = Voucher::where('merchant_id', $merchantId)->active()->count();
-        $inactiveVouchers = Voucher::where('merchant_id', $merchantId)
-            ->where('voucher_status', 'inactive')
-            ->count();
-        $expiredVouchers = Voucher::where('merchant_id', $merchantId)
-            ->whereDate('voucher_end_date', '<', now())
-            ->count();
-
-        $voucherUsedCount = DB::table('voucher_usages')
-            ->join('vouchers', 'vouchers.id', '=', 'voucher_usages.voucher_id')
-            ->where('vouchers.merchant_id', $merchantId)
-            ->count();
-
-        /**
-         * =========================
-         * CHART KATEGORI (TOP 3 + LAINNYA)
-         * =========================
-         * - Untuk merchant produk: pakai relasi products
-         * - Untuk merchant jasa: pakai relasi jasas
-         */
-        if ($isJasaMerchant) {
-            $categoryStats = Category::whereHas('jasas', function ($q) use ($merchantId) {
-                $q->where('merchant_id', $merchantId)
-                    ->where('is_active', true);
-            })
-                ->withCount([
-                    'jasas as total' => function ($q) use ($merchantId) {
-                        $q->where('merchant_id', $merchantId)
-                            ->where('is_active', true);
-                    }
-                ])
-                ->orderByDesc('total')
-                ->get();
-        } else {
-            $categoryStats = Category::whereHas('products', function ($q) use ($merchantId) {
-                $q->where('merchant_id', $merchantId)
-                    ->where('status', 'published');
-            })
-                ->withCount([
-                    'products as total' => function ($q) use ($merchantId) {
-                        $q->where('merchant_id', $merchantId)
-                            ->where('status', 'published');
-                    }
-                ])
-                ->orderByDesc('total')
-                ->get();
-        }
-
-        $topCategories = $categoryStats->take(3);
-        $otherTotal = $categoryStats->slice(3)->sum('total');
-
-        $labels = $topCategories->pluck('name')->toArray();
-        $data = $topCategories->pluck('total')->toArray();
-
-        if ($otherTotal > 0) {
-            $labels[] = 'Lainnya';
-            $data[] = $otherTotal;
-        }
-
-        /**
-         * =========================
          * STAT PESANAN & KEUANGAN
          * =========================
          */
         $ordersToday = \App\Models\Order::where('merchant_id', $merchantId)
             ->whereDate('created_at', today())
-            ->where(function ($q) {
-                $q->where('status', '!=', 'pending')
-                  ->orWhere(function ($sq) {
-                      $sq->where('status', 'pending')->where('payment_method', 'COD');
-                  });
-            })
+            ->whereIn('status', [
+                'responsed', 'accepted', 'rejected', 'cancelled',
+                'ready_to_pickup', 'delivered', 'completed', 
+                'undelivered', 'unpicked'
+            ])
             ->count();
 
         $ordersPending = \App\Models\Order::where('merchant_id', $merchantId)
@@ -165,6 +90,24 @@ class DashboardController extends Controller
         $revenueTotal = \App\Models\Order::where('merchant_id', $merchantId)
             ->where('status', 'completed')
             ->sum('net_amount');
+
+        /**
+         * =========================
+         * CHART PESANAN 7 HARI TERAKHIR
+         * =========================
+         */
+        $ordersChartLabels = [];
+        $ordersChartData = [];
+        
+        for ($i = 6; $i >= 0; $i--) {
+            $date = today()->subDays($i);
+            $ordersChartLabels[] = $date->translatedFormat('d M');
+            $count = \App\Models\Order::where('merchant_id', $merchantId)
+                ->whereDate('created_at', $date)
+                ->where('status', 'completed')
+                ->count();
+            $ordersChartData[] = $count;
+        }
 
         return ApiResponse::success(
             [
@@ -190,26 +133,12 @@ class DashboardController extends Controller
                     'published' => $published,
                     'draft' => $draft,
                     'archived' => $archived,
-                    'low_stock' => $lowStock,
                     'out_of_stock' => $outOfStock,
                 ],
-                'voucher_stats' => [
-                    'total' => $totalVouchers,
-                    'active' => $activeVouchers,
-                    'inactive' => $inactiveVouchers,
-                    'expired' => $expiredVouchers,
-                    'used' => $voucherUsedCount,
-                ],
                 'charts' => [
-                    'status' => [
-                        'labels' => ['Published', 'Draft', 'Archived'],
-                        'data' => [$published, $draft, $archived],
-                    ],
-                    'category' => [
-                        'labels' => $labels,
-                        'datasets' => [
-                            ['data' => $data]
-                        ]
+                    'orders' => [
+                        'labels' => $ordersChartLabels,
+                        'data' => $ordersChartData,
                     ]
                 ]
             ],

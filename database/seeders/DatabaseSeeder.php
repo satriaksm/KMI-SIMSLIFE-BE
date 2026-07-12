@@ -28,7 +28,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             MerchantSeeder::class,
             VoucherSeeder::class,
-            // JasaSeeder::class,
+            JasaSeeder::class,
             ProductSeeder::class,
             OrderSeeder::class,
             CommunityPostSeeder::class,

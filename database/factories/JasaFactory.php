@@ -30,7 +30,7 @@ class JasaFactory extends Factory
             'description' => $this->faker->sentence(10),
             'fixed_price' => $fixedPrice,
             'base_price' => $basePrice,
-            'service_type' => $this->faker->randomElement(['on_site', 'online', 'at_location']),
+            'delivery_type' => $this->faker->randomElement(['on-site', 'online', 'in-store']),
             'location_address' => $this->faker->address,
             'service_area' => $this->faker->city,
             'special_notes' => $this->faker->optional()->sentence(),

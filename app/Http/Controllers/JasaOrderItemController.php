@@ -70,10 +70,6 @@ class JasaOrderItemController extends Controller
 
         $jasa = Jasa::with('packages')->findOrFail($data['jasa_id']);
 
-        // Optional: jasa harus aktif
-        if ((int) ($jasa->is_active ?? 1) !== 1) {
-            return response()->json(['message' => 'Jasa sedang tidak aktif.'], 422);
-        }
 
         // Validasi package harus milik jasa
         $package = null;

@@ -11,16 +11,23 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('order_id')->constrained('orders')->onDelete('cascade');
             $table->foreignId('jasa_id')->constrained('jasas')->onDelete('cascade');
-            $table->foreignId('service_order_id')->nullable()->constrained('service_orders')->nullOnDelete();
             $table->foreignId('service_consultation_id')->nullable()->constrained('service_consultations')->nullOnDelete();
+            
+            // Core Order Item Fields
             $table->integer('quantity')->default(1);
             $table->decimal('price', 12, 2);
             $table->decimal('subtotal', 12, 2);
+            $table->string('order_method')->default('keranjang'); // keranjang, booking, konsultasi
+            
+            // Booking Details
             $table->date('booking_date')->nullable();
-            $table->string('booking_time')->nullable();
-            $table->string('service_type')->nullable();
-            $table->string('service_type_booking')->nullable();
-            $table->text('note')->nullable();
+            $table->time('booking_time')->nullable();
+
+            
+            // Snapshots - Service Info
+            $table->string('jasa_title_snapshot')->nullable();
+            $table->text('jasa_image_snapshot')->nullable();
+            $table->decimal('jasa_price_snapshot', 12, 2)->nullable();
             $table->timestamps();
         });
     }

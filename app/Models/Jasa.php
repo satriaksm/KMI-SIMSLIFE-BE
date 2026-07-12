@@ -18,19 +18,11 @@ class Jasa extends Model
         'merchant_id',
         'title',
         'slug',
-        'vendor',
-        'price',
-        'image',
-        'rating',
-        'distance_km',
-        'duration_hours',
         'description',
         'fixed_price',
         'base_price',
-        'service_type',
-        'service_type_booking',
+        'delivery_type',
         'location_address',
-        'service_area',
         'special_notes',
         'payment_methods',
         'status',
@@ -38,7 +30,6 @@ class Jasa extends Model
         'operating_times',
 
         // Flags
-        'is_active', // kontrol aktif/tidak
         'cara_pemesanan', // langsung_pesan | booking | memerlukan_konsultasi (UMKM Jasa only)
     ];
 
@@ -69,7 +60,6 @@ class Jasa extends Model
         'payment_methods' => 'array',
         'fixed_price' => 'integer',
         'base_price' => 'integer',
-        'price' => 'integer',
     ];
 
     /**
@@ -201,6 +191,6 @@ class Jasa extends Model
 
     public function ratingSummary(): MorphOne
     {
-        return $this->morphOne(RatingSummary::class, 'summaryable');
+        return $this->morphOne(RatingSummary::class, 'rateable');
     }
 }

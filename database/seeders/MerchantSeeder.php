@@ -75,6 +75,36 @@ class MerchantSeeder extends Seeder
                 'description' => 'Menjual hijab, mukena, dan aksesori muslimah dengan desain modern.',
                 'email_user' => 'cantika@example.com'
             ],
+            [
+                'name' => 'Bengkel Motor Bayu',
+                'category' => 'Jasa',
+                'description' => 'Melayani servis rutin, ganti oli, dan perbaikan berbagai jenis motor.',
+                'email_user' => 'bayu@example.com'
+            ],
+            [
+                'name' => 'Intan Laundry',
+                'category' => 'Jasa',
+                'description' => 'Jasa cuci pakaian kiloan dan satuan dengan hasil bersih, wangi, dan rapi.',
+                'email_user' => 'intan@example.com'
+            ],
+            [
+                'name' => 'Rizki Elektronik Service',
+                'category' => 'Jasa',
+                'description' => 'Memperbaiki TV, kulkas, mesin cuci, dan peralatan elektronik rumah tangga lainnya.',
+                'email_user' => 'rizki@example.com'
+            ],
+            [
+                'name' => 'Nanda Barber Shop',
+                'category' => 'Jasa',
+                'description' => 'Tempat potong rambut pria dengan berbagai model kekinian dan klasik.',
+                'email_user' => 'nanda@example.com'
+            ],
+            [
+                'name' => 'Ayu Tailor',
+                'category' => 'Jasa',
+                'description' => 'Menerima jahitan pakaian pria dan wanita, permak, dan pembuatan seragam.',
+                'email_user' => 'ayu@example.com'
+            ],
         ];
 
         DB::beginTransaction();

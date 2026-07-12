@@ -30,7 +30,7 @@ return new class extends Migration {
             ])->default('pending');
 
             $table->string('refund_status')->nullable()->comment('processing, succeeded, failed, resolved');
-
+            $table->string('refund_destination')->nullable();
 
             $table->timestamp('paid_at')->nullable();
 
