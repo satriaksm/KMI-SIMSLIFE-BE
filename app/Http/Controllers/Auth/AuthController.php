@@ -39,7 +39,7 @@ class AuthController extends Controller
                 'password.confirmed' => 'Konfirmasi password tidak cocok.',
                 'password.min' => 'Password minimal 8 karakter.',
                 'password.regex' => 'Password harus mengandung huruf besar, angka, dan simbol (!@#$%^&*-_).',
-                'nik.size' => 'NIK harus 16 karakter.',
+
             ]
         );
 

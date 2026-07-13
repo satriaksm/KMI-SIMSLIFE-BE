@@ -529,7 +529,7 @@ class AdminUserController extends Controller
                 'password_confirmation.confirmed' => 'Konfirmasi password tidak cocok.',
                 'password.min' => 'Password minimal 8 karakter.',
                 'password.regex' => 'Password harus mengandung huruf besar, huruf kecil, angka, dan simbol (!@#$%^&*-_).',
-                'nik.size' => 'NIK harus 16 karakter.',
+
             ]
         );
 
