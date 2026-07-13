@@ -146,19 +146,28 @@ class ImageController extends Controller
     private function stream(Image $image, string $disk, string $size = 'original')
     {
         $path = $this->resolveSizePath($image->image_path, $size);
-
-        if (!Storage::disk($disk)->exists($path)) {
+        $stream = null;
+        
+        if (Storage::disk($disk)->exists($path)) {
+            $stream = Storage::disk($disk)->readStream($path);
+        } else if (file_exists(public_path($path))) {
+            $stream = fopen(public_path($path), 'r');
+        } else {
             $path = $image->image_path; // fallback
-            if (!Storage::disk($disk)->exists($path)) {
+            if (Storage::disk($disk)->exists($path)) {
+                $stream = Storage::disk($disk)->readStream($path);
+            } else if (file_exists(public_path($path))) {
+                $stream = fopen(public_path($path), 'r');
+            } else {
                 abort(404);
             }
         }
 
-        $stream = Storage::disk($disk)->readStream($path);
         $mime = pathinfo($path, PATHINFO_EXTENSION) === 'webp' ? 'image/webp' : ($image->mime_type ?? 'image/jpeg');
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
+            if (is_resource($stream)) fclose($stream);
         }, 200, [
             'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=31536000',

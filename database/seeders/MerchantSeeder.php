@@ -8,6 +8,7 @@ use App\Models\Role;
 use App\Models\Address;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 
 class MerchantSeeder extends Seeder
@@ -143,6 +144,22 @@ class MerchantSeeder extends Seeder
                 // Acak apakah hari minggu libur atau tetap buka
                 $isSundayOpen = (bool) rand(0, 1);
 
+                $categoryLower = strtolower($data['category']);
+                $imageDir = public_path('images/umkm/' . $categoryLower);
+                $logoPath = null;
+                $coverPath = null;
+                
+                if (File::exists($imageDir)) {
+                    $files = File::files($imageDir);
+                    if (!empty($files)) {
+                        $randomLogo = $files[array_rand($files)]->getFilename();
+                        $logoPath = 'images/umkm/' . $categoryLower . '/' . $randomLogo;
+                        
+                        $randomCover = $files[array_rand($files)]->getFilename();
+                        $coverPath = 'images/umkm/' . $categoryLower . '/' . $randomCover;
+                    }
+                }
+
                 $merchant = Merchant::updateOrCreate(
                     ['slug' => Str::slug($data['name'])],
                     [
@@ -150,8 +167,8 @@ class MerchantSeeder extends Seeder
                         'segmentation_id' => $segmentationId, 
                         'name' => $data['name'],
                         'description' => $data['description'],
-                        'logo_path' => null,
-                        'cover_path' => null,
+                        'logo_path' => $logoPath,
+                        'cover_path' => $coverPath,
                         'phone' => '08' . rand(1111111111, 9999999999),
                         'operational_hours' => [
                             'monday' => ['open' => $selectedSchedule['open'], 'close' => $selectedSchedule['close'], 'is_open' => true],

@@ -263,6 +263,24 @@ class JasaSeeder extends Seeder
                 if ($catId) {
                     $jasa->categories()->attach($catId);
                 }
+
+                $imageDir = public_path('images/umkm/jasa');
+                $imagePath = null;
+                if (\Illuminate\Support\Facades\File::exists($imageDir)) {
+                    $files = \Illuminate\Support\Facades\File::files($imageDir);
+                    if (!empty($files)) {
+                        $randomImg = $files[array_rand($files)]->getFilename();
+                        $imagePath = 'images/umkm/jasa/' . $randomImg;
+                    }
+                }
+                
+                if ($imagePath) {
+                    $jasa->images()->create([
+                        'image_path' => $imagePath,
+                        'display_order' => 0,
+                        'is_cover' => true,
+                    ]);
+                }
             }
         }
     }

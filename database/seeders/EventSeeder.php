@@ -60,7 +60,7 @@ class EventSeeder extends Seeder
             'event_description' => 'Penjualan makanan berbuka puasa dan kebutuhan Ramadhan.',
             'event_start_date' => Carbon::today()->subDays(2),
             'event_end_date' => Carbon::today()->addDays(5),
-            'banner_img_path' => 'events/dummy-banner.jpg',
+            'banner_img_path' => 'images/banner/bazaar ramadhan.png',
             'status' => 'published',
             'created_by' => $admin->id,
         ]);
@@ -71,7 +71,7 @@ class EventSeeder extends Seeder
             'event_description' => 'Pameran produk kreatif serta pelatihan pemasaran digital bagi UMKM.',
             'event_start_date' => Carbon::today()->addDays(15),
             'event_end_date' => Carbon::today()->addDays(20),
-            'banner_img_path' => 'events/dummy-banner.jpg',
+            'banner_img_path' => 'images/banner/festival produk kreatif.png',
             'status' => 'draft',
             'created_by' => $admin->id,
         ]);
@@ -82,7 +82,7 @@ class EventSeeder extends Seeder
             'event_description' => 'Festival kuliner yang menghadirkan puluhan UMKM makanan dan minuman lokal.',
             'event_start_date' => Carbon::today()->subDays(15),
             'event_end_date' => Carbon::today()->subDays(5),
-            'banner_img_path' => 'events/dummy-banner.jpg',
+            'banner_img_path' => 'images/banner/pekan kuliner.png',
             'status' => 'archived',
             'created_by' => $admin->id,
         ]);

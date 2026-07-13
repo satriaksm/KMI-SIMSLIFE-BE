@@ -45,9 +45,18 @@ class AdminEventController extends Controller
         $originalPath = ltrim($event->banner_img_path, '/');
         $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
-        if (!Storage::disk($disk)->exists($path)) {
+        $stream = null;
+        if (Storage::disk($disk)->exists($path)) {
+            $stream = Storage::disk($disk)->readStream($path);
+        } else if (file_exists(public_path($path))) {
+            $stream = fopen(public_path($path), 'r');
+        } else {
             $path = $originalPath; // fallback
-            if (!Storage::disk($disk)->exists($path)) {
+            if (Storage::disk($disk)->exists($path)) {
+                $stream = Storage::disk($disk)->readStream($path);
+            } else if (file_exists(public_path($path))) {
+                $stream = fopen(public_path($path), 'r');
+            } else {
                 abort(404);
             }
         }
@@ -62,10 +71,9 @@ class AdminEventController extends Controller
             default => 'application/octet-stream',
         };
 
-        $stream = Storage::disk($disk)->readStream($path);
-
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
+            if (is_resource($stream)) fclose($stream);
         }, 200, [
             'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=31536000',

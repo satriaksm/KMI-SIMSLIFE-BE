@@ -1744,9 +1744,22 @@ class ProductSeeder extends Seeder
                     }
                 }
 
+                $merchantCategory = $merchant->segmentation ? str_replace('UMKM ', '', $merchant->segmentation->name) : 'Kuliner';
+                $categoryLower = strtolower($merchantCategory);
+                $imageDir = public_path('images/umkm/' . $categoryLower);
+                $imagePath = "products/dummy-product.jpg";
+                
+                if (\Illuminate\Support\Facades\File::exists($imageDir)) {
+                    $files = \Illuminate\Support\Facades\File::files($imageDir);
+                    if (!empty($files)) {
+                        $randomImg = $files[array_rand($files)]->getFilename();
+                        $imagePath = 'images/umkm/' . $categoryLower . '/' . $randomImg;
+                    }
+                }
+
                 // Create product image
                 $product->images()->create([
-                    'image_path' => "products/dummy-product.jpg",
+                    'image_path' => $imagePath,
                     'display_order' => 0,
                     'is_cover' => true,
                 ]);

@@ -618,7 +618,12 @@ class MerchantController extends Controller
         $disk = 'public';
         $path = ltrim($assetPath, '/');
 
-        if (!Storage::disk($disk)->exists($path)) {
+        $stream = null;
+        if (Storage::disk($disk)->exists($path)) {
+            $stream = Storage::disk($disk)->readStream($path);
+        } else if (file_exists(public_path($path))) {
+            $stream = fopen(public_path($path), 'r');
+        } else {
             abort(404);
         }
 
@@ -632,7 +637,7 @@ class MerchantController extends Controller
             default => 'application/octet-stream',
         };
 
-        $stream = Storage::disk($disk)->readStream($path);
+
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
