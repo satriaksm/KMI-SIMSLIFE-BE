@@ -15,7 +15,8 @@ return new class extends Migration
     {
         Schema::create('service_consultations', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('jasa_id')->constrained('jasas')->onDelete('cascade');
+            $table->unsignedInteger('jasa_id');
+            $table->foreign('jasa_id')->references('id')->on('jasas')->onDelete('cascade');
             $table->foreignId('customer_id')->constrained('users')->onDelete('cascade');
             $table->foreignId('merchant_id')->constrained('merchants')->onDelete('cascade');
 

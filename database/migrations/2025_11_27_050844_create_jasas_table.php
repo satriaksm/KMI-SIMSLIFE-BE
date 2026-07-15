@@ -8,10 +8,10 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('jasas', function (Blueprint $table) {
-            $table->id();
+            $table->increments('id');
             $table->foreignId('merchant_id')->constrained('merchants')->onDelete('cascade');
             $table->string('title');
-            $table->string('slug')->unique()->nullable();
+            $table->string('slug', 150)->unique()->nullable();
             $table->text('description')->nullable();
             $table->integer('fixed_price')->default(0);
             $table->integer('base_price')->default(0);
@@ -19,10 +19,10 @@ return new class extends Migration {
             $table->enum('service_type_booking', ['keranjang', 'booking', 'konsultasi'])->default('keranjang');
             $table->string('location_address')->nullable();
             $table->text('special_notes')->nullable();
-            $table->string('payment_methods')->nullable(); // contoh: "cod,transfer"
+            $table->string('payment_methods', 50)->nullable(); // contoh: "cod,transfer"
             $table->enum('status', ['draft', 'published', 'archived'])->default('draft');
-            $table->string('operating_days')->nullable();   // contoh: "1,2,3,4,5,6,7"
-            $table->string('operating_times')->nullable(); // contoh: "08.00,08.30,09.00"
+            $table->string('operating_days', 30)->nullable();   // contoh: "1,2,3,4,5,6,7"
+            $table->string('operating_times', 50)->nullable(); // contoh: "08.00,08.30,09.00"
             $table->timestamps();
         });
     }

@@ -8,9 +8,11 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('addon_groups', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('product_id')
-                ->constrained('products')
+            $table->increments('id');
+            $table->unsignedInteger('product_id');
+            $table->foreign('product_id')
+                ->references('id')
+                ->on('products')
                 ->cascadeOnUpdate()
                 ->cascadeOnDelete();
             $table->string('addon_group_name', 100);

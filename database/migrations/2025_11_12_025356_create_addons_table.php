@@ -8,7 +8,7 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('addons', function (Blueprint $table) {
-            $table->id();
+            $table->increments('id');
             $table->foreignId('merchant_id')
                 ->constrained('merchants')
                 ->cascadeOnUpdate()

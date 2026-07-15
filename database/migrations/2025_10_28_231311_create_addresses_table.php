@@ -19,10 +19,14 @@ return new class extends Migration {
                 $table->morphs('addressable');
 
                 // ID wilayah (tanpa FK, sesuaikan jika punya master table)
-                $table->foreignId('province_id')->constrained('provinces')->cascadeOnUpdate()->restrictOnDelete();
-                $table->foreignId('city_id')->constrained('cities')->cascadeOnUpdate()->restrictOnDelete();
-                $table->foreignId('district_id')->constrained('districts')->cascadeOnUpdate()->restrictOnDelete();
-                $table->foreignId('village_id')->constrained('villages')->cascadeOnUpdate()->restrictOnDelete();
+                $table->unsignedTinyInteger('province_id');
+                $table->foreign('province_id')->references('id')->on('provinces')->cascadeOnUpdate()->restrictOnDelete();
+                $table->unsignedSmallInteger('city_id');
+                $table->foreign('city_id')->references('id')->on('cities')->cascadeOnUpdate()->restrictOnDelete();
+                $table->unsignedMediumInteger('district_id');
+                $table->foreign('district_id')->references('id')->on('districts')->cascadeOnUpdate()->restrictOnDelete();
+                $table->unsignedBigInteger('village_id');
+                $table->foreign('village_id')->references('id')->on('villages')->cascadeOnUpdate()->restrictOnDelete();
 
                 // koordinat
                 $table->decimal('latitude', 10, 7)->nullable();

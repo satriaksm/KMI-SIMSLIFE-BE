@@ -11,8 +11,9 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('cities', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('province_id')->constrained()->onDelete('cascade');
+            $table->smallIncrements('id');
+            $table->unsignedTinyInteger('province_id');
+            $table->foreign('province_id')->references('id')->on('provinces')->onDelete('cascade');
             $table->string('name');
             $table->timestamps();
         });

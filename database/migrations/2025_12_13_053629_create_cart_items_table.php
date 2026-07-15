@@ -22,15 +22,15 @@ return new class extends Migration {
             $table->morphs('itemable');
 
             // ❌ TIDAK FK — hanya pointer
-            $table->unsignedBigInteger('product_variant_id')->nullable();
+            $table->unsignedInteger('product_variant_id')->nullable();
 
             // 🔒 SNAPSHOT
             $table->string('itemable_name_snapshot');
             $table->string('product_variant_name_snapshot')->nullable();
             $table->string('image_snapshot_path')->nullable();
 
-            $table->integer('price_snapshot');
-            $table->unsignedInteger('quantity')->default(1);
+            $table->decimal('price_snapshot', 12, 2);
+            $table->unsignedSmallInteger('quantity')->default(1);
 
             $table->timestamps();
 
