@@ -957,7 +957,8 @@ class ProductController extends Controller
 
         foreach ($images as $index => $imageData) {
             $file = $imageData['file'];
-            $path = app(ImageOptimizationService::class)->processAndStore($file, "products/{$product->id}", 'public', true);
+            $suffix = ($index === $coverIndex) ? 'cover' : 'gallery-' . $index;
+            $path = app(ImageOptimizationService::class)->processAndStore($file, "products/{$product->slug}", 'public', true, "{$product->slug}-{$suffix}");
 
             $imagesToInsert[] = [
                 'imageable_type' => 'product',
@@ -1072,7 +1073,13 @@ class ProductController extends Controller
                 // Upload image jika ada (hanya untuk option pertama)
                 if ($usesImages && !empty($optionData['images'])) {
                     $imageFile = $optionData['images'][0]['file'];
-                    $path = app(ImageOptimizationService::class)->processAndStore($imageFile, "option-values/{$value->id}", 'public', true);
+                    $path = app(ImageOptimizationService::class)->processAndStore(
+                        $imageFile, 
+                        "products/{$product->slug}/product_options/" . Str::slug($option->option_name), 
+                        'public', 
+                        true, 
+                        $product->name . ' ' . $option->option_name . ' ' . $value->option_value
+                    );
                     $value->update(['image_path' => $path]);
                 }
 
@@ -1695,9 +1702,10 @@ class ProductController extends Controller
                 if (!empty($opt['images'][0]['file'])) {
                     $imagePath = app(ImageOptimizationService::class)->processAndStore(
                         $opt['images'][0]['file'], 
-                        "product-options/{$product->id}", 
+                        "products/{$product->slug}/product_options/" . Str::slug($option->option_name), 
                         'public',
-                        true
+                        true,
+                        $product->name . ' ' . $option->option_name . ' ' . $opt['name']
                     );
                 }
 
@@ -2122,7 +2130,8 @@ class ProductController extends Controller
                     'is_cover' => $isCover,
                 ]);
             } else {
-                $path = app(ImageOptimizationService::class)->processAndStore($entry['file'], "products/{$product->id}", 'public', true);
+                $suffix = $isCover ? 'cover' : 'gallery-' . $displayOrder;
+                $path = app(ImageOptimizationService::class)->processAndStore($entry['file'], "products/{$product->slug}", 'public', true, "{$product->slug}-{$suffix}");
 
                 $product->images()->create([
                     'image_path' => $path,

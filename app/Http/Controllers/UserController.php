@@ -99,7 +99,8 @@ class UserController
                     app(ImageOptimizationService::class)->deleteImages($user->profile_picture_path, 'public');
                 }
                 
-                $path = app(ImageOptimizationService::class)->processAndStore($file, 'profile_pictures', 'public', true);
+                $entityName = ($user->name ?? 'user') . '-' . substr(uniqid(), -5);
+                $path = app(ImageOptimizationService::class)->processAndStore($file, 'profile_pictures', 'public', true, $entityName);
                 $user->profile_picture_path = $path;
             }
 

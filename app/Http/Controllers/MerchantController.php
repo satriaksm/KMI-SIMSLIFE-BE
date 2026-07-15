@@ -565,7 +565,7 @@ class MerchantController extends Controller
                     app(ImageOptimizationService::class)->deleteImages($merchant->logo_path, 'public');
                 }
 
-                $path = app(ImageOptimizationService::class)->processAndStore($request->file('logo'), 'merchants/logos', 'public', true);
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('logo'), "merchants/{$merchant->slug}/logo", 'public', true, $merchant->name . ' logo');
 
                 $merchant->update([
                     'logo_path' => $path
@@ -581,7 +581,7 @@ class MerchantController extends Controller
                     app(ImageOptimizationService::class)->deleteImages($merchant->cover_path, 'public');
                 }
 
-                $path = app(ImageOptimizationService::class)->processAndStore($request->file('cover'), 'merchants/covers', 'public');
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('cover'), "merchants/{$merchant->slug}/cover", 'public', false, $merchant->name . ' cover');
                 $merchant->update(['cover_path' => $path]);
             }
 

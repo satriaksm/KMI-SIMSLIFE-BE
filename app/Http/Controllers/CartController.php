@@ -52,10 +52,23 @@ class CartController extends Controller
             return null;
         }
 
-        $extension = pathinfo($sourcePath, PATHINFO_EXTENSION) ?: 'jpg';
-        $snapshotPath = 'cart_snapshots/' . $cartItem->id . '_' . Str::random(8) . '.' . $extension;
+        $userId = Auth::id() ?? 0;
+        $userName = \Illuminate\Support\Str::slug(Auth::user()?->name ?? 'guest');
+        $merchantSlug = $product->merchant?->slug ?? 'unknown-merchant';
+        $itemSlug = \Illuminate\Support\Str::slug($product->name);
+        
+        $snapshotPath = "carts/{$userName}-{$userId}/{$merchantSlug}/{$itemSlug}-{$cartItem->id}.webp";
 
-        $disk->copy($sourcePath, $snapshotPath);
+        try {
+            $manager = new \Intervention\Image\ImageManager(new \Intervention\Image\Drivers\Gd\Driver());
+            $image = $manager->read($disk->path($sourcePath));
+            $image->scaleDown(width: 300);
+            $disk->put($snapshotPath, (string) $image->toWebp(80));
+        } catch (\Exception $e) {
+            $extension = pathinfo($sourcePath, PATHINFO_EXTENSION) ?: 'webp';
+            $snapshotPath = "carts/{$userName}-{$userId}/{$merchantSlug}/{$itemSlug}-{$cartItem->id}.{$extension}";
+            $disk->copy($sourcePath, $snapshotPath);
+        }
 
         return $snapshotPath;
     }
@@ -348,7 +361,7 @@ class CartController extends Controller
 
             // Delete snapshot image from storage
             if ($cartItem->image_snapshot_path) {
-                Storage::disk('public')->delete($cartItem->image_snapshot_path);
+                app(\App\Services\ImageOptimizationService::class)->deleteImages($cartItem->image_snapshot_path, 'public');
             }
 
             $cartItem->delete();
@@ -607,7 +620,7 @@ class CartController extends Controller
 
                 // Delete snapshot image from storage before deleting cart item
                 if ($cartItem->image_snapshot_path) {
-                    Storage::disk('public')->delete($cartItem->image_snapshot_path);
+                    app(\App\Services\ImageOptimizationService::class)->deleteImages($cartItem->image_snapshot_path, 'public');
                 }
 
                 $cartItem->delete();
@@ -666,7 +679,7 @@ class CartController extends Controller
             // Delete all snapshot images from storage
             foreach ($cart->items as $item) {
                 if ($item->image_snapshot_path) {
-                    Storage::disk('public')->delete($item->image_snapshot_path);
+                    app(\App\Services\ImageOptimizationService::class)->deleteImages($item->image_snapshot_path, 'public');
                 }
             }
 

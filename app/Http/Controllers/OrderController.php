@@ -454,7 +454,7 @@ class OrderController extends Controller
                 if ($order->proof_image_path) {
                     app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
                 }
-                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), "orders/{$order->order_code}", 'public', false, 'proof-' . $order->order_code);
                 $order->proof_image_path = $path;
             }
             
@@ -465,7 +465,7 @@ class OrderController extends Controller
                 if ($order->proof_image_path) {
                     app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
                 }
-                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), "orders/{$order->order_code}", 'public', false, 'proof-' . $order->order_code);
                 $order->proof_image_path = $path;
             }
             $order->unpicked_at = now();
@@ -480,7 +480,7 @@ class OrderController extends Controller
                 if ($order->proof_image_path) {
                     app(ImageOptimizationService::class)->deleteImages($order->proof_image_path, 'public');
                 }
-                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), 'orders/proofs', 'public');
+                $path = app(ImageOptimizationService::class)->processAndStore($request->file('proof_image'), "orders/{$order->order_code}", 'public', false, 'proof-' . $order->order_code);
                 $order->proof_image_path = $path;
             }
             $this->moveBalanceToAvailable($order);
@@ -745,6 +745,18 @@ class OrderController extends Controller
                     $unitPrice = (float) $cartItem->price_snapshot;
                     $quantity  = (int) $cartItem->quantity;
 
+                    $newSnapshotPath = '';
+                    if ($cartItem->image_snapshot_path && Storage::disk('public')->exists($cartItem->image_snapshot_path)) {
+                        $extension = pathinfo($cartItem->image_snapshot_path, PATHINFO_EXTENSION) ?: 'webp';
+                        $newSnapshotPath = "orders/{$order->order_code}/snapshot-item-{$cartItem->id}.{$extension}";
+                        
+                        // Pindah gambar dari folder carts/ ke orders/
+                        Storage::disk('public')->move($cartItem->image_snapshot_path, $newSnapshotPath);
+                        
+                        // Bersihkan sisa folder carts/ jika sudah kosong
+                        app(\App\Services\ImageOptimizationService::class)->deleteEmptyParentDirectories($cartItem->image_snapshot_path, 'public');
+                    }
+
                     $orderItem = ProductOrderItem::query()->create([
                         'order_id'                   => $order->id,
                         'product_id'                 => $product->id,
@@ -752,7 +764,7 @@ class OrderController extends Controller
                         'product_name_snapshot'      => (string) ($cartItem->itemable_name_snapshot ?? $product->name ?? ''),
                         'product_variant_snapshot'   => $cartItem->product_variant_name_snapshot,
                         'sku_snapshot'               => $cartItem->variant?->sku,
-                        'image_snapshot_path'        => (string) ($cartItem->image_snapshot_path ?? ''),
+                        'image_snapshot_path'        => $newSnapshotPath ?: (string) ($cartItem->image_snapshot_path ?? ''),
                         'quantity'                   => $quantity,
                         'unit_price_snapshot'        => $unitPrice,
                         'subtotal_snapshot'          => $unitPrice * $quantity,
@@ -805,7 +817,7 @@ class OrderController extends Controller
                 // ========================
                 // HAPUS CART SETELAH CHECKOUT
                 // ========================
-                // Do not delete snapshot image here because ProductOrderItem relies on it.
+                // Gambar snapshot sudah dipindah ke orders/snapshots di atas
                 $cart->items()->delete();
                 $cart->delete();
             });
@@ -1126,6 +1138,13 @@ class OrderController extends Controller
                 'delivery_type' => $data['delivery_type'] ?? $jasa->delivery_type,
             ]);
 
+            $jasaImageSnapshotPath = null;
+            if ($jasa->coverImage && Storage::disk('public')->exists($jasa->coverImage->image_path)) {
+                $extension = pathinfo($jasa->coverImage->image_path, PATHINFO_EXTENSION) ?: 'webp';
+                $jasaImageSnapshotPath = "orders/{$order->order_code}/snapshot-jasa-{$jasa->id}.{$extension}";
+                Storage::disk('public')->copy($jasa->coverImage->image_path, $jasaImageSnapshotPath);
+            }
+
             \App\Models\JasaOrderItem::create([
                 'order_id' => $order->id,
                 'jasa_id' => $jasa->id,
@@ -1136,7 +1155,7 @@ class OrderController extends Controller
                 'booking_date' => $data['booking_date'] ?? null,
                 'booking_time' => $data['booking_time'] ?? null,
                 'jasa_title_snapshot' => $jasa->title ?? $data['service_name'],
-                'jasa_image_snapshot' => $jasa->coverImage ? $jasa->coverImage->image_path : null,
+                'jasa_image_snapshot' => $jasaImageSnapshotPath ?: ($jasa->coverImage ? $jasa->coverImage->image_path : null),
                 'jasa_price_snapshot' => $data['subtotal'],
             ]);
 

@@ -19,18 +19,23 @@ class ImageOptimizationService
      * @param bool $isSquare Apakah gambar harus dicrop rasio 1:1 (square) untuk medium dan original
      * @return string Path relatif untuk disimpan ke database (misal: 'profile_pictures/12345.webp')
      */
-    public function processAndStore(UploadedFile $file, string $directory, string $disk = 'public', bool $isSquare = false): string
+    public function processAndStore(UploadedFile $file, string $directory, string $disk = 'public', bool $isSquare = false, ?string $entityName = null): string
     {
         $manager = new ImageManager(new Driver());
         
-        $filenameWithoutExt = Str::random(40);
-        $baseFilename = $filenameWithoutExt . '.webp';
-        
+        if ($entityName) {
+            $baseName = Str::slug($entityName);
+        } else {
+            $baseName = Str::random(40);
+        }
+
         $directory = rtrim($directory, '/');
         
-        $originalPath = $directory . '/' . $baseFilename;
-        $thumbPath = $directory . '/' . $filenameWithoutExt . '_thumb.webp';
-        $mediumPath = $directory . '/' . $filenameWithoutExt . '_medium.webp';
+        $targetDir = $directory . '/' . $baseName;
+        
+        $originalPath = $targetDir . '/' . $baseName . '.webp';
+        $thumbPath = $targetDir . '/' . $baseName . '_thumb.webp';
+        $mediumPath = $targetDir . '/' . $baseName . '_medium.webp';
 
         // Baca file gambar
         $image = $manager->read($file->getRealPath());
@@ -84,6 +89,34 @@ class ImageOptimizationService
         $mediumPath = preg_replace('/\.([a-zA-Z0-9]+)$/', '_medium.$1', $basePath);
 
         Storage::disk($disk)->delete([$basePath, $thumbPath, $mediumPath]);
+        
+        $this->deleteEmptyParentDirectories($basePath, $disk);
+    }
+
+    /**
+     * Recursively delete empty parent directories up to 3 levels deep
+     */
+    public function deleteEmptyParentDirectories(string $path, string $disk = 'public'): void
+    {
+        $dir = dirname($path);
+        
+        for ($i = 0; $i < 3; $i++) {
+            if (empty($dir) || $dir === '.' || $dir === '/' || str_starts_with($dir, '..')) {
+                break;
+            }
+
+            $storage = \Illuminate\Support\Facades\Storage::disk($disk);
+            
+            $files = $storage->files($dir);
+            $directories = $storage->directories($dir);
+            
+            if (empty($files) && empty($directories)) {
+                $storage->deleteDirectory($dir);
+                $dir = dirname($dir);
+            } else {
+                break;
+            }
+        }
     }
     /**
      * Resolve path based on size query
