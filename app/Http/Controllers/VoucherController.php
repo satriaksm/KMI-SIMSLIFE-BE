@@ -167,7 +167,23 @@ class VoucherController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
+            'voucher_name' => 'required|string|max:100',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) use ($merchant) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],
             'voucher_type' => 'required|in:percent,fixed',
             'voucher_description' => 'nullable|string',
             'value' => 'required|numeric|min:0',
@@ -177,8 +193,7 @@ class VoucherController extends Controller
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'nullable|integer|min:1',
-            'is_hidden' => 'nullable|boolean',
-        ]);
+            'is_secret' => 'nullable|boolean',        ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
@@ -298,7 +313,22 @@ class VoucherController extends Controller
 
         $data = $request->validate([
             'voucher_name' => 'required|string|max:100',
-            'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) use ($merchant) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],            
             'voucher_description' => 'nullable|string',
             'voucher_type' => 'required|in:percent,fixed',
             'value' => [
@@ -317,7 +347,7 @@ class VoucherController extends Controller
             'min_purchase_amount' => 'nullable|numeric|min:0',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'nullable|integer|min:1',
-            'is_hidden' => 'nullable|boolean',
+            'is_secret' => 'nullable|boolean',
         ]);
 
         return $merchant->vouchers()->create($data);
@@ -483,7 +513,23 @@ class VoucherController extends Controller
 
         $validated = $request->validate([
             'voucher_name' => 'required|string|max:255',
-            'voucher_code' => 'required|string|max:255',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:255',
+                function ($attribute, $value, $fail) use ($merchant, $voucher) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where('id', '!=', $voucher->id)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],            
             'voucher_description' => 'required|string',
             'voucher_type' => 'required|in:percent,fixed',
             'value' => [
@@ -502,7 +548,7 @@ class VoucherController extends Controller
             'max_discount_amount' => 'nullable|numeric|min:0|required_if:voucher_type,percent',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'required|integer|min:0',
-            'is_hidden' => 'nullable|boolean',
+            'is_secret' => 'nullable|boolean',        
         ]);
 
         // Jika tidak dikirim, set null

@@ -819,13 +819,14 @@ class ProductController extends Controller
     {
         $imagesToInsert = [];
         $now = now();
+        $imageService = app(\App\Services\ImageOptimizationService::class);
 
         // Sort by order
         usort($images, fn($a, $b) => $a['order'] <=> $b['order']);
 
         foreach ($images as $index => $imageData) {
             $file = $imageData['file'];
-            $path = $file->store("products/{$product->id}", 'public');
+            $path = $imageService->processAndStore($file, "products/{$product->id}", 'public', true);
 
             $imagesToInsert[] = [
                 'imageable_type' => 'product',
@@ -869,7 +870,8 @@ class ProductController extends Controller
                 // Upload image jika ada (hanya untuk option pertama)
                 if ($usesImages && !empty($optionData['images'])) {
                     $imageFile = $optionData['images'][0]['file'];
-                    $path = $imageFile->store("option-values/{$value->id}", 'public');
+                    $imageService = app(\App\Services\ImageOptimizationService::class);
+                    $path = $imageService->processAndStore($imageFile, "option-values/{$value->id}", 'public', true);
                     $value->update(['image_path' => $path]);
                 }
 

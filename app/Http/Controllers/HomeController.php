@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Merchant;
 use App\Models\Product;
 use App\Models\Category;
+use App\Models\Jasa;
+use App\Models\PaymentFee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +23,7 @@ class HomeController extends Controller
 
             $merchants = Merchant::query()
                 ->where('merchants.status', 'approved')
-                ->with(['segmentation', 'paguyuban', 'primaryAddress'])
+                ->with(['segmentation', 'primaryAddress.village', 'primaryAddress.district', 'primaryAddress.city', 'primaryAddress.province'])
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
                         ->whereNotNull('longitude');
@@ -31,9 +33,7 @@ class HomeController extends Controller
                         $q->where('status', 'published');
                     },
                     'jasas' => function ($q) {
-                        // Count jasas where is_active=true (covers draft+active+published
-                        // since newly created jasas default to status='draft', is_active=true).
-                        $q->where('is_active', true);
+                        $q->where('status', 'published');
                     }
                 ])
                 ->inRandomOrder()
@@ -77,9 +77,16 @@ class HomeController extends Controller
 
             $query = Merchant::query()
                 ->where('merchants.status', 'approved')
-                ->with(['segmentation', 'primaryAddress'])
-                ->whereNotNull('logo_path')
-                ->whereNotNull('cover_path')
+                ->with(['segmentation', 'primaryAddress.village', 'primaryAddress.district', 'primaryAddress.city', 'primaryAddress.province'])
+                ->withCount([
+                    'products' => function ($q) {
+                        $q->where('status', 'published');
+                    },
+                    'jasas' => function ($q) {
+                        $q->where('status', 'published');
+                    }
+                ])
+
                 ->whereHas('primaryAddress', function ($query) {
                     $query->whereNotNull('latitude')
                         ->whereNotNull('longitude');
@@ -120,9 +127,12 @@ class HomeController extends Controller
     public function statistics()
     {
         try {
+            $totalProducts = Product::where('status', 'published')->count();
+            $totalJasas = Jasa::where('status', 'published')->count();
+
             $stats = [
                 'total_merchants' => Merchant::where('status', 'approved')->count(),
-                'total_products' => Product::where('status', 'published')->count(),
+                'total_products' => $totalProducts + $totalJasas,
                 'total_categories' => Category::whereNull('parent_id')->count(),
             ];
 
@@ -137,6 +147,37 @@ class HomeController extends Controller
             return response()->json([
                 'message' => 'Failed to load statistics',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get public payment fees for checkout display
+     */
+    public function paymentFees()
+    {
+        try {
+            $fees = PaymentFee::where('is_active', true)
+                ->where('method_code', '!=', 'PAYOUT')
+                ->get()
+                ->map(function ($fee) {
+                    return [
+                        'method_code' => $fee->method_code,
+                        'method_name' => $fee->method_name,
+                        'type' => $fee->type,
+                        'value' => (float) $fee->value,
+                        'description' => $fee->description,
+                    ];
+                });
+
+            return response()->json(['data' => $fees]);
+        } catch (\Exception $e) {
+            Log::error('[HomeController] Failed to get payment fees', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to load payment fees',
             ], 500);
         }
     }

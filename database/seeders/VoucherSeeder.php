@@ -5,98 +5,100 @@ namespace Database\Seeders;
 use App\Models\Merchant;
 use App\Models\Voucher;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 class VoucherSeeder extends Seeder
 {
+    /**
+     * Run the database seeds.
+     */
     public function run(): void
     {
-        $this->command->info('🎟️ Creating vouchers for merchants...');
-
-        $merchants = Merchant::where('status', 'approved')->get();
+        $merchants = Merchant::all();
 
         if ($merchants->isEmpty()) {
-            $this->command->warn('⚠️ No approved merchants found. Run MerchantSeeder first.');
+            $this->command->info('Tidak ada merchant yang ditemukan. Silakan jalankan MerchantSeeder terlebih dahulu.');
             return;
         }
 
-        $voucherNameTemplates = [
-            'Diskon Belanja',
-            'Voucher Hemat',
-            'Promo Spesial',
-            'Potongan Harga',
-            'Voucher UMKM',
-        ];
+        DB::beginTransaction();
+        try {
+            foreach ($merchants as $merchant) {
+                // Voucher 1: Persentase Diskon (Misal: Diskon 20%)
+                Voucher::updateOrCreate(
+                    [
+                        'merchant_id'  => $merchant->id,
+                        'voucher_code' => 'DISKON20',
+                    ],
+                    [
+                        'event_id'             => null,
+                        'voucher_name'         => 'Diskon 20% ' . $merchant->name,
+                        'voucher_status'       => 'active',
+                        'is_secret'            => false,
+                        'voucher_type'         => 'percent',
+                        'voucher_description'  => 'Dapatkan diskon 20% untuk setiap pembelian minimal Rp 50.000, maksimal diskon Rp 15.000.',
+                        'voucher_start_date'   => now()->subDays(1)->format('Y-m-d'),
+                        'voucher_end_date'     => now()->addDays(30)->format('Y-m-d'),
+                        'value'                => 20.00,
+                        'max_discount_amount'  => 15000.00,
+                        'min_purchase_amount'  => 50000.00,
+                        'usage_limit_per_user' => 1,
+                        'usage_limit'          => 100,
+                    ]
+                );
 
-        $created = 0;
+                // Voucher 2: Potongan Harga Tetap (Misal: Potongan Rp 10.000)
+                Voucher::updateOrCreate(
+                    [
+                        'merchant_id'  => $merchant->id,
+                        'voucher_code' => 'HEMAT10K',
+                    ],
+                    [
+                        'event_id'             => null,
+                        'voucher_name'         => 'Potongan Langsung 10RB',
+                        'voucher_status'       => 'active',
+                        'is_secret'            => false,
+                        'voucher_type'         => 'fixed',
+                        'voucher_description'  => 'Potongan harga langsung sebesar Rp 10.000 untuk setiap pembelian minimal Rp 100.000.',
+                        'voucher_start_date'   => now()->subDays(1)->format('Y-m-d'),
+                        'voucher_end_date'     => now()->addDays(30)->format('Y-m-d'),
+                        'value'                => 10000.00,
+                        'max_discount_amount'  => null,
+                        'min_purchase_amount'  => 100000.00,
+                        'usage_limit_per_user' => 2,
+                        'usage_limit'          => 50,
+                    ]
+                );
 
-        foreach ($merchants as $merchant) {
-            // 2-5 vouchers per merchant
-            $voucherCount = rand(2, 5);
-
-            for ($i = 0; $i < $voucherCount; $i++) {
-                $type = rand(1, 100) <= 70 ? 'percent' : 'fixed';
-
-                $startDate = now()->subDays(rand(0, 7))->toDateString();
-                $endDate = now()->addDays(rand(7, 45))->toDateString();
-
-                $nameBase = $voucherNameTemplates[array_rand($voucherNameTemplates)];
-                $voucherName = $nameBase . ' ' . Str::upper(Str::random(4));
-
-                // Make sure voucher_code stays unique (unique index in DB)
-                $voucherCode = $this->generateUniqueVoucherCode($merchant->id);
-
-                $minPurchase = rand(0, 1) ? rand(0, 200_000) : 0;
-                $usageLimitPerUser = rand(1, 3);
-                $usageLimit = rand(1, 100) <= 30 ? null : rand(50, 500);
-
-                if ($type === 'percent') {
-                    $value = rand(5, 30); // percentage
-                    $maxDiscount = rand(1, 100) <= 80 ? rand(10_000, 150_000) : null;
-                } else {
-                    $value = rand(5_000, 75_000); // fixed amount
-                    $maxDiscount = null;
-                }
-
-                Voucher::create([
-                    'merchant_id' => $merchant->id,
-                    'event_id' => null,
-                    'voucher_name' => $voucherName,
-                    'voucher_code' => $voucherCode,
-                    'voucher_status' => rand(1, 100) <= 85 ? 'active' : 'inactive',
-                    'voucher_type' => $type,
-                    'voucher_description' => 'Voucher otomatis untuk merchant ' . $merchant->name,
-                    'voucher_start_date' => $startDate,
-                    'voucher_end_date' => $endDate,
-                    'value' => $value,
-                    'max_discount_amount' => $maxDiscount,
-                    'min_purchase_amount' => $minPurchase,
-                    'usage_limit_per_user' => $usageLimitPerUser,
-                    'usage_limit' => $usageLimit,
-                ]);
-
-                $created++;
+                // Voucher 3: Diskon Ongkir (Kategori Voucher Ongkir bisa disimulasikan sebagai fixed jika belum ada fitur ongkir)
+                // Voucher::updateOrCreate(
+                //     [
+                //         'merchant_id'  => $merchant->id,
+                //         'voucher_code' => 'GRATISONGKIR',
+                //     ],
+                //     [
+                //         'event_id'             => null,
+                //         'voucher_name'         => 'Subsidi Ongkir ' . $merchant->name,
+                //         'voucher_status'       => 'active',
+                //         'is_secret'            => false,
+                //         'voucher_type'         => 'fixed',
+                //         'voucher_description'  => 'Subsidi ongkos kirim senilai Rp 5.000 dengan minimum belanja Rp 30.000.',
+                //         'voucher_start_date'   => now()->subDays(1)->format('Y-m-d'),
+                //         'voucher_end_date'     => now()->addDays(30)->format('Y-m-d'),
+                //         'value'                => 5000.00,
+                //         'max_discount_amount'  => null,
+                //         'min_purchase_amount'  => 30000.00,
+                //         'usage_limit_per_user' => 3,
+                //         'usage_limit'          => 200,
+                //     ]
+                // );
             }
+
+            DB::commit();
+            $this->command->info('VoucherSeeder berhasil dijalankan!');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->command->error('Error VoucherSeeder: ' . $e->getMessage());
         }
-
-        $this->command->info('Vouchers seeded successfully!');
-        $this->command->info("   Total vouchers: {$created}");
-        $this->command->info("   Merchants: {$merchants->count()}");
-    }
-
-    private function generateUniqueVoucherCode(int $merchantId): string
-    {
-        // Prefix keeps it readable while remaining unique
-        // Example: VC-12-A1B2C3
-        for ($attempt = 0; $attempt < 20; $attempt++) {
-            $code = 'VC-' . $merchantId . '-' . Str::upper(Str::random(6));
-
-            if (!Voucher::where('voucher_code', $code)->exists()) {
-                return $code;
-            }
-        }
-
-        // Extremely unlikely fallback
-        return 'VC-' . $merchantId . '-' . Str::upper(Str::random(12));
     }
 }

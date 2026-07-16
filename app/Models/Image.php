@@ -22,6 +22,8 @@ class Image extends Model
         'is_cover' => 'boolean',
     ];
 
+        protected $appends = ['url', 'src_url', 'urls', 'src_urls'];
+
     public function imageable(): MorphTo
     {
         return $this->morphTo();
@@ -30,5 +32,16 @@ class Image extends Model
     public function getUrlAttribute()
     {
         return route('images.show', ['image' => $this->id]);
+    }
+
+        public function getUrlsAttribute(): array
+    {
+        $v = $this->updated_at ? $this->updated_at->timestamp : time();
+
+        return [
+            'original' => route('images.show', ['image' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('images.show', ['image' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('images.show', ['image' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
     }
 }

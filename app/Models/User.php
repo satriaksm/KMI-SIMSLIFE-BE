@@ -43,6 +43,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     protected $appends = [
         'profile_picture',
+        'profile_picture_urls',
         'full_address',
         'address',
     ];
@@ -113,6 +114,19 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         return URL::signedRoute('profile-pictures.show', ['user' => $this->id]);
+    }
+
+    public function getProfilePictureUrlsAttribute()
+    {
+        if (empty($this->profile_picture_path)) {
+            return null;
+        }
+
+        return [
+            'original' => URL::signedRoute('profile-pictures.show', ['user' => $this->id, 'size' => 'original']),
+            'medium' => URL::signedRoute('profile-pictures.show', ['user' => $this->id, 'size' => 'medium']),
+            'thumb' => URL::signedRoute('profile-pictures.show', ['user' => $this->id, 'size' => 'thumb']),
+        ];
     }
 
     public function getFullAddressAttribute(): string

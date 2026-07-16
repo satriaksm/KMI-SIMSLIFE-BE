@@ -68,7 +68,7 @@ class MerchantController extends Controller
     {
         $merchants = Merchant::query()
             ->where('status', 'approved')
-            ->select(['id', 'name', 'slug', 'segmentation_id', 'logo_path'])
+            ->select(['id', 'name', 'slug', 'description', 'segmentation_id', 'logo_path', 'operational_hours'])
             ->with([
                 'segmentation:id,name',
                 'primaryAddress:id,addressable_id,addressable_type,latitude,longitude,label',
@@ -79,16 +79,27 @@ class MerchantController extends Controller
         $data = $merchants->map(function (Merchant $merchant) {
             $addr = $merchant->primaryAddress ?: $merchant->addresses->first();
 
+            // Safe rating calculation
+            $ratings = \App\Models\Rating::where('merchant_id', $merchant->id)->get();
+            $totalReviews = $ratings->count();
+            $averageRating = $totalReviews > 0 ? round($ratings->avg('rating'), 1) : 0;
+
             return [
                 'id' => $merchant->id,
                 'name' => $merchant->name,
                 'slug' => $merchant->slug,
+                'description' => $merchant->description,
                 'logo_url' => $merchant->logo_url,
                 'latitude' => $addr?->latitude,
                 'longitude' => $addr?->longitude,
                 'segmentation' => $merchant->segmentation
                     ? ['id' => $merchant->segmentation->id, 'name' => $merchant->segmentation->name]
                     : null,
+                'rating_summary' => [
+                    'average_rating' => $averageRating,
+                    'total_reviews' => $totalReviews,
+                ],
+                'is_open_now' => $merchant->is_open_now,
             ];
         });
 
@@ -434,11 +445,12 @@ class MerchantController extends Controller
              * Logo Upload
              * =============================== */
             if ($request->hasFile('logo')) {
-                if ($merchant->logo_path && Storage::disk('public')->exists($merchant->logo_path)) {
-                    Storage::disk('public')->delete($merchant->logo_path);
+                $imageService = app(\App\Services\ImageOptimizationService::class);
+                if ($merchant->logo_path) {
+                    $imageService->deleteImages($merchant->logo_path, 'public');
                 }
 
-                $path = $request->file('logo')->store('merchants/logos', 'public');
+                $path = $imageService->processAndStore($request->file('logo'), 'merchants/logos', 'public', true);
 
                 $merchant->update([
                     'logo_path' => $path
@@ -449,12 +461,13 @@ class MerchantController extends Controller
              * Cover Upload (saved to merchant directly)
              * =============================== */
             if ($request->hasFile('cover')) {
+                $imageService = app(\App\Services\ImageOptimizationService::class);
                 // Delete old cover if exists
-                if ($merchant->cover_path && Storage::disk('public')->exists($merchant->cover_path)) {
-                    Storage::disk('public')->delete($merchant->cover_path);
+                if ($merchant->cover_path) {
+                    $imageService->deleteImages($merchant->cover_path, 'public');
                 }
 
-                $path = $request->file('cover')->store('merchants/covers', 'public');
+                $path = $imageService->processAndStore($request->file('cover'), 'merchants/covers', 'public', false);
                 $merchant->update(['cover_path' => $path]);
             }
 
@@ -490,6 +503,10 @@ class MerchantController extends Controller
 
         $disk = 'public';
         $path = ltrim($assetPath, '/');
+
+        $size = request()->query('size', 'original');
+        $imageService = app(\App\Services\ImageOptimizationService::class);
+        $path = ltrim($imageService->resolveSizePath($path, $size), '/');
 
         if (!Storage::disk($disk)->exists($path)) {
             abort(404);
