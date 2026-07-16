@@ -16,8 +16,8 @@ return new class extends Migration {
             
             // Core Order Item Fields
             $table->unsignedSmallInteger('quantity')->default(1);
-            $table->decimal('price', 12, 2);
-            $table->decimal('subtotal', 12, 2);
+            $table->decimal('price', 15, 2);
+            $table->decimal('subtotal', 15, 2);
             $table->string('order_method')->default('keranjang'); // keranjang, booking, konsultasi
             
             // Booking Details
@@ -27,8 +27,8 @@ return new class extends Migration {
             
             // Snapshots - Service Info
             $table->string('jasa_title_snapshot')->nullable();
-            $table->text('jasa_image_snapshot')->nullable();
-            $table->decimal('jasa_price_snapshot', 12, 2)->nullable();
+            $table->string('jasa_image_snapshot')->nullable();
+            $table->decimal('jasa_price_snapshot', 15, 2)->nullable();
             $table->timestamps();
         });
     }

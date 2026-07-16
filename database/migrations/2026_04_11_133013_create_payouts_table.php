@@ -15,13 +15,13 @@ return new class extends Migration {
 
             $table->foreignId('merchant_id')->constrained()->cascadeOnDelete();
 
-            $table->string('external_id', 100)->unique();
+            $table->string('external_id')->unique();
 
             $table->decimal('amount', 15, 2);
 
             $table->string('bank_code', 15);
             $table->string('account_number', 30);
-            $table->string('account_name', 100);
+            $table->string('account_name');
 
             $table->enum('status', [
                 'pending',

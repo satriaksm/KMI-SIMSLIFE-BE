@@ -23,7 +23,7 @@ return new class extends Migration {
 
             // 🔒 SNAPSHOT
             $table->string('addon_name_snapshot')->nullable();
-            $table->decimal('addon_price_snapshot', 12, 2);
+            $table->decimal('addon_price_snapshot', 15, 2);
 
             $table->timestamps();
 

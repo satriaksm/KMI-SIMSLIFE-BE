@@ -19,15 +19,15 @@ return new class extends Migration {
             $table->foreign('voucher_id')->references('id')->on('vouchers')->nullOnDelete();
             $table->string('order_type', 20)->nullable();
             $table->string('order_code', 50);
-            $table->decimal('subtotal', 12, 2)->default(0);
-            $table->decimal('discount_total', 12, 2)->default(0);
+            $table->decimal('subtotal', 15, 2)->default(0);
+            $table->decimal('discount_total', 15, 2)->default(0);
             $table->enum('delivery_type', ['pickup', 'delivery', 'online', 'on-site', 'in-store'])->default('pickup');
             $table->string('payment_method', 30)->nullable();
             $table->string('payment_status', 30)->nullable();
-            $table->decimal('delivery_fee_snapshot', 12, 2)->default(0);
-            $table->decimal('platform_fee', 12, 2)->default(0);
-            $table->decimal('gross_amount', 12, 2)->default(0);
-            $table->decimal('net_amount', 12, 2)->default(0);
+            $table->decimal('delivery_fee_snapshot', 15, 2)->default(0);
+            $table->decimal('platform_fee', 15, 2)->default(0);
+            $table->decimal('gross_amount', 15, 2)->default(0);
+            $table->decimal('net_amount', 15, 2)->default(0);
             $table->enum('status', ['pending', 'accepted', 'rejected', 'on-progress', 'paid', 'delivered', 'undelivered', 'completed', 'cancelled', 'ready_to_pickup', 'unpicked'])->default('pending');
             $table->text('notes')->nullable();
             $table->timestamp('accepted_at')->nullable();
@@ -50,8 +50,8 @@ return new class extends Migration {
             $table->decimal('latitude_snapshot', 10, 7)->nullable();
             $table->decimal('longitude_snapshot', 10, 7)->nullable();
             $table->string('proof_image_path')->nullable();
-            $table->string('proof_description')->nullable();
-            $table->string('failed_reason')->nullable();
+            $table->text('proof_description')->nullable();
+            $table->text('failed_reason')->nullable();
             $table->timestamps();
         });
     }

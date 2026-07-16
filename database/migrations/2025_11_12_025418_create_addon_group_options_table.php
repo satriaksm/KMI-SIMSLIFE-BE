@@ -21,7 +21,7 @@ return new class extends Migration {
                 ->on('addons')
                 ->cascadeOnUpdate()
                 ->cascadeOnDelete();
-            $table->decimal('addon_price', 10, 2)->default(0);
+            $table->decimal('addon_price', 15, 2)->default(0);
             $table->timestamps();
 
             // Unique constraint: addon tidak boleh duplikat dalam 1 group

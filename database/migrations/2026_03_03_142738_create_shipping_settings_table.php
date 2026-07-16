@@ -12,8 +12,8 @@ return new class extends Migration {
     {
         Schema::create('shipping_settings', function (Blueprint $table) {
             $table->id();
-            $table->decimal('base_cost', 10, 2)->default(0);
-            $table->decimal('cost_per_km', 10, 2)->default(0);
+            $table->decimal('base_cost', 15, 2)->default(0);
+            $table->decimal('cost_per_km', 15, 2)->default(0);
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->timestamps();
         });

@@ -17,9 +17,11 @@ class ImageOptimizationService
      * @param string $directory Direktori tujuan, misalnya 'profile_pictures'
      * @param string $disk Disk tujuan, default 'public'
      * @param bool $isSquare Apakah gambar harus dicrop rasio 1:1 (square) untuk medium dan original
+     * @param string|null $entityName Nama entitas untuk penamaan file
+     * @param bool $createSubfolder Apakah membuat subfolder otomatis (default: true)
      * @return string Path relatif untuk disimpan ke database (misal: 'profile_pictures/12345.webp')
      */
-    public function processAndStore(UploadedFile $file, string $directory, string $disk = 'public', bool $isSquare = false, ?string $entityName = null): string
+    public function processAndStore(UploadedFile $file, string $directory, string $disk = 'public', bool $isSquare = false, ?string $entityName = null, bool $createSubfolder = true): string
     {
         $manager = new ImageManager(new Driver());
         
@@ -31,7 +33,7 @@ class ImageOptimizationService
 
         $directory = rtrim($directory, '/');
         
-        $targetDir = $directory . '/' . $baseName;
+        $targetDir = $createSubfolder ? $directory . '/' . $baseName : $directory;
         
         $originalPath = $targetDir . '/' . $baseName . '.webp';
         $thumbPath = $targetDir . '/' . $baseName . '_thumb.webp';

@@ -13,7 +13,7 @@ return new class extends Migration {
             $table->foreign('product_id')->references('id')->on('products')->cascadeOnUpdate()->cascadeOnDelete();
             $table->unsignedSmallInteger('stock')->default(0);
             $table->string('sku', 50)->nullable()->unique();
-            $table->decimal('price', 12, 2)->default(0);
+            $table->decimal('price', 15, 2)->default(0);
             $table->timestamps();
             $table->index('product_id');
         });

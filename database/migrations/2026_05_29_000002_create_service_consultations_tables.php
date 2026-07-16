@@ -22,7 +22,7 @@ return new class extends Migration
 
             // Service reference (the original jasa being consulted)
             $table->string('service_name');
-            $table->decimal('original_price', 12, 2)->default(0);
+            $table->decimal('original_price', 15, 2)->default(0);
 
             // Customer's consultation request
             $table->text('customer_description')->nullable();  // Description of needs
@@ -33,11 +33,11 @@ return new class extends Migration
             // Merchant's response
             // available_options: bisa_dikerjakan | penyesuaian | tidak_bisa_dikerjakan
             $table->string('merchant_response', 30)->nullable();  // Available options
-            $table->decimal('merchant_offered_price', 12, 2)->nullable();  // Price offered by merchant
+            $table->decimal('merchant_offered_price', 15, 2)->nullable();  // Price offered by merchant
             $table->text('merchant_note')->nullable();  // Notes/adjustments from merchant
 
             // Negotiation between customer and merchant
-            $table->decimal('negotiated_price', 12, 2)->nullable();  // Final agreed price
+            $table->decimal('negotiated_price', 15, 2)->nullable();  // Final agreed price
             $table->text('negotiation_notes')->nullable();  // Both parties notes
             $table->date('agreed_deadline')->nullable();  // Agreed deadline
             

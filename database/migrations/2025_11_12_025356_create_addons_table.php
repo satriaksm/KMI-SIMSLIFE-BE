@@ -13,7 +13,7 @@ return new class extends Migration {
                 ->constrained('merchants')
                 ->cascadeOnUpdate()
                 ->cascadeOnDelete();
-            $table->string('addon_name', 100);
+            $table->string('addon_name');
             $table->timestamps();
 
             // Index untuk list addons by merchant

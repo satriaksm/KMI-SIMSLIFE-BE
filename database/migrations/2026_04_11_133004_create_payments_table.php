@@ -14,9 +14,9 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('order_id')->constrained()->cascadeOnDelete();
 
-            $table->string('external_id', 100)->unique(); // order-123
-            $table->string('xendit_invoice_id', 100)->nullable();
-            $table->string('xendit_refund_id', 100)->nullable();
+            $table->string('external_id')->unique(); // order-123
+            $table->string('xendit_invoice_id')->nullable();
+            $table->string('xendit_refund_id')->nullable();
             $table->string('invoice_url')->nullable();
             $table->string('payment_method', 30)->nullable(); // VA, QRIS, dll
             $table->timestamp('expired_at')->nullable();

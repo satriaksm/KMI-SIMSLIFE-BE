@@ -14,7 +14,7 @@ return new class extends Migration {
             $table->increments('id');
             $table->foreignId('merchant_id')->constrained('merchants')->cascadeOnUpdate()->restrictOnDelete();
             $table->string('name');
-            $table->string('slug', 150)->unique();
+            $table->string('slug')->unique();
             $table->text('description')->nullable();
             $table->unsignedSmallInteger('min_purchase')->default(1);
             $table->enum('status', ['draft', 'published', 'archived'])->default('draft');

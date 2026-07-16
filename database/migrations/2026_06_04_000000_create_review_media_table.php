@@ -21,7 +21,7 @@ public function up(): void
             $table->string('mime_type', 100)->nullable();
             $table->string('original_name')->nullable();
             $table->unsignedBigInteger('file_size')->nullable();
-            $table->integer('display_order')->default(0);
+            $table->tinyInteger('display_order')->default(0);
             $table->timestamps();
         });
     } else {
@@ -51,7 +51,7 @@ public function up(): void
             }
 
             if (!Schema::hasColumn('review_media', 'display_order')) {
-                $table->integer('display_order')->default(0)->after('file_size');
+                $table->tinyInteger('display_order')->default(0)->after('file_size');
             }
         });
     }

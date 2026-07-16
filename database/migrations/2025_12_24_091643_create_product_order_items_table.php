@@ -16,11 +16,11 @@ return new class extends Migration {
             $table->foreign('product_variant_id')->references('id')->on('product_variants')->nullOnDelete();
             $table->string('product_name_snapshot');
             $table->string('product_variant_snapshot')->nullable();
-            $table->text('sku_snapshot')->nullable();
-            $table->text('image_snapshot_path');
+            $table->string('sku_snapshot', 50)->nullable();
+            $table->string('image_snapshot_path');
             $table->unsignedSmallInteger('quantity')->default(1);
-            $table->decimal('unit_price_snapshot', 12, 2);
-            $table->decimal('subtotal_snapshot', 12, 2);
+            $table->decimal('unit_price_snapshot', 15, 2);
+            $table->decimal('subtotal_snapshot', 15, 2);
             $table->timestamps();
         });
     }

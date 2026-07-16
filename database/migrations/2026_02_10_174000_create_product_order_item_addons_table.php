@@ -16,7 +16,7 @@ return new class extends Migration {
             $table->unsignedInteger('addon_id')->nullable();
             $table->foreign('addon_id')->references('id')->on('addons')->nullOnDelete();
             $table->string('addon_name_snapshot');
-            $table->decimal('addon_price_snapshot', 12, 2);
+            $table->decimal('addon_price_snapshot', 15, 2);
             $table->timestamps();
         });
     }

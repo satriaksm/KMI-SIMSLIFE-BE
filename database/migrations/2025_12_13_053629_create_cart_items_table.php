@@ -29,7 +29,7 @@ return new class extends Migration {
             $table->string('product_variant_name_snapshot')->nullable();
             $table->string('image_snapshot_path')->nullable();
 
-            $table->decimal('price_snapshot', 12, 2);
+            $table->decimal('price_snapshot', 15, 2);
             $table->unsignedSmallInteger('quantity')->default(1);
 
             $table->timestamps();

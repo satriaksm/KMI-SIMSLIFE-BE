@@ -61,7 +61,7 @@ return new class extends Migration {
             $table->char('NPWP', 16)->unique()->nullable();
             $table->string('bank_code', 15)->nullable(); // BCA, BRI (WAJIB untuk Xendit)
             $table->string('bank_account_number', 30)->nullable();
-            $table->string('bank_account_name', 100)->nullable();
+            $table->string('bank_account_name')->nullable();
             $table->decimal('balance_available', 15, 2)->default(0);
             $table->decimal('balance_pending', 15, 2)->default(0);
             $table->timestamp('last_payout_at')->nullable();

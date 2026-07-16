@@ -13,8 +13,8 @@ return new class extends Migration {
             $table->string('title');
             $table->string('slug', 150)->unique()->nullable();
             $table->text('description')->nullable();
-            $table->integer('fixed_price')->default(0);
-            $table->integer('base_price')->default(0);
+            $table->decimal('fixed_price', 15, 2)->default(0);
+            $table->decimal('base_price', 15, 2)->default(0);
             $table->enum('delivery_type', ['online', 'on-site', 'in-store'])->default('in-store');
             $table->enum('service_type_booking', ['keranjang', 'booking', 'konsultasi'])->default('keranjang');
             $table->string('location_address')->nullable();

@@ -15,7 +15,7 @@ return new class extends Migration {
                 ->on('products')
                 ->cascadeOnUpdate()
                 ->cascadeOnDelete();
-            $table->string('addon_group_name', 100);
+            $table->string('addon_group_name');
             $table->enum('selection_type', ['single', 'multiple'])->default('single');
             $table->unsignedTinyInteger('min_selection')->default(0);
             $table->unsignedTinyInteger('max_selection')->nullable();
