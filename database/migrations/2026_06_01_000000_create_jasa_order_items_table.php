@@ -10,13 +10,14 @@ return new class extends Migration {
         Schema::create('jasa_order_items', function (Blueprint $table) {
             $table->id();
             $table->foreignId('order_id')->constrained('orders')->onDelete('cascade');
-            $table->foreignId('jasa_id')->constrained('jasas')->onDelete('cascade');
+            $table->unsignedInteger('jasa_id');
+            $table->foreign('jasa_id')->references('id')->on('jasas')->onDelete('cascade');
             $table->foreignId('service_consultation_id')->nullable()->constrained('service_consultations')->nullOnDelete();
             
             // Core Order Item Fields
-            $table->integer('quantity')->default(1);
-            $table->decimal('price', 12, 2);
-            $table->decimal('subtotal', 12, 2);
+            $table->unsignedSmallInteger('quantity')->default(1);
+            $table->decimal('price', 15, 2);
+            $table->decimal('subtotal', 15, 2);
             $table->string('order_method')->default('keranjang'); // keranjang, booking, konsultasi
             
             // Booking Details
@@ -26,8 +27,8 @@ return new class extends Migration {
             
             // Snapshots - Service Info
             $table->string('jasa_title_snapshot')->nullable();
-            $table->text('jasa_image_snapshot')->nullable();
-            $table->decimal('jasa_price_snapshot', 12, 2)->nullable();
+            $table->string('jasa_image_snapshot')->nullable();
+            $table->decimal('jasa_price_snapshot', 15, 2)->nullable();
             $table->timestamps();
         });
     }

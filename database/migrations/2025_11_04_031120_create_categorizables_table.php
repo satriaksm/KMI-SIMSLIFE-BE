@@ -11,8 +11,10 @@ return new class extends Migration
         Schema::create('categorizables', function (Blueprint $table)
         {
             $table->id();
-            $table->foreignId('category_id')
-                ->constrained('categories')
+            $table->unsignedSmallInteger('category_id');
+            $table->foreign('category_id')
+                ->references('id')
+                ->on('categories')
                 ->cascadeOnUpdate()
                 ->cascadeOnDelete();
             $table->morphs('categorizable'); // auto-index categorizable_type + categorizable_id

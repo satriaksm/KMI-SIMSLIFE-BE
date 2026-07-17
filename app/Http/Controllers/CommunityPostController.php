@@ -651,12 +651,13 @@ class CommunityPostController
         $postTitleSlug = $altPrefix ?? Str::slug($post->post_title);
 
         foreach ($images as $index => $image) {
-            $path = "community/posts/{$post->id}";
-            $fullPath = app(ImageOptimizationService::class)->processAndStore($image, $path, 'public');
-
+            $path = "communitypost/{$post->post_slug}";
+            
             // Auto-generate alt text: {altPrefix}-{n}
             $imageNumber = $currentCount + $index + 1;
             $altText = "{$postTitleSlug}-{$imageNumber}";
+
+            $fullPath = app(ImageOptimizationService::class)->processAndStore($image, $path, 'public', false, $altText);
 
             CommunityPostImage::create([
                 'post_id' => $post->id,

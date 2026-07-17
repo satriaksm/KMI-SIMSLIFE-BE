@@ -13,7 +13,7 @@ return new class extends Migration
             $table->id();
             $table->morphs('imageable'); // sudah auto-index imageable_type + imageable_id
             $table->string('image_path');
-            $table->unsignedSmallInteger('display_order')->default(0);
+            $table->unsignedTinyInteger('display_order')->default(0);
             $table->boolean('is_cover')->default(false);
             $table->timestamps();
 

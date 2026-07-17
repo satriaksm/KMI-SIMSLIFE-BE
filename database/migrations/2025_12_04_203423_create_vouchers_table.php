@@ -7,12 +7,13 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('vouchers', function (Blueprint $table) {
-            $table->id();
+            $table->increments('id');
             $table->foreignId('merchant_id')->nullable()->constrained()->onDelete('cascade');
-            $table->foreignId('event_id')->nullable()->constrained()->onDelete('cascade');
+            $table->unsignedInteger('event_id')->nullable();
+            $table->foreign('event_id')->references('id')->on('events')->onDelete('cascade');
 
-            $table->string('voucher_name', 100);
-            $table->string('voucher_code', 100);
+            $table->string('voucher_name');
+            $table->string('voucher_code');
             $table->enum('voucher_status', ['active', 'inactive'])->default('active');
             $table->boolean('is_secret')->default(false);
             $table->enum('voucher_type', ['percent', 'fixed'])->default('percent');

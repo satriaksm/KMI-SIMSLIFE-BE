@@ -18,12 +18,12 @@ return new class extends Migration {
                 ->cascadeOnDelete();
 
             // ❌ TIDAK FK — snapshot pointer
-            $table->unsignedBigInteger('addon_group_id');
-            $table->unsignedBigInteger('addon_id');
+            $table->unsignedInteger('addon_group_id');
+            $table->unsignedInteger('addon_id');
 
             // 🔒 SNAPSHOT
             $table->string('addon_name_snapshot')->nullable();
-            $table->integer('addon_price_snapshot');
+            $table->decimal('addon_price_snapshot', 15, 2);
 
             $table->timestamps();
 

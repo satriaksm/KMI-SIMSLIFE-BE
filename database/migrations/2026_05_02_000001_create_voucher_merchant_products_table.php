@@ -10,9 +10,11 @@ return new class extends Migration {
         Schema::create('voucher_merchant_products', function (Blueprint $table) {
             $table->id();
             // Link to voucher_merchants (the pivot)
-            $table->foreignId('voucher_id')->constrained()->onDelete('cascade');
+            $table->unsignedInteger('voucher_id');
+            $table->foreign('voucher_id')->references('id')->on('vouchers')->onDelete('cascade');
             $table->foreignId('merchant_id')->constrained()->onDelete('cascade');
-            $table->foreignId('product_id')->constrained()->onDelete('cascade');
+            $table->unsignedInteger('product_id');
+            $table->foreign('product_id')->references('id')->on('products')->onDelete('cascade');
             $table->timestamps();
 
             $table->unique(['voucher_id', 'merchant_id', 'product_id'], 'vmp_unique');

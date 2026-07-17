@@ -8,12 +8,14 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('addon_groups', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('product_id')
-                ->constrained('products')
+            $table->increments('id');
+            $table->unsignedInteger('product_id');
+            $table->foreign('product_id')
+                ->references('id')
+                ->on('products')
                 ->cascadeOnUpdate()
                 ->cascadeOnDelete();
-            $table->string('addon_group_name', 100);
+            $table->string('addon_group_name');
             $table->enum('selection_type', ['single', 'multiple'])->default('single');
             $table->unsignedTinyInteger('min_selection')->default(0);
             $table->unsignedTinyInteger('max_selection')->nullable();

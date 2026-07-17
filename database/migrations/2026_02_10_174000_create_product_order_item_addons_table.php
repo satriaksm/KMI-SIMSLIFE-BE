@@ -13,9 +13,10 @@ return new class extends Migration {
         Schema::create('product_order_item_addons', function (Blueprint $table) {
             $table->id();
             $table->foreignId('product_order_item_id')->nullable()->constrained()->nullOnDelete();
-            $table->foreignId('addon_id')->nullable()->constrained()->nullOnDelete();
+            $table->unsignedInteger('addon_id')->nullable();
+            $table->foreign('addon_id')->references('id')->on('addons')->nullOnDelete();
             $table->string('addon_name_snapshot');
-            $table->decimal('addon_price_snapshot', 12, 2);
+            $table->decimal('addon_price_snapshot', 15, 2);
             $table->timestamps();
         });
     }

@@ -19,8 +19,8 @@ return new class extends Migration {
 
             $table->decimal('amount', 15, 2);
 
-            $table->string('bank_code');
-            $table->string('account_number');
+            $table->string('bank_code', 15);
+            $table->string('account_number', 30);
             $table->string('account_name');
 
             $table->enum('status', [

@@ -14,9 +14,9 @@ return new class extends Migration {
             $table->id();
             $table->string('name');
             $table->string('email')->unique();
-            $table->string('phone')->nullable();
+            $table->string('phone', 20)->nullable();
             $table->string('profile_picture_path')->nullable();
-            $table->string('nik')->unique()->nullable();
+            $table->char('nik', 16)->unique()->nullable();
             $table->enum('status', ['active', 'declining', 'watchlist', 'suspended', 'inactive'])->default('active');
             $table->boolean('is_super_admin')->default(false);
             $table->timestamp('email_verified_at')->nullable();

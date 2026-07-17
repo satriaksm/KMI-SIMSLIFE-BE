@@ -29,8 +29,8 @@ return new class extends Migration
             $table->morphs('target');
             $table->text('reason')->nullable();
             $table->json('metadata')->nullable(); 
-            $table->string('status_before')->nullable();
-            $table->string('status_after')->nullable();
+            $table->string('status_before', 50)->nullable();
+            $table->string('status_after', 50)->nullable();
             $table->timestamps();
             
             $table->index('action_type');

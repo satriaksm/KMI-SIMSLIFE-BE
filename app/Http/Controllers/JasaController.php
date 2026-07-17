@@ -798,7 +798,14 @@ class JasaController extends Controller
             $order = $currentMaxOrder >= 0 ? $currentMaxOrder + 1 : 0;
 
             foreach ($files as $file) {
-                $path = $file->store("jasa/{$jasa->id}", 'public');
+                $suffix = 'gallery-' . $order;
+                $path = app(\App\Services\ImageOptimizationService::class)->processAndStore(
+                    $file,
+                    "jasas/{$jasa->slug}",
+                    'public',
+                    true,
+                    "{$jasa->slug}"
+                );
 
                 $jasa->images()->create([
                     'image_path' => $path,
@@ -1025,7 +1032,14 @@ class JasaController extends Controller
                 $imagesToInsert = [];
 
                 foreach ($files as $index => $file) {
-                    $path = $file->store("jasa/{$jasa->id}", 'public');
+                    $suffix = ($index === 0) ? 'cover' : 'gallery-' . $index;
+                    $path = app(\App\Services\ImageOptimizationService::class)->processAndStore(
+                        $file,
+                        "jasas/{$jasa->slug}",
+                        'public',
+                        true,
+                        "{$jasa->slug}"
+                    );
 
                     $imagesToInsert[] = [
                         'imageable_type' => 'jasa',

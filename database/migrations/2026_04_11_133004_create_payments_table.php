@@ -18,7 +18,7 @@ return new class extends Migration {
             $table->string('xendit_invoice_id')->nullable();
             $table->string('xendit_refund_id')->nullable();
             $table->string('invoice_url')->nullable();
-            $table->string('payment_method')->nullable(); // VA, QRIS, dll
+            $table->string('payment_method', 30)->nullable(); // VA, QRIS, dll
             $table->timestamp('expired_at')->nullable();
             $table->decimal('amount', 15, 2);
 
@@ -29,8 +29,8 @@ return new class extends Migration {
                 'failed'
             ])->default('pending');
 
-            $table->string('refund_status')->nullable()->comment('processing, succeeded, failed, resolved');
-            $table->string('refund_destination')->nullable();
+            $table->string('refund_status', 30)->nullable()->comment('processing, succeeded, failed, resolved');
+            $table->string('refund_destination', 100)->nullable();
 
             $table->timestamp('paid_at')->nullable();
 

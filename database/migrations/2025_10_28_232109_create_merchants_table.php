@@ -19,14 +19,16 @@ return new class extends Migration {
                 ->restrictOnDelete();
 
 
-            $table->foreignId('segmentation_id')
-                ->constrained('segmentations')
+            $table->unsignedTinyInteger('segmentation_id');
+            $table->foreign('segmentation_id')
+                ->references('id')
+                ->on('segmentations')
                 ->cascadeOnUpdate()
                 ->restrictOnDelete();
 
             $table->string('name');
 
-            $table->string('slug')
+            $table->string('slug', 150)
                 ->unique()
                 ->index();
 
@@ -35,7 +37,7 @@ return new class extends Migration {
             $table->string('logo_path')->nullable();
             $table->string('cover_path')->nullable();
 
-            $table->string('phone')->nullable();
+            $table->string('phone', 20)->nullable();
 
             $table->json('operational_hours')->nullable();
 
@@ -56,9 +58,9 @@ return new class extends Migration {
                 ->nullOnDelete();
 
             $table->timestamp('response_at')->nullable();
-            $table->string('NPWP')->unique()->nullable();
-            $table->string('bank_code')->nullable(); // BCA, BRI (WAJIB untuk Xendit)
-            $table->string('bank_account_number')->nullable();
+            $table->char('NPWP', 16)->unique()->nullable();
+            $table->string('bank_code', 15)->nullable(); // BCA, BRI (WAJIB untuk Xendit)
+            $table->string('bank_account_number', 30)->nullable();
             $table->string('bank_account_name')->nullable();
             $table->decimal('balance_available', 15, 2)->default(0);
             $table->decimal('balance_pending', 15, 2)->default(0);

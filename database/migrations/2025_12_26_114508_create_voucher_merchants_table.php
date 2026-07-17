@@ -8,7 +8,8 @@ return new class extends Migration {
     {
         Schema::create('voucher_merchants', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('voucher_id')->constrained()->onDelete('cascade');
+            $table->unsignedInteger('voucher_id');
+            $table->foreign('voucher_id')->references('id')->on('vouchers')->onDelete('cascade');
             $table->foreignId('merchant_id')->constrained()->onDelete('cascade');
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->enum('voucher_type', ['percent', 'fixed'])->nullable(); // opsional, jika merchant boleh override

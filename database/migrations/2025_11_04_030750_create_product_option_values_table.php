@@ -11,8 +11,9 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('product_option_values', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('product_option_id')->constrained('product_options')->cascadeOnUpdate()->cascadeOnDelete();
+            $table->increments('id');
+            $table->unsignedInteger('product_option_id');
+            $table->foreign('product_option_id')->references('id')->on('product_options')->cascadeOnUpdate()->cascadeOnDelete();
             $table->string('option_value');
             $table->string('image_path')->nullable();
             $table->timestamps();

@@ -270,7 +270,8 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
+                $entityName = ($validated['event_name'] ?? 'event') . '-' . substr(uniqid(), -5);
+                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public', false, $entityName);
             }
             
             Log::info('[AdminEvent] New banner uploaded', [
@@ -425,7 +426,8 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
+                $entityName = ($validated['event_name'] ?? 'event') . '-' . substr(uniqid(), -5);
+                $validated['banner_img_path'] = app(\App\Services\ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public', false, $entityName);
             }
         } else {
             //  Double check 

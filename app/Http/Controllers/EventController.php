@@ -312,7 +312,8 @@ class EventController extends Controller
                         $validated['banner_img_path'] = $path;
                     }
                 } else {
-                    $validated['banner_img_path'] = app(ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
+                    $entityName = ($validated['event_name'] ?? 'event') . '-' . substr(uniqid(), -5);
+                    $validated['banner_img_path'] = app(ImageOptimizationService::class)->processAndStore($file, 'events', 'public', false, $entityName);
                 }
             }
         }
@@ -389,7 +390,8 @@ class EventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = app(ImageOptimizationService::class)->processAndStore($file, 'events/banners', 'public');
+                $entityName = ($validated['event_name'] ?? 'event') . '-' . substr(uniqid(), -5);
+                $validated['banner_img_path'] = app(ImageOptimizationService::class)->processAndStore($file, 'events', 'public', false, $entityName);
             }
         }
 

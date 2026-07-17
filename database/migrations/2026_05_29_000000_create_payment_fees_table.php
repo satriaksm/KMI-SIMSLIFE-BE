@@ -13,8 +13,8 @@ return new class extends Migration
             $table->string('method_code')->unique();
             $table->string('method_name');
             $table->enum('type', ['percentage', 'flat']);
-            $table->decimal('value', 10, 2);
-            $table->string('description')->nullable();
+            $table->decimal('value', 15, 2);
+            $table->text('description')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });

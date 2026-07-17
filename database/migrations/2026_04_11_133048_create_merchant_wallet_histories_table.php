@@ -24,7 +24,7 @@ return new class extends Migration {
 
             $table->decimal('amount', 15, 2);
 
-            $table->string('reference_type'); // order / payout
+            $table->string('reference_type', 50); // order / payout
             $table->unsignedBigInteger('reference_id');
 
             $table->text('description')->nullable();

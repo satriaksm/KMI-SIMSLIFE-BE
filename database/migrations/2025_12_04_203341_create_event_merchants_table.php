@@ -11,9 +11,10 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('event_merchants', function (Blueprint $table) {
-            $table->id();
+            $table->increments('id');
             $table->foreignId('merchant_id')->constrained()->onDelete('cascade');
-            $table->foreignId('event_id');
+            $table->unsignedInteger('event_id');
+            $table->foreign('event_id')->references('id')->on('events')->onDelete('cascade');
             $table->enum('status', ['pending', 'accepted', 'cancelled', 'rejected', 'removed'])->default('pending');
             $table->text('removal_reason')->nullable(); 
             $table->foreignId('removed_by')->nullable()->constrained('users')->onDelete('set null'); 
