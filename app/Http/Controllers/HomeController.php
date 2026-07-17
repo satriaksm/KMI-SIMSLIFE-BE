@@ -19,9 +19,14 @@ class HomeController extends Controller
     public function recommendedMerchants(Request $request)
     {
         try {
-            $limit = $request->input('limit', 10);
+            $limit = (int) $request->input('limit', 10);
+            
+            // Komposisi: 60% Top, 20% New, 20% Random
+            $topLimit = (int) ceil($limit * 0.6);
+            $newLimit = (int) round($limit * 0.2);
+            $randomLimit = $limit - $topLimit - $newLimit;
 
-            $merchants = Merchant::query()
+            $baseQuery = Merchant::query()
                 ->where('merchants.status', 'approved')
                 ->with(['segmentation', 'primaryAddress.village', 'primaryAddress.district', 'primaryAddress.city', 'primaryAddress.province'])
                 ->whereHas('primaryAddress', function ($query) {
@@ -34,13 +39,45 @@ class HomeController extends Controller
                     },
                     'jasas' => function ($q) {
                         $q->where('status', 'published');
+                    },
+                    'orders' => function ($q) {
+                        $q->where('status', 'completed');
                     }
-                ])
+                ]);
+
+            // 1. Top Merchants (Berdasarkan jumlah transaksi sukses & kelengkapan katalog)
+            $topMerchants = (clone $baseQuery)
+                ->orderByDesc('orders_count')
+                ->orderByRaw('(products_count + jasas_count) DESC')
+                ->limit($topLimit)
+                ->get();
+
+            $existingIds = $topMerchants->pluck('id')->toArray();
+
+            // 2. New & Trending (Baru bergabung dalam 30 hari terakhir, punya produk)
+            $newMerchants = (clone $baseQuery)
+                ->whereNotIn('merchants.id', $existingIds)
+                ->where('merchants.created_at', '>=', now()->subDays(30))
+                ->orderByRaw('(products_count + jasas_count) DESC')
+                ->limit($newLimit)
+                ->get();
+
+            $existingIds = array_merge($existingIds, $newMerchants->pluck('id')->toArray());
+
+            // 3. Random (Sisanya, menghindari UMKM pasif yang tidak punya produk/jasa)
+            $randomLimitActual = $limit - count($existingIds);
+            $randomMerchants = (clone $baseQuery)
+                ->whereNotIn('merchants.id', $existingIds)
+                ->havingRaw('(products_count + jasas_count) > 0') // Filter UMKM pasif
                 ->inRandomOrder()
-                ->limit($limit)
-                ->get()
+                ->limit($randomLimitActual > 0 ? $randomLimitActual : 0)
+                ->get();
+
+            // Gabungkan hasil dan petakan koordinat
+            $merchants = $topMerchants
+                ->concat($newMerchants)
+                ->concat($randomMerchants)
                 ->map(function ($merchant) {
-                    // Append coordinates dari primaryAddress ke merchant object
                     $address = $merchant->primaryAddress;
                     if ($address) {
                         $merchant->latitude = $address->latitude;
@@ -91,7 +128,8 @@ class HomeController extends Controller
                     $query->whereNotNull('latitude')
                         ->whereNotNull('longitude');
                 })
-                ->inRandomOrder();
+                ->orderByRaw('(products_count + jasas_count) DESC')
+                ->latest();
 
             if ($limit) {
                 $query->limit($limit);
