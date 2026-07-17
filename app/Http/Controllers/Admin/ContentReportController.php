@@ -153,14 +153,16 @@ class ContentReportController extends Controller
             'reviewed_at' => now(),
         ]);
 
-        // Send notification + email to reporter
-        try {
-            if ($report->reporter) {
-                $report->reporter->notify(new ReportNotification($report, 'status_changed'));
+        // Send notification + email to reporter in the background
+        defer(function () use ($report) {
+            try {
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'status_changed'));
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ContentReport] Failed to send notification to reporter: ' . $e->getMessage());
             }
-        } catch (\Exception $e) {
-            Log::warning('[ContentReport] Failed to send notification to reporter: ' . $e->getMessage());
-        }
+        });
 
         return response()->json([
             'message' => 'Report reviewed successfully',
@@ -333,31 +335,29 @@ class ContentReportController extends Controller
             ]);
         });
 
-        // ─── Notify reporter (user A) ───
-        try {
-            if ($report->reporter) {
-                $report->reporter->notify(new \App\Notifications\ReportNotification($report, 'action_taken'));
+        // ─── Notify reporter & target user in the background ───
+        defer(function () use ($report, $targetUser, $actionType, $reason) {
+            try {
+                if ($report->reporter) {
+                    $report->reporter->notify(new \App\Notifications\ReportNotification($report, 'action_taken'));
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ContentReport] Reporter notify failed: ' . $e->getMessage());
             }
-        } catch (\Exception $e) {
-            Log::warning('[ContentReport] Reporter notify failed: ' . $e->getMessage());
-        }
 
-        // Prevent Mailtrap rate limiting (Too many emails per second)
-        if (app()->environment('local')) {
-            sleep(4);
-        }
-
-        // ─── Notify target user (terlapor / user B) ───
-        try {
-            if ($targetUser) {
-                // Retry up to 3 times with 5 seconds delay if Mailtrap rate limits
-                retry(3, function () use ($targetUser, $report, $actionType, $reason) {
-                    $targetUser->notify(new \App\Notifications\ReportActionNotification($report, $actionType, $reason));
-                }, 5000);
+            try {
+                if ($targetUser) {
+                    // Use queue delay instead of sleep() to prevent Mailtrap rate limits
+                    // and to ensure the HTTP response isn't blocked.
+                    $notification = (new \App\Notifications\ReportActionNotification($report, $actionType, $reason))
+                        ->delay(now()->addSeconds(5));
+                        
+                    $targetUser->notify($notification);
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ContentReport] Target user notify failed: ' . $e->getMessage());
             }
-        } catch (\Exception $e) {
-            Log::warning('[ContentReport] Target user notify failed: ' . $e->getMessage());
-        }
+        });
 
         return response()->json([
             'message' => 'Tindakan berhasil diambil',
@@ -591,11 +591,14 @@ class ContentReportController extends Controller
                 'reviewed_at' => now(),
             ]);
 
-            // Send notification to target user
-            $targetUser = \App\Models\User::find($request->user_id);
-            if ($targetUser) {
-                $targetUser->notify(new ReportNotification($report, 'forwarded'));
-            }
+            // Send notification to target user in the background
+            $targetUserId = $request->user_id;
+            defer(function () use ($targetUserId, $report) {
+                $targetUser = \App\Models\User::find($targetUserId);
+                if ($targetUser) {
+                    $targetUser->notify(new ReportNotification($report, 'forwarded'));
+                }
+            });
 
             // Log action
             \App\Models\AdminAction::create([
@@ -670,8 +673,12 @@ class ContentReportController extends Controller
                 'reviewed_at' => now(),
             ]);
 
-            // Notify reporter
-            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+            // Notify reporter in the background
+            defer(function () use ($report) {
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                }
+            });
         });
 
         return response()->json([
@@ -725,11 +732,13 @@ class ContentReportController extends Controller
                 'admin_note' => $request->message,
             ]);
 
-            // Send warning notification
-            $targetUser->notify(new ReportNotification($report, 'forwarded'));
-
-            // Notify reporter
-            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+            // Send warning notification and notify reporter in the background
+            defer(function () use ($targetUser, $report) {
+                $targetUser->notify(new ReportNotification($report, 'forwarded'));
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                }
+            });
         });
 
         return response()->json([
@@ -798,16 +807,19 @@ class ContentReportController extends Controller
                 'admin_note' => $request->reason,
             ]);
 
-            // Notify content owner if requested
-            if ($request->notify_owner ?? false) {
-                $owner = $this->getUserFromReportable($reportable);
-                if ($owner) {
+            // Notify content owner if requested and reporter in the background
+            $notifyOwner = $request->notify_owner ?? false;
+            $owner = $notifyOwner ? $this->getUserFromReportable($reportable) : null;
+            
+            defer(function () use ($notifyOwner, $owner, $report) {
+                if ($notifyOwner && $owner) {
                     // TODO: Send notification to owner
                 }
-            }
 
-            // Notify reporter
-            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                }
+            });
         });
 
         return response()->json([

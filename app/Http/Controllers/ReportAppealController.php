@@ -69,20 +69,23 @@ class ReportAppealController extends Controller
                 'status'            => 'pending',
             ]);
 
-            // Notify admins
-            try {
-                $admins = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))
-                    ->orWhere('is_super_admin', true)
-                    ->get();
+            // Notify admins in the background
+            defer(function () use ($appeal, $report) {
+                try {
+                    $admins = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))
+                        ->orWhere('is_super_admin', true)
+                        ->get();
 
-                foreach ($admins as $admin) {
-                    $admin->notify(
-                        new \App\Notifications\NewAppealAdminNotification($appeal, $report)
-                    );
+                    foreach ($admins as $index => $admin) {
+                        // Add a 3-second delay between each email to prevent Mailtrap rate limiting
+                        $admin->notify(
+                            (new \App\Notifications\NewAppealAdminNotification($appeal, $report))->delay(now()->addSeconds($index * 3))
+                        );
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('[ReportAppeal] Notify admin failed: ' . $e->getMessage());
                 }
-            } catch (\Exception $e) {
-                Log::warning('[ReportAppeal] Notify admin failed: ' . $e->getMessage());
-            }
+            });
 
             return $appeal;
         });

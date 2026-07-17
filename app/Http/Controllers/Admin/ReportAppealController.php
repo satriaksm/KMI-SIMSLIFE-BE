@@ -105,16 +105,18 @@ class ReportAppealController extends Controller
                 }
             }
 
-            // Kirim email ke appellant (user yang mengajukan sanggahan)
-            try {
-                if ($appeal->appellant) {
-                    $appeal->appellant->notify(
-                        new \App\Notifications\AppealReviewedNotification($appeal, $report)
-                    );
+            // Kirim email ke appellant (user yang mengajukan sanggahan) in the background
+            defer(function () use ($appeal, $report) {
+                try {
+                    if ($appeal->appellant) {
+                        $appeal->appellant->notify(
+                            new \App\Notifications\AppealReviewedNotification($appeal, $report)
+                        );
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('[ReportAppeal] Notify appellant failed: ' . $e->getMessage());
                 }
-            } catch (\Exception $e) {
-                Log::warning('[ReportAppeal] Notify appellant failed: ' . $e->getMessage());
-            }
+            });
         });
 
         return response()->json([

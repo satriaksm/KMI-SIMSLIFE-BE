@@ -109,18 +109,21 @@ class ReportController extends Controller
 
         $report->load(['reason:id,reason_title,reason_description', 'reviewer:id,name', 'reportable']);
 
-        // Notify all admins via email
-        try {
-            $admins = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))
-                ->orWhere('is_super_admin', true)
-                ->get();
+        // Notify all admins via email in the background
+        defer(function () use ($report) {
+            try {
+                $admins = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))
+                    ->orWhere('is_super_admin', true)
+                    ->get();
 
-            foreach ($admins as $admin) {
-                $admin->notify(new NewReportAdminNotification($report));
+                foreach ($admins as $index => $admin) {
+                    // Add a 3-second delay between each email to prevent Mailtrap rate limiting
+                    $admin->notify((new NewReportAdminNotification($report))->delay(now()->addSeconds($index * 3)));
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ReportController] Failed to notify admins: ' . $e->getMessage());
             }
-        } catch (\Exception $e) {
-            Log::warning('[ReportController] Failed to notify admins: ' . $e->getMessage());
-        }
+        });
 
         return response()->json([
             'message' => 'Laporan berhasil dikirim',
