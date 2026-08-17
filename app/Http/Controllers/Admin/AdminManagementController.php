@@ -49,8 +49,16 @@ class AdminManagementController extends Controller
         }
 
         // Sort
-        $sortBy = $request->input('sort_by', 'created_at');
-        $sortOrder = $request->input('sort_order', 'desc');
+        $sortBy = $request->input('sort_by') ?: 'created_at';
+        $sortOrder = $request->input('sort_order') ?: 'desc';
+
+        if (!in_array($sortBy, ['id', 'name', 'email', 'status', 'created_at'])) {
+            $sortBy = 'created_at';
+        }
+        if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
+            $sortOrder = 'desc';
+        }
+
         $query->orderBy($sortBy, $sortOrder);
 
         $admins = $query->paginate($request->input('per_page', 15));
