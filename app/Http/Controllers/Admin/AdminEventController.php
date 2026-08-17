@@ -884,13 +884,13 @@ class AdminEventController extends Controller
 
             $allOrders    = $ordersQuery->get();
             $orderIds     = $allOrders->pluck('id');
-            $completedOrders = $allOrders->where('status', 'completed');
+            $completedOrders = $allOrders->where('status', 'selesai');
 
             // ── 2. SUMMARY ──────────────────────────────────────────────────
             $totalTransactions = $allOrders->count();
             $completedCount    = $completedOrders->count();
-            $cancelledCount    = $allOrders->whereIn('status', ['cancelled', 'rejected'])->count();
-            $totalRevenue      = $completedOrders->sum('gross_amount');
+            $cancelledCount    = $allOrders->whereIn('status', 'batal')->count();
+            $totalRevenue      = $completedOrders->sum('total');
             $uniqueBuyers      = $allOrders->pluck('user_id')->unique()->count();
             $avgTransaction    = $completedCount > 0 ? round($totalRevenue / $completedCount) : 0;
 
@@ -910,7 +910,7 @@ class AdminEventController extends Controller
                 ->select(
                     'orders.merchant_id',
                     DB::raw('COUNT(*) as total_orders'),
-                    DB::raw('SUM(CASE WHEN orders.status = "completed" THEN gross_amount ELSE 0 END) as total_revenue'),
+                    DB::raw('SUM(CASE WHEN orders.status = "selesai" THEN total ELSE 0 END) as total_revenue'),
                     DB::raw('COUNT(DISTINCT orders.user_id) as unique_buyers')
                 )
                 ->whereIn('orders.id', $orderIds)
@@ -976,18 +976,18 @@ class AdminEventController extends Controller
             })->sortByDesc('usage_count')->values();
 
             // ── 5. TOP PRODUCTS & CATEGORIES ────────────────────────────────
-            $topProducts = DB::table('product_order_items')
+            $topProducts = DB::table('order_items')
                 ->select(
-                    'product_order_items.product_id',
-                    'product_order_items.product_name_snapshot as product_name',
-                    DB::raw('SUM(product_order_items.quantity) as total_qty'),
-                    DB::raw('SUM(product_order_items.subtotal_snapshot) as total_revenue'),
+                    'order_items.product_id',
+                    'order_items.name as product_name',
+                    DB::raw('SUM(order_items.quantity) as total_qty'),
+                    DB::raw('SUM(order_items.subtotal) as total_revenue'),
                     'orders.merchant_id'
                 )
-                ->join('orders', 'orders.id', '=', 'product_order_items.order_id')
-                ->whereIn('product_order_items.order_id', $orderIds)
-                ->where('orders.status', 'completed')
-                ->groupBy('product_order_items.product_id', 'product_order_items.product_name_snapshot', 'orders.merchant_id')
+                ->join('orders', 'orders.id', '=', 'order_items.order_id')
+                ->whereIn('order_items.order_id', $orderIds)
+                ->where('orders.status', 'selesai')
+                ->groupBy('order_items.product_id', 'order_items.name', 'orders.merchant_id')
                 ->orderByDesc('total_qty')
                 ->get()
                 ->map(fn($p) => [
@@ -999,16 +999,16 @@ class AdminEventController extends Controller
                 ]);
 
             // Categories via categorizables
-            $topCategories = DB::table('product_order_items')
-                ->join('orders', 'orders.id', '=', 'product_order_items.order_id')
+            $topCategories = DB::table('order_items')
+                ->join('orders', 'orders.id', '=', 'order_items.order_id')
                 ->join('categorizables', function ($join) {
-                    $join->on('categorizables.categorizable_id', '=', 'product_order_items.product_id')
+                    $join->on('categorizables.categorizable_id', '=', 'order_items.product_id')
                         ->whereIn('categorizables.categorizable_type', ['App\\Models\\Product', 'product']);
                 })
                 ->join('categories', 'categories.id', '=', 'categorizables.category_id')
-                ->whereIn('product_order_items.order_id', $orderIds)
-                ->where('orders.status', 'completed')
-                ->selectRaw('categories.name as category_name, SUM(product_order_items.quantity) as total_qty, SUM(product_order_items.subtotal_snapshot) as total_revenue')
+                ->whereIn('order_items.order_id', $orderIds)
+                ->where('orders.status', 'selesai')
+                ->selectRaw('categories.name as category_name, SUM(order_items.quantity) as total_qty, SUM(order_items.subtotal) as total_revenue')
                 ->groupBy('categories.name')
                 ->orderByDesc('total_qty')
                 ->get()
@@ -1021,7 +1021,7 @@ class AdminEventController extends Controller
             // ── 6. DAILY TREND ───────────────────────────────────────────────
             $dailyTrendData = DB::table('orders')
                 ->whereIn('id', $orderIds)
-                ->selectRaw('DATE(created_at) as date, COUNT(*) as transactions, SUM(CASE WHEN status = "completed" THEN gross_amount ELSE 0 END) as revenue')
+                ->selectRaw('DATE(created_at) as date, COUNT(*) as transactions, SUM(CASE WHEN status = "selesai" THEN total ELSE 0 END) as revenue')
                 ->groupByRaw('DATE(created_at)')
                 ->get()
                 ->keyBy('date');
