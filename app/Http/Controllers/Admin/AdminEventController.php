@@ -979,15 +979,16 @@ class AdminEventController extends Controller
             $topProducts = DB::table('order_items')
                 ->select(
                     'order_items.product_id',
-                    'order_items.name as product_name',
+                    'products.name as product_name',
                     DB::raw('SUM(order_items.quantity) as total_qty'),
                     DB::raw('SUM(order_items.subtotal) as total_revenue'),
                     'orders.merchant_id'
                 )
                 ->join('orders', 'orders.id', '=', 'order_items.order_id')
+                ->join('products', 'products.id', '=', 'order_items.product_id')
                 ->whereIn('order_items.order_id', $orderIds)
                 ->where('orders.status', 'selesai')
-                ->groupBy('order_items.product_id', 'order_items.name', 'orders.merchant_id')
+                ->groupBy('order_items.product_id', 'products.name', 'orders.merchant_id')
                 ->orderByDesc('total_qty')
                 ->get()
                 ->map(fn($p) => [
