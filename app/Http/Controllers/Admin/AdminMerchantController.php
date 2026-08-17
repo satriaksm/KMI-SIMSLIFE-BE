@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use Carbon\Carbon;
 use App\Models\Merchant;
 use App\Models\Order;
-use App\Models\OrderItem;
+use App\Models\ProductOrderItem;
 use App\Notifications\MerchantApplicationStatusNotification;
 use App\Services\WebPushService;
 use Illuminate\Http\Request;
@@ -570,7 +570,7 @@ class AdminMerchantController extends Controller
             ->get();
 
         // Produk terorder per kategori 30 hari terakhir
-        $productOrders = OrderItem::whereHas('order', function ($q) use ($id) {
+        $productOrders = ProductOrderItem::whereHas('order', function ($q) use ($id) {
             $q->where('merchant_id', $id)
                 ->where('created_at', '>=', now()->subDays(30));
         })
@@ -759,13 +759,13 @@ class AdminMerchantController extends Controller
             // Get statistics
             try {
                 $stats = DB::table('orders')
-                    ->join('order_items', 'orders.id', '=', 'order_items.order_id')
-                    ->join('products', 'order_items.product_id', '=', 'products.id')
+                    ->join('product_order_items', 'orders.id', '=', 'product_order_items.order_id')
+                    ->join('products', 'product_order_items.product_id', '=', 'products.id')
                     ->where('products.merchant_id', $merchant->id)
                     ->where('orders.created_at', '>=', now()->subDays(30))
                     ->selectRaw('
                         COUNT(DISTINCT orders.id) as total_orders,
-                        SUM(order_items.subtotal) as total_revenue
+                        SUM(product_order_items.subtotal_snapshot) as total_revenue
                     ')
                     ->first();
 
