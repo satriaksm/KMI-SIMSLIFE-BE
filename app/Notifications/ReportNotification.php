@@ -26,7 +26,7 @@ class ReportNotification extends Notification implements ShouldQueue
      */
     public function via($notifiable): array
     {
-        return ['database']; // Tambahkan 'mail' jika ingin email notification
+        return ['database', 'mail'];
     }
 
     /**
@@ -76,10 +76,50 @@ class ReportNotification extends Notification implements ShouldQueue
      */
     public function toMail($notifiable): MailMessage
     {
+        $data       = $this->toArray($notifiable);
+        $reportUrl  = config('app.frontend_url', config('app.url')) . '/reports/' . $this->report->id;
+        $typeLabel  = $this->getTypeLabel();
+        $actionLabel = isset($this->report->action_taken)
+            ? $this->getActionMessage($this->report->action_taken ?? '')
+            : null;
+
         return (new MailMessage)
-            ->subject('Update Laporan - Sumilir')
-            ->line($this->toArray($notifiable)['message'])
-            ->action('Lihat Detail', url($this->toArray($notifiable)['action_url']));
+            ->subject($this->getMailSubject())
+            ->view('emails.reports.status-update', [
+                'report'      => $this->report,
+                'status'      => $this->report->status,
+                'typeLabel'   => $typeLabel,
+                'adminNote'   => $this->report->admin_note,
+                'actionTaken' => $this->report->action_taken ?? 'none',
+                'actionLabel' => $actionLabel,
+                'reportUrl'   => $reportUrl,
+                'userName'    => $notifiable->name,
+                'targetName'  => $this->report->getTargetName(),
+            ]);
+    }
+
+    private function getMailSubject(): string
+    {
+        return match ($this->type) {
+            'status_changed' => '[Update Laporan #' . $this->report->id . '] ' . $this->getStatusLabel($this->report->status) . ' - Sumilir',
+            'resolved'       => '[Laporan Selesai #' . $this->report->id . '] - Sumilir',
+            'action_taken'   => '[Update Laporan #' . $this->report->id . '] Tindakan Telah Diambil - Sumilir',
+            default          => 'Update Laporan #' . $this->report->id . ' - Sumilir',
+        };
+    }
+
+    private function getTypeLabel(): string
+    {
+        $type = strtolower(class_basename($this->report->reportable_type ?? ''));
+        return match ($type) {
+            'product'       => 'Produk',
+            'jasa'          => 'Jasa',
+            'merchant'      => 'UMKM',
+            'communitypost' => 'Postingan',
+            'postcomment'   => 'Komentar',
+            'user'          => 'Akun Pengguna',
+            default         => ucfirst($type),
+        };
     }
 
     private function getStatusLabel(string $status): string
@@ -96,11 +136,17 @@ class ReportNotification extends Notification implements ShouldQueue
     private function getActionMessage(string $action): string
     {
         return match($action) {
-            'user_suspended' => 'User terkait telah disuspend',
-            'user_warned' => 'User terkait telah diberi peringatan',
-            'content_deleted' => 'Konten telah dihapus',
-            'content_hidden' => 'Konten telah disembunyikan',
-            'merchant_suspended' => 'Merchant telah disuspend',
+            'send_warning' => 'Pengguna terkait telah dikirimkan Peringatan Pelanggaran',
+            'suspend_user' => 'Pengguna terkait telah disuspend',
+            'warn_user' => 'Pengguna terkait telah diberi peringatan',
+            'deactivate_user' => 'Pengguna terkait dinonaktifkan',
+            'warn_merchant' => 'UMKM terkait telah diberi peringatan',
+            'suspend_merchant' => 'UMKM terkait telah disuspend',
+            'archive_merchant' => 'UMKM terkait telah diarsipkan',
+            'archive_product' => 'Produk telah diarsipkan',
+            'archive_service' => 'Jasa telah diarsipkan',
+            'delete_post' => 'Postingan telah dihapus',
+            'delete_comment' => 'Komentar telah dihapus',
             default => 'Tindakan telah diambil oleh admin',
         };
     }

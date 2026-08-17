@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Storage;
+use App\Services\ImageOptimizationService;
+use App\Http\Requests\Admin\ChangeUserStatusRequest;
 
 class AdminUserController extends Controller
 {
@@ -409,7 +411,17 @@ class AdminUserController extends Controller
             });
         }
 
-        $users = $query->latest()
+        $sortBy = $request->input('sort_by') ?: 'created_at';
+        $sortOrder = $request->input('sort_order') ?: 'desc';
+
+        if (!in_array($sortBy, ['id', 'name', 'email', 'phone', 'nik', 'status', 'created_at'])) {
+            $sortBy = 'created_at';
+        }
+        if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
+            $sortOrder = 'desc';
+        }
+
+        $users = $query->orderBy($sortBy, $sortOrder)
             ->paginate($request->input('per_page', 15));
 
         // Transform for UI
@@ -497,12 +509,12 @@ class AdminUserController extends Controller
                 'name' => ['required', 'string', 'max:255'],
                 'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
                 'phone' => ['nullable', 'string', 'max:13'],
-                'nik' => ['required', 'string', 'size:16', 'unique:users,nik'],
+                'nik' => ['nullable', 'string', 'size:16', 'unique:users,nik'],
                 'password' => [
                     'required',
                     'confirmed',
                     \Illuminate\Validation\Rules\Password::min(8),
-                    'regex:/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_]).+$/',
+                    'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_]).+$/',
                 ],
                 'password_confirmation' => ['required'],
             ],
@@ -516,7 +528,7 @@ class AdminUserController extends Controller
                 'password_confirmation.required' => 'Konfirmasi password wajib diisi.',
                 'password_confirmation.confirmed' => 'Konfirmasi password tidak cocok.',
                 'password.min' => 'Password minimal 8 karakter.',
-                'password.regex' => 'Password harus mengandung huruf besar, angka, dan simbol (!@#$%^&*-_).',
+                'password.regex' => 'Password harus mengandung huruf besar, huruf kecil, angka, dan simbol (!@#$%^&*-_).',
                 'nik.size' => 'NIK harus 16 karakter.',
             ]
         );
@@ -537,6 +549,7 @@ class AdminUserController extends Controller
             'nik' => $data['nik'],
             'password' => \Illuminate\Support\Facades\Hash::make($data['password']),
             'status' => 'active',
+            'email_verified_at' => now(),
         ]);
 
         // Tetapkan role default 'customer'
@@ -717,6 +730,8 @@ class AdminUserController extends Controller
                 'status' => $newStatus, 
             ]);
 
+            // (Tokens deletion removed as it throws 500 without Sanctum DB)
+
             // Log action
             AdminAction::create([
                 'admin_id' => auth()->id(),
@@ -878,6 +893,7 @@ class AdminUserController extends Controller
         $user->update([
             'status' => 'suspended', 
         ]);
+        // (Tokens deletion removed)
 
         // Log action
         AdminAction::create([
@@ -1021,7 +1037,7 @@ class AdminUserController extends Controller
     public function notify(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
-            'type' => 'required|in:outreach,event_invite,paguyuban_invite,voucher,general',
+            'type' => 'required|in:outreach,event_invite,voucher,general',
             'message' => 'required|string|max:1000',
             'metadata' => 'nullable|array',
         ]);
@@ -1246,7 +1262,7 @@ class AdminUserController extends Controller
     public function executeAlertAction(Request $request, $alertId)
     {
         $validator = Validator::make($request->all(), [
-            'action' => 'required|in:warn,suspend,limit_posting,invite_event,invite_paguyuban,dismiss',
+            'action' => 'required|in:warn,suspend,limit_posting,invite_event,dismiss',
             'reason' => 'required|string|max:500',
         ]);
 
@@ -1648,19 +1664,20 @@ class AdminUserController extends Controller
      */
     public function showProfilePicture(Request $request, User $user)
     {
+        $size = $request->query('size', 'original');
         // Support signed URL for secure access
         if ($request->hasValidSignature()) {
-            return $this->streamProfilePicture($user);
+            return $this->streamProfilePicture($user, $size);
         }
 
         // Public access for now (you can add auth checks later)
-        return $this->streamProfilePicture($user);
+        return $this->streamProfilePicture($user, $size);
     }
 
     /**
      * Private method to stream profile picture
      */
-    private function streamProfilePicture(User $user)
+    private function streamProfilePicture(User $user, string $size = 'original')
     {
         // ✅ FIX: Check if path exists and is not empty
         if (empty($user->profile_picture_path)) {
@@ -1668,11 +1685,14 @@ class AdminUserController extends Controller
         }
 
         $disk = 'public';
-        $path = ltrim($user->profile_picture_path, '/');
+        $originalPath = ltrim($user->profile_picture_path, '/');
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         // ✅ FIX: Verify file exists on disk
         if (!Storage::disk($disk)->exists($path)) {
-            Log::warning('[AdminUser] Profile picture file not found', [
+            $path = $originalPath; // fallback
+            if (!Storage::disk($disk)->exists($path)) {
+                Log::warning('[AdminUser] Profile picture file not found', [
                 'user_id' => $user->id,
                 'path' => $path,
             ]);
@@ -1714,4 +1734,5 @@ class AdminUserController extends Controller
             abort(500, 'Error streaming file');
         }
     }
+}
 }

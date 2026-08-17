@@ -9,6 +9,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use App\Notifications\ReportReviewedNotification;
+use App\Notifications\ReportNotification;
+use App\Notifications\ReportActionNotification;
 use Illuminate\Support\Facades\Validator;
 use App\Models\Product;
 use App\Models\CommunityPost;
@@ -16,7 +18,6 @@ use App\Models\PostComment;
 use App\Models\Merchant;
 use App\Models\Jasa;
 use App\Models\User;
-use App\Notifications\ReportNotification;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -132,38 +133,254 @@ class ContentReportController extends Controller
     public function review(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
-            'status' => 'required|in:in_review,resolved,dismissed',
+            'status'     => 'required|in:in_review,resolved,dismissed',
             'admin_note' => 'nullable|string|max:500',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'message' => 'Validation failed',
-                'errors' => $validator->errors(),
+                'errors'  => $validator->errors(),
             ], 422);
         }
 
-        $report = ContentReport::findOrFail($id);
+        $report = ContentReport::with(['reporter', 'reportable'])->findOrFail($id);
 
-        // Update status
         $report->update([
-            'status' => $request->status,
+            'status'      => $request->status,
             'reviewed_by' => Auth::id(),
-            'admin_note' => $request->admin_note,
+            'admin_note'  => $request->admin_note,
             'reviewed_at' => now(),
         ]);
 
-        // Send notification to reporter
-        try {
-            $report->reporter->notify(new ReportReviewedNotification($report));
-        } catch (\Exception $e) {
-            Log::warning('Failed to send notification: ' . $e->getMessage());
-        }
+        // Send notification + email to reporter in the background
+        defer(function () use ($report) {
+            try {
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'status_changed'));
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ContentReport] Failed to send notification to reporter: ' . $e->getMessage());
+            }
+        });
 
         return response()->json([
             'message' => 'Report reviewed successfully',
-            'data' => $report->fresh()->load(['reporter', 'reviewer', 'reason']),
+            'data'    => $report->fresh()->load(['reporter', 'reviewer', 'reason']),
         ]);
+    }
+
+    /**
+     * Unified moderation action endpoint.
+     * POST /admin/reports/{id}/take-action
+     *
+     * action_type options:
+     *   user       -> warn_user | suspend_user | deactivate_user
+     *   merchant   -> warn_merchant | suspend_merchant | archive_merchant
+     *   product    -> archive_product
+     *   service    -> archive_service
+     *   post       -> delete_post
+     *   comment    -> delete_comment
+     */
+    public function takeAction(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'action_type' => 'required|string|in:send_warning,warn_user,suspend_user,deactivate_user,warn_merchant,suspend_merchant,archive_merchant,archive_product,archive_service,delete_post,delete_comment',
+            'reason'      => 'required|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors'  => $validator->errors(),
+            ], 422);
+        }
+
+        $report = ContentReport::with([
+            'reporter',
+            'reportable' => function (MorphTo $morphTo) {
+                $morphTo->morphWith([
+                    Product::class      => ['merchant.user'],
+                    Jasa::class         => ['merchant.user'],
+                    Merchant::class     => ['user'],
+                    CommunityPost::class => ['user'],
+                    PostComment::class  => ['user'],
+                    User::class         => [],
+                ]);
+            },
+        ])->findOrFail($id);
+
+        $actionType = $request->action_type;
+        $reason     = $request->reason;
+        $reportable = $report->reportable;
+
+        if (!$reportable) {
+            return response()->json(['message' => 'Konten yang dilaporkan tidak ditemukan'], 404);
+        }
+
+        $targetUser = $report->getTargetUser();
+
+        DB::transaction(function () use ($report, $reportable, $targetUser, $actionType, $reason, $request) {
+            $oldStatus = null;
+
+            // ─── Execute action ───
+            switch ($actionType) {
+                case 'send_warning':
+                    // Peringatan pelanggaran umum: tidak ubah status konten, hanya kirim email
+                    break;
+
+                case 'warn_user':
+                    // Peringatan: tidak ubah status, hanya catat
+                    break;
+
+                case 'suspend_user':
+                    if ($targetUser) {
+                        $oldStatus = $targetUser->status;
+                        $targetUser->update(['status' => 'suspended']);
+                    }
+                    break;
+
+                case 'deactivate_user':
+                    if ($targetUser) {
+                        $oldStatus = $targetUser->status;
+                        $targetUser->update(['status' => 'inactive']);
+                    }
+                    break;
+
+                case 'warn_merchant':
+                    // Peringatan merchant: hanya catat, tidak ubah status merchant
+                    break;
+
+                case 'suspend_merchant':
+                    if ($reportable instanceof Merchant) {
+                        $oldStatus = $reportable->status;
+                        $reportable->update(['status' => 'suspended']);
+                    } elseif ($reportable instanceof Product || $reportable instanceof Jasa) {
+                        $merchant  = $reportable->merchant;
+                        $oldStatus = $merchant?->status;
+                        $merchant?->update(['status' => 'suspended']);
+                    }
+                    break;
+
+                case 'archive_merchant':
+                    if ($reportable instanceof Merchant) {
+                        $oldStatus = $reportable->status;
+                        $reportable->update(['status' => 'archived']);
+                    }
+                    break;
+
+                case 'archive_product':
+                    if ($reportable instanceof Product) {
+                        $oldStatus = $reportable->status;
+                        $reportable->update(['status' => 'archived']);
+                    }
+                    break;
+
+                case 'archive_service':
+                    if ($reportable instanceof Jasa) {
+                        $oldStatus = $reportable->status;
+                        $reportable->update(['status' => 'archived']);
+                    }
+                    break;
+
+                case 'delete_post':
+                    if ($reportable instanceof CommunityPost) {
+                        $oldStatus = $reportable->post_status;
+                        // Simpan konten asli untuk pemulihan
+                        $report->update(['original_content' => $reportable->post_content]);
+                        $reportable->update(['post_status' => 'archived']);
+                    }
+                    break;
+
+                case 'delete_comment':
+                    if ($reportable instanceof PostComment) {
+                        // Simpan konten asli untuk pemulihan
+                        $report->update(['original_content' => $reportable->comment_content]);
+                        $reportable->update(['comment_content' => '[Komentar dihapus oleh admin karena melanggar ketentuan]']);
+                    }
+                    break;
+            }
+
+            $validAdminActions = [
+                'status_change', 'warn_user', 'suspend_user', 'unsuspend_user',
+                'limit_posting', 'remove_limit', 'invite_event',
+                'send_notification', 'assign_case', 'resolve_report', 'bulk_update', 'manual_override'
+            ];
+            
+            $dbActionType = in_array($actionType, $validAdminActions) ? $actionType : 'status_change';
+
+            // ─── Log admin action ───
+            \App\Models\AdminAction::create([
+                'admin_id'     => Auth::id(),
+                'action_type'  => $dbActionType,
+                'target_type'  => get_class($reportable),
+                'target_id'    => $reportable->id,
+                'reason'       => $reason,
+                'status_before' => $oldStatus,
+                'status_after'  => $this->getNewStatus($actionType) ?? $oldStatus,
+                'metadata'     => [
+                    'via_report_id' => $report->id,
+                    'action_type'   => $actionType,
+                    'original_action' => $actionType,
+                ],
+            ]);
+
+            // ─── Update report ───
+            $report->update([
+                'action_taken' => $actionType,
+                'status'       => 'resolved',
+                'reviewed_by'  => Auth::id(),
+                'reviewed_at'  => now(),
+                'admin_note'   => $reason,
+            ]);
+        });
+
+        // ─── Notify reporter & target user in the background ───
+        defer(function () use ($report, $targetUser, $actionType, $reason) {
+            try {
+                if ($report->reporter) {
+                    $report->reporter->notify(new \App\Notifications\ReportNotification($report, 'action_taken'));
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ContentReport] Reporter notify failed: ' . $e->getMessage());
+            }
+
+            try {
+                if ($targetUser) {
+                    // Use queue delay instead of sleep() to prevent Mailtrap rate limits
+                    // and to ensure the HTTP response isn't blocked.
+                    $notification = (new \App\Notifications\ReportActionNotification($report, $actionType, $reason))
+                        ->delay(now()->addSeconds(5));
+                        
+                    $targetUser->notify($notification);
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ContentReport] Target user notify failed: ' . $e->getMessage());
+            }
+        });
+
+        return response()->json([
+            'message' => 'Tindakan berhasil diambil',
+            'data'    => $report->fresh()->load(['reporter', 'reviewer', 'reason']),
+        ]);
+    }
+
+    private function getNewStatus(string $actionType): ?string
+    {
+        return match ($actionType) {
+            'send_warning'       => null,
+            'warn_user'          => null,
+            'warn_merchant'      => null,
+            'suspend_user'       => 'suspended',
+            'suspend_merchant'   => 'suspended',
+            'deactivate_user'    => 'inactive',
+            'archive_merchant'   => 'archived',
+            'archive_product'    => 'archived',
+            'archive_service'    => 'archived',
+            'delete_post'        => 'archived',
+            'delete_comment'     => 'deleted',
+            default              => null,
+        };
     }
 
     /**
@@ -374,11 +591,14 @@ class ContentReportController extends Controller
                 'reviewed_at' => now(),
             ]);
 
-            // Send notification to target user
-            $targetUser = \App\Models\User::find($request->user_id);
-            if ($targetUser) {
-                $targetUser->notify(new ReportNotification($report, 'forwarded'));
-            }
+            // Send notification to target user in the background
+            $targetUserId = $request->user_id;
+            defer(function () use ($targetUserId, $report) {
+                $targetUser = \App\Models\User::find($targetUserId);
+                if ($targetUser) {
+                    $targetUser->notify(new ReportNotification($report, 'forwarded'));
+                }
+            });
 
             // Log action
             \App\Models\AdminAction::create([
@@ -453,8 +673,12 @@ class ContentReportController extends Controller
                 'reviewed_at' => now(),
             ]);
 
-            // Notify reporter
-            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+            // Notify reporter in the background
+            defer(function () use ($report) {
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                }
+            });
         });
 
         return response()->json([
@@ -508,11 +732,13 @@ class ContentReportController extends Controller
                 'admin_note' => $request->message,
             ]);
 
-            // Send warning notification
-            $targetUser->notify(new ReportNotification($report, 'forwarded'));
-
-            // Notify reporter
-            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+            // Send warning notification and notify reporter in the background
+            defer(function () use ($targetUser, $report) {
+                $targetUser->notify(new ReportNotification($report, 'forwarded'));
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                }
+            });
         });
 
         return response()->json([
@@ -550,7 +776,7 @@ class ContentReportController extends Controller
             // Handle deletion based on type
             if ($reportable instanceof Product) {
                 $reportable->update(['status' => 'archived']);
-                $actionType = 'product_archived';
+                $actionType = 'archive_product';
             } elseif ($reportable instanceof CommunityPost) {
                 $reportable->delete(); // soft delete
                 $actionType = 'post_deleted';
@@ -581,16 +807,19 @@ class ContentReportController extends Controller
                 'admin_note' => $request->reason,
             ]);
 
-            // Notify content owner if requested
-            if ($request->notify_owner ?? false) {
-                $owner = $this->getUserFromReportable($reportable);
-                if ($owner) {
+            // Notify content owner if requested and reporter in the background
+            $notifyOwner = $request->notify_owner ?? false;
+            $owner = $notifyOwner ? $this->getUserFromReportable($reportable) : null;
+            
+            defer(function () use ($notifyOwner, $owner, $report) {
+                if ($notifyOwner && $owner) {
                     // TODO: Send notification to owner
                 }
-            }
 
-            // Notify reporter
-            $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                if ($report->reporter) {
+                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                }
+            });
         });
 
         return response()->json([
