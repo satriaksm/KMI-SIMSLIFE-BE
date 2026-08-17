@@ -630,6 +630,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/', [AdminEventController::class, 'index'])->name('index');
             Route::post('/', [AdminEventController::class, 'store'])->name('store');
             Route::get('/export-pdf', [AdminEventController::class, 'exportPdf'])->name('export-pdf');
+            Route::get('/{id}/analytics', [AdminEventController::class, 'analytics'])->name('analytics');
             Route::get('/{id}/export-pdf', [AdminEventController::class, 'exportEventDetailPdf'])->name('exportEventDetailPdf');
 
             //  Manual trigger auto-archive

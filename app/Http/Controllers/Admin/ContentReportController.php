@@ -350,7 +350,7 @@ class ContentReportController extends Controller
                     // Use queue delay instead of sleep() to prevent Mailtrap rate limits
                     // and to ensure the HTTP response isn't blocked.
                     $notification = (new \App\Notifications\ReportActionNotification($report, $actionType, $reason))
-                        ->delay(now()->addSeconds(5));
+                        ->delay(now()->addSeconds(15));
                         
                     $targetUser->notify($notification);
                 }
@@ -673,10 +673,10 @@ class ContentReportController extends Controller
                 'reviewed_at' => now(),
             ]);
 
-            // Notify reporter in the background
+            // Notify reporter in the background (add delay to prevent rate limit collisions if any)
             defer(function () use ($report) {
                 if ($report->reporter) {
-                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                    $report->reporter->notify((new ReportNotification($report, 'action_taken'))->delay(now()->addSeconds(5)));
                 }
             });
         });
@@ -736,7 +736,7 @@ class ContentReportController extends Controller
             defer(function () use ($targetUser, $report) {
                 $targetUser->notify(new ReportNotification($report, 'forwarded'));
                 if ($report->reporter) {
-                    $report->reporter->notify(new ReportNotification($report, 'action_taken'));
+                    $report->reporter->notify((new ReportNotification($report, 'action_taken'))->delay(now()->addSeconds(15)));
                 }
             });
         });

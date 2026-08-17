@@ -127,6 +127,10 @@ class AdminDashboardController extends Controller
                     'current' => $this->safeCount(ContentReport::where('status', 'pending')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(ContentReport::where('status', 'pending')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
                 ],
+                'transactions' => [
+                    'current' => $this->safeCount(Order::where('status', 'completed')->where('created_at', '>=', $startDate)),
+                    'previous' => $this->safeCount(Order::where('status', 'completed')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
+                ],
             ];
 
             // Calculate growth
@@ -153,6 +157,11 @@ class AdminDashboardController extends Controller
             ],
             'pending_reports' => [
                 'current' => $this->safeCount(ContentReport::where('status', 'pending')),
+                'previous' => null,
+                'growth' => null
+            ],
+            'transactions' => [
+                'current' => $this->safeCount(Order::where('status', 'completed')),
                 'previous' => null,
                 'growth' => null
             ],

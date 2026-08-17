@@ -848,6 +848,285 @@ class AdminEventController extends Controller
         }
     }
 
+    public function analytics(Request $request, $id)
+    {
+        try {
+            $event = Event::with(['vouchers:id,event_id,voucher_code,voucher_name,voucher_type,value'])
+                ->findOrFail($id);
+
+            $voucherIds = $event->vouchers->pluck('id');
+            $startDate  = $event->event_start_date;
+            $endDate    = $event->event_end_date;
+
+            // All merchant IDs that are accepted in this event
+            $merchantIds = DB::table('event_merchants')
+                ->where('event_id', $id)
+                ->where('status', 'accepted')
+                ->pluck('merchant_id');
+
+            // ── 1. ORDERS that used any voucher belonging to this event ──────
+            $ordersQuery = DB::table('orders')
+                ->where(function ($q) use ($voucherIds, $merchantIds, $startDate, $endDate) {
+                    // Orders using an event voucher
+                    $q->whereIn('voucher_id', $voucherIds)
+                        ->whereBetween('created_at', [$startDate, date('Y-m-d', strtotime($endDate . ' +1 day'))]);
+                    // OR: orders from event merchants during event period (even without voucher)
+                    // We use union-like approach via OR
+                    $q->orWhere(function ($q2) use ($merchantIds, $startDate, $endDate) {
+                        $q2->whereIn('merchant_id', $merchantIds)
+                            ->whereBetween('created_at', [$startDate, date('Y-m-d', strtotime($endDate . ' +1 day'))]);
+                    });
+                });
+
+            $allOrders    = $ordersQuery->get();
+            $orderIds     = $allOrders->pluck('id');
+            $completedOrders = $allOrders->where('status', 'completed');
+
+            // ── 2. SUMMARY ──────────────────────────────────────────────────
+            $totalTransactions = $allOrders->count();
+            $completedCount    = $completedOrders->count();
+            $cancelledCount    = $allOrders->whereIn('status', ['cancelled', 'rejected'])->count();
+            $totalRevenue      = $completedOrders->sum('gross_amount');
+            $uniqueBuyers      = $allOrders->pluck('user_id')->unique()->count();
+            $avgTransaction    = $completedCount > 0 ? round($totalRevenue / $completedCount) : 0;
+
+            // Voucher usage discount total
+            $voucherUsages = DB::table('voucher_usages')
+                ->whereIn('voucher_id', $voucherIds)
+                ->get();
+            $totalDiscount     = $voucherUsages->sum('discount_amount');
+            $voucherUsageCount = $voucherUsages->count();
+            $voucherUsageRate  = $totalTransactions > 0 ? round(($voucherUsageCount / $totalTransactions) * 100, 1) : 0;
+
+            // Active merchants (those with at least 1 order)
+            $activeMerchantIds = $allOrders->pluck('merchant_id')->unique();
+
+            // ── 3. TOP MERCHANTS ─────────────────────────────────────────────
+            $merchantStats = DB::table('orders')
+                ->select(
+                    'orders.merchant_id',
+                    DB::raw('COUNT(*) as total_orders'),
+                    DB::raw('SUM(CASE WHEN orders.status = "completed" THEN gross_amount ELSE 0 END) as total_revenue'),
+                    DB::raw('COUNT(DISTINCT orders.user_id) as unique_buyers')
+                )
+                ->whereIn('orders.id', $orderIds)
+                ->groupBy('orders.merchant_id')
+                ->orderByDesc('total_revenue')
+                ->get();
+
+            // Attach merchant names
+            $merchantNames = DB::table('merchants')
+                ->whereIn('id', $merchantStats->pluck('merchant_id'))
+                ->pluck('name', 'id');
+
+            $merchantSegmentations = DB::table('merchants')
+                ->join('segmentations', 'merchants.segmentation_id', '=', 'segmentations.id')
+                ->whereIn('merchants.id', $merchantStats->pluck('merchant_id'))
+                ->pluck('segmentations.name', 'merchants.id');
+
+            $topMerchantsRevenue = $merchantStats->sortByDesc('total_revenue')->values()->map(fn($m) => [
+                'merchant_id'    => $m->merchant_id,
+                'name'           => $merchantNames[$m->merchant_id] ?? 'Unknown',
+                'segmentation'   => $merchantSegmentations[$m->merchant_id] ?? '-',
+                'total_revenue'  => (float) $m->total_revenue,
+                'total_orders'   => $m->total_orders,
+                'unique_buyers'  => $m->unique_buyers,
+            ]);
+
+            $topMerchantsTransactions = $merchantStats->sortByDesc('total_orders')->values()->map(fn($m) => [
+                'merchant_id'   => $m->merchant_id,
+                'name'          => $merchantNames[$m->merchant_id] ?? 'Unknown',
+                'segmentation'  => $merchantSegmentations[$m->merchant_id] ?? '-',
+                'total_orders'  => $m->total_orders,
+                'total_revenue' => (float) $m->total_revenue,
+                'unique_buyers' => $m->unique_buyers,
+            ]);
+
+            // Inactive merchants (in event but 0 orders)
+            $inactiveMerchantIds = $merchantIds->diff($activeMerchantIds);
+            $inactiveMerchants = DB::table('merchants')
+                ->select('id', 'name', 'slug')
+                ->whereIn('id', $inactiveMerchantIds)
+                ->get();
+
+            // Segmentation distribution
+            $segmentationDist = DB::table('merchants')
+                ->join('segmentations', 'merchants.segmentation_id', '=', 'segmentations.id')
+                ->whereIn('merchants.id', $merchantIds)
+                ->selectRaw('segmentations.name as segmentation, COUNT(merchants.id) as count')
+                ->groupBy('segmentations.name')
+                ->get();
+
+            // ── 4. VOUCHER STATS ─────────────────────────────────────────────
+            $voucherStats = $event->vouchers->map(function ($v) use ($voucherUsages) {
+                $usages = $voucherUsages->where('voucher_id', $v->id);
+                return [
+                    'voucher_id'     => $v->id,
+                    'voucher_code'   => $v->voucher_code,
+                    'voucher_name'   => $v->voucher_name,
+                    'voucher_type'   => $v->voucher_type,
+                    'value'          => (float) $v->value,
+                    'usage_count'    => $usages->count(),
+                    'total_discount' => (float) $usages->sum('discount_amount'),
+                ];
+            })->sortByDesc('usage_count')->values();
+
+            // ── 5. TOP PRODUCTS & CATEGORIES ────────────────────────────────
+            $topProducts = DB::table('product_order_items')
+                ->select(
+                    'product_order_items.product_id',
+                    'product_order_items.product_name_snapshot as product_name',
+                    DB::raw('SUM(product_order_items.quantity) as total_qty'),
+                    DB::raw('SUM(product_order_items.subtotal_snapshot) as total_revenue'),
+                    'orders.merchant_id'
+                )
+                ->join('orders', 'orders.id', '=', 'product_order_items.order_id')
+                ->whereIn('product_order_items.order_id', $orderIds)
+                ->where('orders.status', 'completed')
+                ->groupBy('product_order_items.product_id', 'product_order_items.product_name_snapshot', 'orders.merchant_id')
+                ->orderByDesc('total_qty')
+                ->get()
+                ->map(fn($p) => [
+                    'product_id'    => $p->product_id,
+                    'product_name'  => $p->product_name,
+                    'merchant_name' => $merchantNames[$p->merchant_id] ?? 'Unknown',
+                    'total_qty'     => (int) $p->total_qty,
+                    'total_revenue' => (float) $p->total_revenue,
+                ]);
+
+            // Categories via categorizables
+            $topCategories = DB::table('product_order_items')
+                ->join('orders', 'orders.id', '=', 'product_order_items.order_id')
+                ->join('categorizables', function ($join) {
+                    $join->on('categorizables.categorizable_id', '=', 'product_order_items.product_id')
+                        ->whereIn('categorizables.categorizable_type', ['App\\Models\\Product', 'product']);
+                })
+                ->join('categories', 'categories.id', '=', 'categorizables.category_id')
+                ->whereIn('product_order_items.order_id', $orderIds)
+                ->where('orders.status', 'completed')
+                ->selectRaw('categories.name as category_name, SUM(product_order_items.quantity) as total_qty, SUM(product_order_items.subtotal_snapshot) as total_revenue')
+                ->groupBy('categories.name')
+                ->orderByDesc('total_qty')
+                ->get()
+                ->map(fn($c) => [
+                    'category_name' => $c->category_name,
+                    'total_qty'     => (int) $c->total_qty,
+                    'total_revenue' => (float) $c->total_revenue,
+                ]);
+
+            // ── 6. DAILY TREND ───────────────────────────────────────────────
+            $dailyTrendData = DB::table('orders')
+                ->whereIn('id', $orderIds)
+                ->selectRaw('DATE(created_at) as date, COUNT(*) as transactions, SUM(CASE WHEN status = "completed" THEN gross_amount ELSE 0 END) as revenue')
+                ->groupByRaw('DATE(created_at)')
+                ->get()
+                ->keyBy('date');
+                
+            $start = \Carbon\Carbon::parse($event->event_start_date);
+            $end = \Carbon\Carbon::parse($event->event_end_date);
+
+            $dailyTrend = [];
+            for ($d = clone $start; $d->lte($end); $d->addDay()) {
+                $dateStr = $d->format('Y-m-d');
+                $data = $dailyTrendData->get($dateStr);
+                $dailyTrend[] = [
+                    'date'         => $dateStr,
+                    'transactions' => $data ? $data->transactions : 0,
+                    'revenue'      => $data ? (float) $data->revenue : 0,
+                ];
+            }
+
+            // ── 7. RATINGS ───────────────────────────────────────────────────
+            $ratings = DB::table('ratings')
+                ->whereIn('order_id', $orderIds)
+                ->get();
+
+            $ratingDistribution = [];
+            for ($i = 1; $i <= 5; $i++) {
+                $ratingDistribution[$i] = $ratings->where('rating', $i)->count();
+            }
+            $avgRating = $ratings->count() > 0 ? round($ratings->avg('rating'), 2) : null;
+
+            // Rating per merchant
+            $ratingPerMerchant = DB::table('ratings')
+                ->join('orders', 'orders.id', '=', 'ratings.order_id')
+                ->whereIn('ratings.order_id', $orderIds)
+                ->selectRaw('orders.merchant_id, AVG(ratings.rating) as avg_rating, COUNT(ratings.id) as review_count')
+                ->groupBy('orders.merchant_id')
+                ->get()
+                ->map(fn($r) => [
+                    'merchant_id'  => $r->merchant_id,
+                    'name'         => $merchantNames[$r->merchant_id] ?? 'Unknown',
+                    'avg_rating'   => round($r->avg_rating, 2),
+                    'review_count' => $r->review_count,
+                ])->sortByDesc('avg_rating')->values();
+
+            // ── 8. PAYMENT METHODS ───────────────────────────────────────────
+            $paymentMethods = DB::table('orders')
+                ->whereIn('id', $orderIds)
+                ->selectRaw('payment_method, COUNT(*) as count')
+                ->groupBy('payment_method')
+                ->orderByDesc('count')
+                ->get();
+
+            // ── 9. BUYER BEHAVIOR ────────────────────────────────────────────
+            $buyerOrderCounts = $allOrders->groupBy('user_id')->map->count();
+            $repeatBuyers = $buyerOrderCounts->filter(fn($c) => $c > 1)->count();
+            $repeatBuyerRate = $uniqueBuyers > 0 ? round(($repeatBuyers / $uniqueBuyers) * 100, 1) : 0;
+            $avgSpendPerBuyer = $uniqueBuyers > 0 ? round($totalRevenue / $uniqueBuyers) : 0;
+
+            return response()->json([
+                'event_id'   => $event->id,
+                'event_name' => $event->event_name,
+                'summary' => [
+                    'total_transactions'  => $totalTransactions,
+                    'completed_orders'    => $completedCount,
+                    'cancelled_orders'    => $cancelledCount,
+                    'total_revenue'       => (float) $totalRevenue,
+                    'total_discount'      => (float) $totalDiscount,
+                    'avg_transaction'     => $avgTransaction,
+                    'unique_buyers'       => $uniqueBuyers,
+                    'active_merchants'    => $activeMerchantIds->count(),
+                    'inactive_merchants'  => $inactiveMerchantIds->count(),
+                    'voucher_usage_count' => $voucherUsageCount,
+                    'voucher_usage_rate'  => $voucherUsageRate,
+                ],
+                'top_merchants_revenue'      => $topMerchantsRevenue,
+                'top_merchants_transactions' => $topMerchantsTransactions,
+                'inactive_merchants'         => $inactiveMerchants,
+                'segmentation_distribution'  => $segmentationDist,
+                'voucher_stats'              => $voucherStats,
+                'top_products'               => $topProducts,
+                'top_categories'             => $topCategories,
+                'daily_trend'                => $dailyTrend,
+                'rating' => [
+                    'avg_rating'         => $avgRating,
+                    'total_reviews'      => $ratings->count(),
+                    'distribution'       => $ratingDistribution,
+                    'per_merchant'       => $ratingPerMerchant,
+                ],
+                'payment_methods' => $paymentMethods,
+                'buyer_behavior'  => [
+                    'unique_buyers'       => $uniqueBuyers,
+                    'repeat_buyers'       => $repeatBuyers,
+                    'repeat_buyer_rate'   => $repeatBuyerRate,
+                    'avg_spend_per_buyer' => $avgSpendPerBuyer,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[AdminEvent] Analytics failed', [
+                'event_id' => $id,
+                'error'    => $e->getMessage(),
+                'line'     => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal memuat analisis event',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
     /**
      * Export single event detail to PDF
      */

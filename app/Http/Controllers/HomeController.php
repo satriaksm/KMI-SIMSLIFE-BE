@@ -39,15 +39,11 @@ class HomeController extends Controller
                     },
                     'jasas' => function ($q) {
                         $q->where('status', 'published');
-                    },
-                    'orders' => function ($q) {
-                        $q->where('status', 'completed');
                     }
                 ]);
 
-            // 1. Top Merchants (Berdasarkan jumlah transaksi sukses & kelengkapan katalog)
+            // 1. Top Merchants (Berdasarkan kelengkapan katalog)
             $topMerchants = (clone $baseQuery)
-                ->orderByDesc('orders_count')
                 ->orderByRaw('(products_count + jasas_count) DESC')
                 ->limit($topLimit)
                 ->get();

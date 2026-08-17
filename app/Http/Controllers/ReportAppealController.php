@@ -77,9 +77,9 @@ class ReportAppealController extends Controller
                         ->get();
 
                     foreach ($admins as $index => $admin) {
-                        // Add a 3-second delay between each email to prevent Mailtrap rate limiting
+                        // Add a 5-second delay between each email to prevent Mailtrap rate limiting
                         $admin->notify(
-                            (new \App\Notifications\NewAppealAdminNotification($appeal, $report))->delay(now()->addSeconds($index * 3))
+                            (new \App\Notifications\NewAppealAdminNotification($appeal, $report))->delay(now()->addSeconds($index * 5))
                         );
                     }
                 } catch (\Exception $e) {
