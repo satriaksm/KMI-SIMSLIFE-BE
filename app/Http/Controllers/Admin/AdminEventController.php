@@ -865,10 +865,14 @@ class AdminEventController extends Controller
                 ->pluck('merchant_id');
 
             // ── 1. ORDERS that used any voucher belonging to this event ──────
+            $orderIdsFromVoucher = DB::table('voucher_usages')
+                ->whereIn('voucher_id', $voucherIds)
+                ->pluck('order_id');
+
             $ordersQuery = DB::table('orders')
-                ->where(function ($q) use ($voucherIds, $merchantIds, $startDate, $endDate) {
+                ->where(function ($q) use ($orderIdsFromVoucher, $merchantIds, $startDate, $endDate) {
                     // Orders using an event voucher
-                    $q->whereIn('voucher_id', $voucherIds)
+                    $q->whereIn('id', $orderIdsFromVoucher)
                         ->whereBetween('created_at', [$startDate, date('Y-m-d', strtotime($endDate . ' +1 day'))]);
                     // OR: orders from event merchants during event period (even without voucher)
                     // We use union-like approach via OR
@@ -880,13 +884,13 @@ class AdminEventController extends Controller
 
             $allOrders    = $ordersQuery->get();
             $orderIds     = $allOrders->pluck('id');
-            $completedOrders = $allOrders->where('status', 'completed');
+            $completedOrders = $allOrders->where('status', 'selesai');
 
             // ── 2. SUMMARY ──────────────────────────────────────────────────
             $totalTransactions = $allOrders->count();
             $completedCount    = $completedOrders->count();
-            $cancelledCount    = $allOrders->whereIn('status', ['cancelled', 'rejected'])->count();
-            $totalRevenue      = $completedOrders->sum('gross_amount');
+            $cancelledCount    = $allOrders->where('status', 'batal')->count();
+            $totalRevenue      = $completedOrders->sum('total');
             $uniqueBuyers      = $allOrders->pluck('user_id')->unique()->count();
             $avgTransaction    = $completedCount > 0 ? round($totalRevenue / $completedCount) : 0;
 
@@ -906,7 +910,7 @@ class AdminEventController extends Controller
                 ->select(
                     'orders.merchant_id',
                     DB::raw('COUNT(*) as total_orders'),
-                    DB::raw('SUM(CASE WHEN orders.status = "completed" THEN gross_amount ELSE 0 END) as total_revenue'),
+                    DB::raw('SUM(CASE WHEN orders.status = "selesai" THEN total ELSE 0 END) as total_revenue'),
                     DB::raw('COUNT(DISTINCT orders.user_id) as unique_buyers')
                 )
                 ->whereIn('orders.id', $orderIds)
@@ -982,7 +986,7 @@ class AdminEventController extends Controller
                 )
                 ->join('orders', 'orders.id', '=', 'product_order_items.order_id')
                 ->whereIn('product_order_items.order_id', $orderIds)
-                ->where('orders.status', 'completed')
+                ->where('orders.status', 'selesai')
                 ->groupBy('product_order_items.product_id', 'product_order_items.product_name_snapshot', 'orders.merchant_id')
                 ->orderByDesc('total_qty')
                 ->get()
@@ -1003,7 +1007,7 @@ class AdminEventController extends Controller
                 })
                 ->join('categories', 'categories.id', '=', 'categorizables.category_id')
                 ->whereIn('product_order_items.order_id', $orderIds)
-                ->where('orders.status', 'completed')
+                ->where('orders.status', 'selesai')
                 ->selectRaw('categories.name as category_name, SUM(product_order_items.quantity) as total_qty, SUM(product_order_items.subtotal_snapshot) as total_revenue')
                 ->groupBy('categories.name')
                 ->orderByDesc('total_qty')
@@ -1017,7 +1021,7 @@ class AdminEventController extends Controller
             // ── 6. DAILY TREND ───────────────────────────────────────────────
             $dailyTrendData = DB::table('orders')
                 ->whereIn('id', $orderIds)
-                ->selectRaw('DATE(created_at) as date, COUNT(*) as transactions, SUM(CASE WHEN status = "completed" THEN gross_amount ELSE 0 END) as revenue')
+                ->selectRaw('DATE(created_at) as date, COUNT(*) as transactions, SUM(CASE WHEN status = "selesai" THEN total ELSE 0 END) as revenue')
                 ->groupByRaw('DATE(created_at)')
                 ->get()
                 ->keyBy('date');
