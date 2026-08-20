@@ -45,9 +45,9 @@ class AdminVoucherController extends Controller
             $perPage = $request->input('per_page', 15);
             $vouchers = $query->paginate($perPage);
 
-            // Tambahkan usages_count jika perlu
+            // Tambahkan usages_count jika perlu (hanya pesanan selesai)
             $vouchers->getCollection()->transform(function ($voucher) {
-                $voucher->usages_count = $voucher->usages()->count() ?? 0;
+                $voucher->usages_count = $voucher->usages()->completed()->count() ?? 0;
                 return $voucher;
             });
 
@@ -73,7 +73,7 @@ class AdminVoucherController extends Controller
     {
         try {
             $voucher = Voucher::with(['merchant', 'event', 'usages'])->findOrFail($id);
-            $voucher->usages_count = $voucher->usages()->count() ?? 0;
+            $voucher->usages_count = $voucher->usages()->completed()->count() ?? 0;
             return response()->json(['data' => $voucher]);
         } catch (ModelNotFoundException $e) {
             return response()->json(['message' => 'Voucher tidak ditemukan'], 404);
@@ -127,9 +127,12 @@ class AdminVoucherController extends Controller
                 'min_purchase_amount' => 'nullable|numeric|min:0',
                 'merchant_ids' => 'nullable|array',
                 'merchant_ids.*' => 'exists:merchants,id',
+                'is_hidden' => 'nullable|boolean',
             ], [
                 'voucher_name.unique' => 'Nama voucher sudah digunakan. Gunakan nama yang berbeda.', // ✅ ADD error message
             ]);
+
+            $data['is_hidden'] = $request->boolean('is_hidden');
 
             // ✅ Generate unique voucher code dengan validasi
             $attempts = 0;
@@ -255,9 +258,9 @@ class AdminVoucherController extends Controller
 
             $vouchers = $query->latest('voucher_start_date')->limit(500)->get();
 
-            // Add usages count
+            // Add usages count (only completed orders)
             $vouchers->transform(function ($voucher) {
-                $voucher->usages_count = $voucher->usages()->count() ?? 0;
+                $voucher->usages_count = $voucher->usages()->completed()->count() ?? 0;
                 return $voucher;
             });
 

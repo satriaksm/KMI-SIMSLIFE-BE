@@ -51,6 +51,11 @@ class Voucher extends Model
         return $this->hasMany(VoucherUsage::class);
     }
 
+    public function completedUsages()
+    {
+        return $this->hasMany(VoucherUsage::class)->completed();
+    }
+
     public function merchantsVoucher()
     {
         return $this->belongsToMany(Merchant::class, 'voucher_merchants')
@@ -60,7 +65,14 @@ class Voucher extends Model
 
     public function restrictedProducts()
     {
-        return $this->belongsToMany(Product::class, 'voucher_merchant_products')
+        return $this->morphedByMany(Product::class, 'item', 'voucher_merchant_items')
+            ->withPivot(['merchant_id'])
+            ->withTimestamps();
+    }
+
+    public function restrictedJasas()
+    {
+        return $this->morphedByMany(Jasa::class, 'item', 'voucher_merchant_items')
             ->withPivot(['merchant_id'])
             ->withTimestamps();
     }

@@ -13,13 +13,13 @@ class ImageOptimizationService
     /**
      * Mengoptimasi dan menyimpan gambar ke dalam 3 resolusi (thumb, medium, large).
      *
-     * @param UploadedFile $file File yang diupload
+     * @param UploadedFile|string $file File yang diupload atau path absolut file lokal
      * @param string $directory Direktori tujuan, misalnya 'profile_pictures'
      * @param string $disk Disk tujuan, default 'public'
      * @param bool $isSquare Apakah gambar harus dicrop rasio 1:1 (square) untuk medium dan original
      * @return string Path relatif untuk disimpan ke database (misal: 'profile_pictures/12345.webp')
      */
-    public function processAndStore(UploadedFile $file, string $directory, string $disk = 'public', bool $isSquare = false): string
+    public function processAndStore(UploadedFile|string $file, string $directory, string $disk = 'public', bool $isSquare = false): string
     {
         $manager = new ImageManager(new Driver());
         
@@ -33,7 +33,8 @@ class ImageOptimizationService
         $mediumPath = $directory . '/' . $filenameWithoutExt . '_medium.webp';
 
         // Baca file gambar
-        $image = $manager->read($file->getRealPath());
+        $realPath = $file instanceof UploadedFile ? $file->getRealPath() : $file;
+        $image = $manager->read($realPath);
 
         // 1. Thumbnail
         $thumbImage = clone $image;

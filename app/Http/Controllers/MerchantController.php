@@ -196,6 +196,7 @@ class MerchantController extends Controller
             [
                 'name' => ['required', 'string', 'max:255'],
                 'phone' => ['required', 'string', 'min:8', 'max:20', 'regex:/^[0-9+\-()\s]+$/'],
+                'NPWP' => ['nullable', 'string', 'max:50'],
                 'description' => ['nullable', 'string'],
                 'segmentation_id' => ['required', 'integer', Rule::exists('segmentations', 'id')],
                 'address.province_id' => ['required', 'integer', Rule::exists('provinces', 'id')],
@@ -255,6 +256,7 @@ class MerchantController extends Controller
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
                 'phone' => $validated['phone'],
+                'NPWP' => $validated['NPWP'] ?? null,
                 'logo_path' => null,
                 'operational_hours' => $operationalHours,
             ]);
@@ -347,6 +349,7 @@ class MerchantController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:20'],
+            'NPWP' => ['nullable', 'string', 'max:50'],
             'description' => ['nullable', 'string'],
 
             // address
@@ -382,6 +385,7 @@ class MerchantController extends Controller
             $merchant->update([
                 'name' => $validated['name'],
                 'phone' => $validated['phone'] ?? null,
+                'NPWP' => $validated['NPWP'] ?? null,
                 'description' => $validated['description'] ?? null,
             ]);
 
@@ -502,14 +506,17 @@ class MerchantController extends Controller
         }
 
         $disk = 'public';
-        $path = ltrim($assetPath, '/');
+        $originalPath = ltrim($assetPath, '/');
 
         $size = request()->query('size', 'original');
         $imageService = app(\App\Services\ImageOptimizationService::class);
-        $path = ltrim($imageService->resolveSizePath($path, $size), '/');
+        $path = ltrim($imageService->resolveSizePath($originalPath, $size), '/');
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath;
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));

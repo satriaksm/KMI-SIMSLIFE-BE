@@ -137,7 +137,17 @@ class User extends Authenticatable implements MustVerifyEmail
                 ->with(['province', 'city', 'district', 'village'])
                 ->first();
 
-        return $address?->full_address ?? '';
+        if ($address && !empty($address->full_address)) {
+            return $address->full_address;
+        }
+
+        $anyAddress = $this->relationLoaded('addresses')
+            ? $this->addresses->first()
+            : $this->addresses()
+                ->with(['province', 'city', 'district', 'village'])
+                ->first();
+
+        return $anyAddress?->full_address ?? '';
     }
 
     // Backward compatible alias (some clients use `address`)

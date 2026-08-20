@@ -127,4 +127,11 @@ class Product extends Model
     {
         return $this->morphOne(RatingSummary::class, 'rateable');
     }
+
+    public function vouchers()
+    {
+        return $this->morphToMany(Voucher::class, 'item', 'voucher_merchant_items')
+            ->withPivot(['merchant_id'])
+            ->withTimestamps();
+    }
 }

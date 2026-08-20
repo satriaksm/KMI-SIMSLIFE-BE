@@ -15,7 +15,7 @@ class ProductOptionValue extends Model
         'option_value',
         'image_path',
     ];
-    protected $appends = ['image_url'];
+    protected $appends = ['image_url', 'urls', 'thumb_url', 'medium_url'];
 
     public function option(): BelongsTo
     {
@@ -25,6 +25,38 @@ class ProductOptionValue extends Model
     public function getImageUrlAttribute(): ?string
     {
         return $this->image_path ? asset('storage/' . $this->image_path) : null;
+    }
+
+    public function getUrlsAttribute(): ?array
+    {
+        if (empty($this->image_path)) {
+            return null;
+        }
+
+        $imageService = app(\App\Services\ImageOptimizationService::class);
+        return [
+            'original' => asset('storage/' . $this->image_path),
+            'medium' => asset('storage/' . $imageService->resolveSizePath($this->image_path, 'medium')),
+            'thumb' => asset('storage/' . $imageService->resolveSizePath($this->image_path, 'thumb')),
+        ];
+    }
+
+    public function getThumbUrlAttribute(): ?string
+    {
+        if (empty($this->image_path)) {
+            return null;
+        }
+        $imageService = app(\App\Services\ImageOptimizationService::class);
+        return asset('storage/' . $imageService->resolveSizePath($this->image_path, 'thumb'));
+    }
+
+    public function getMediumUrlAttribute(): ?string
+    {
+        if (empty($this->image_path)) {
+            return null;
+        }
+        $imageService = app(\App\Services\ImageOptimizationService::class);
+        return asset('storage/' . $imageService->resolveSizePath($this->image_path, 'medium'));
     }
 
     // Relasi ke variants (many-to-many via pivot)

@@ -101,10 +101,14 @@ class ImageController extends Controller
         
         $size = request()->query('size', 'original');
         $imageService = app(\App\Services\ImageOptimizationService::class);
-        $path = ltrim($imageService->resolveSizePath($image->image_path, $size), '/');
+        $originalPath = ltrim((string) $image->image_path, '/');
+        $path = ltrim($imageService->resolveSizePath($originalPath, $size), '/');
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath;
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $stream = Storage::disk($disk)->readStream($path);

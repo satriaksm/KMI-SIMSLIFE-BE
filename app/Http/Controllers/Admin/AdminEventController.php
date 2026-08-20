@@ -240,10 +240,11 @@ class AdminEventController extends Controller
         // Handle banner upload BEFORE status validation
         if ($request->hasFile('banner_img')) {
             $file = $request->file('banner_img');
+            $imageService = app(\App\Services\ImageOptimizationService::class);
             
             // Delete old banner FIRST
-            if ($event->banner_img_path && Storage::disk('public')->exists($event->banner_img_path)) {
-                Storage::disk('public')->delete($event->banner_img_path);
+            if ($event->banner_img_path) {
+                $imageService->deleteImages($event->banner_img_path, 'public');
                 Log::info('[AdminEvent] Old banner deleted', [
                     'event_id' => $event->id,
                     'old_path' => $event->banner_img_path,
@@ -266,7 +267,12 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $validated['banner_img_path'] = $imageService->processAndStore(
+                    $file,
+                    'events/banners',
+                    'public',
+                    false
+                );
             }
             
             Log::info('[AdminEvent] New banner uploaded', [
@@ -351,7 +357,7 @@ class AdminEventController extends Controller
 
         // Delete banner image
         if ($event->banner_img_path) {
-            Storage::disk('public')->delete($event->banner_img_path);
+            app(\App\Services\ImageOptimizationService::class)->deleteImages($event->banner_img_path, 'public');
         }
 
         // Detach merchants
@@ -421,7 +427,13 @@ class AdminEventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $imageService = app(\App\Services\ImageOptimizationService::class);
+                $validated['banner_img_path'] = $imageService->processAndStore(
+                    $file,
+                    'events/banners',
+                    'public',
+                    false
+                );
             }
         } else {
             // ✅ Double check (should never happen with validation)
@@ -598,7 +610,11 @@ class AdminEventController extends Controller
             $vouchers = Voucher::whereNull('event_id')
                 ->where('voucher_status', 'active') 
                 ->with(['usages'])
-                ->withCount('usages')
+                ->withCount([
+                    'usages' => function ($q) {
+                        $q->completed();
+                    }
+                ])
                 ->orderBy('created_at', 'desc')
                 ->get();
 

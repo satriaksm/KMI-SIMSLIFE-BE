@@ -14,6 +14,7 @@ use App\Http\Controllers\VoucherController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MerchantController;
+use App\Http\Controllers\MerchantReportController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\HomeController;
@@ -334,7 +335,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/{id}', [JasaController::class, 'destroy']);
         });
 
-        // Create jasa for a merchant (preferred: slug-based)
+        // Jasa for a merchant (get and create: slug-based)
+        Route::get('/merchants/{merchantSlug}/jasas', [JasaController::class, 'publicByMerchant'])
+            ->where('merchantSlug', '^[A-Za-z0-9-]+$');
         Route::post('/merchants/{merchantSlug}/jasas', [JasaController::class, 'storeForMerchantBySlug'])
             ->where('merchantSlug', '^[A-Za-z0-9-]+$');
 
@@ -343,6 +346,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         //     ->whereNumber('merchantId');
 
         Route::prefix('merchant/{merchant:slug}')->group(function () {
+            Route::get('jasas', [JasaController::class, 'publicByMerchant']);
 
             Route::get(
                 'dashboard',
@@ -407,8 +411,20 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 // Event voucher product restrictions
                 Route::get('{voucher}/restricted-products', [VoucherController::class, 'getRestrictedProducts']);
                 Route::post('{voucher}/restricted-products', [VoucherController::class, 'setRestrictedProducts']);
+            });
 
+            // Orders
+            Route::prefix('orders')->name('merchant.orders.')->group(function () {
+                Route::get('', [OrderController::class, 'index'])->name('index');
+                Route::get('{orderId}', [OrderController::class, 'show'])->name('show');
+                Route::post('{orderId}/update-status', [OrderController::class, 'updateStatus'])->name('update-status');
+            });
 
+            // Reports
+            Route::prefix('reports')->name('merchant.reports.')->group(function () {
+                Route::get('transactions', [MerchantReportController::class, 'transactions'])->name('transactions');
+                Route::get('transactions/export/pdf', [MerchantReportController::class, 'exportPdf'])->name('export.pdf');
+                Route::get('transactions/export/excel', [MerchantReportController::class, 'exportExcel'])->name('export.excel');
             });
 
         });
