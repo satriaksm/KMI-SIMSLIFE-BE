@@ -1,6 +1,6 @@
 # SUMILIR - Backend (API)
 
-## Deskripsi Singkat 📝
+## Deskripsi Singkat 
 
 Repository ini berisi kode sumber untuk sisi backend (API) dari platform **SUMILIR** (Sistem Informasi Manajemen Layanan Inovasi & Fleksibilitas Ekonomi UMKM). Platform ini adalah aplikasi *hyperlocal* berbasis kelurahan yang mengintegrasikan Marketplace (produk & jasa), Forum Komunitas, dan Peta Interaktif untuk memberdayakan UMKM lokal.
 
@@ -8,19 +8,16 @@ Backend ini dibangun menggunakan **Laravel 12** dan berfungsi sebagai penyedia d
 
 ---
 
-## Model Transaksi & Pembayaran 💳
+## Model Transaksi & Pembayaran 
 
-> [!NOTE]
-> **Aplikasi ini TIDAK menggunakan Payment Gateway pihak ketiga (seperti Midtrans/Xendit).**
->
 > Mengingat karakteristik UMKM lokal dan model *hyperlocal*, transaksi dirancang secara langsung, cepat, dan tanpa potongan biaya transaksi (*zero gateway fee*):
-> 1. **Cash on Delivery (COD) / Bayar di Tempat:** Pembeli membayar tunai saat pesanan diantarkan oleh kurir toko/penjual.
-> 2. **Ambil di Toko (Self-Pickup):** Pembeli mengambil langsung ke toko dan menyelesaikan pembayaran saat pengambilan.
+> 1. **Cash on Delivery (COD) / Bayar di Tempat:** Pembeli membayar tunai saat pesanan diantarkan oleh kurir UMKM/penjual.
+> 2. **Ambil di UMKM (Self-Pickup):** Pembeli mengambil langsung ke UMKM dan menyelesaikan pembayaran saat pengambilan.
 > 3. **Transfer Manual / Koordinasi WhatsApp:** Pembeli dan merchant dapat berkoordinasi langsung mengenai bukti transfer atau detail pesanan via tautan chat WhatsApp otomatis dan chat internal.
 
 ---
 
-## Fitur Utama yang Dikelola Backend ✨
+## Fitur Utama yang Dikelola Backend 
 
 * **Manajemen Pengguna & UMKM:**
   * Autentikasi berbasis token/cookie (Laravel Sanctum).
@@ -34,7 +31,7 @@ Backend ini dibangun menggunakan **Laravel 12** dan berfungsi sebagai penyedia d
 
 * **Alur Transaksi & Pemesanan (Hyperlocal E-Commerce):**
   * Keranjang belanja terisolasi per-merchant (seperti alur pemesanan makanan).
-  * Sistem diskon dan voucher (Voucher Toko & Voucher Event).
+  * Sistem diskon dan voucher (Voucher UMKM & Voucher Event).
   * Manajemen status pesanan (Menunggu Konfirmasi, Selesai, Dibatalkan).
 
 * **Peta Interaktif (Hyperlocal Map):**
@@ -51,7 +48,7 @@ Backend ini dibangun menggunakan **Laravel 12** dan berfungsi sebagai penyedia d
 
 ---
 
-## Tech Stack Utama 💻
+## Tech Stack Utama 
 
 * **Framework:** Laravel 12
 * **Bahasa:** PHP 8.2+
@@ -65,7 +62,7 @@ Backend ini dibangun menggunakan **Laravel 12** dan berfungsi sebagai penyedia d
 
 ---
 
-## Panduan Instalasi 🚀
+## Panduan Instalasi 
 
 1. **Clone repository:**
    ```bash
@@ -122,7 +119,7 @@ Backend ini dibangun menggunakan **Laravel 12** dan berfungsi sebagai penyedia d
 
 ---
 
-## Menjalankan Aplikasi (Development) ▶️
+## Menjalankan Aplikasi (Development) 
 
 Untuk menjalankan seluruh layanan di lingkungan lokal, buka 3 tab terminal:
 
@@ -145,7 +142,7 @@ Untuk menjalankan seluruh layanan di lingkungan lokal, buka 3 tab terminal:
 
 ---
 
-## Menjalankan Pengujian (Testing) ✅
+## Menjalankan Pengujian (Testing) 
 
 ```bash
 php artisan test

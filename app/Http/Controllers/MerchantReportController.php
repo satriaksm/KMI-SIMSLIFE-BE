@@ -17,22 +17,22 @@ class MerchantReportController extends Controller
     {
         $this->checkMerchantAccess($request, $merchant);
 
+        $completedStatuses = ['completed', 'selesai'];
+        $cancelledStatuses = ['cancelled', 'rejected', 'undelivered', 'unpicked', 'batal', 'gagal'];
+        $allowedStatuses = array_merge($completedStatuses, $cancelledStatuses);
+
         $query = Order::query()
             ->where('merchant_id', $merchant->id)
             ->with(['items.product', 'user']);
 
-        // Filter: Status
+        // Filter: Status (Hanya Selesai dan Gagal/Batal, transaksi menunggu tidak muncul)
         $status = $request->query('status');
-        if ($status && $status !== 'all') {
-            if ($status === 'completed') {
-                $query->whereIn('status', ['completed', 'selesai']);
-            } elseif ($status === 'cancelled') {
-                $query->whereIn('status', ['cancelled', 'rejected', 'undelivered', 'unpicked', 'batal']);
-            } elseif ($status === 'waiting_review') {
-                $query->whereIn('status', ['pending', 'paid', 'waiting_review']);
-            } else {
-                $query->where('status', $status);
-            }
+        if ($status === 'completed') {
+            $query->whereIn('status', $completedStatuses);
+        } elseif ($status === 'cancelled' || $status === 'gagal' || $status === 'batal') {
+            $query->whereIn('status', $cancelledStatuses);
+        } else {
+            $query->whereIn('status', $allowedStatuses);
         }
 
         // Filter: Date range
@@ -43,8 +43,44 @@ class MerchantReportController extends Controller
             $query->whereDate('created_at', '<=', $request->query('end_date'));
         }
 
-        // Summary Calculations (based on current date range filter)
-        $summaryQuery = Order::query()->where('merchant_id', $merchant->id);
+        // Filter: Search query (q / search)
+        $search = $request->query('q', $request->query('search'));
+        if (!empty($search)) {
+            $q = trim((string) $search);
+            $searchClosure = function ($sub) use ($q) {
+                $sub->where('order_code', 'like', "%{$q}%")
+                    ->orWhere('nama', 'like', "%{$q}%")
+                    ->orWhere('tel', 'like', "%{$q}%")
+                    ->orWhereHas('items.product', function ($pq) use ($q) {
+                        $pq->where('name', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('jasa', function ($jq) use ($q) {
+                        $jq->where('title', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('user', function ($uq) use ($q) {
+                        $uq->where('name', 'like', "%{$q}%")
+                           ->orWhere('phone', 'like', "%{$q}%");
+                    });
+            };
+            $query->where($searchClosure);
+        }
+
+        // Summary Calculations (hanya dari transaksi selesai & gagal/batal)
+        $summaryQuery = Order::query()
+            ->where('merchant_id', $merchant->id);
+
+        if (!empty($search)) {
+            $summaryQuery->where($searchClosure);
+        }
+
+        if ($status === 'completed') {
+            $summaryQuery->whereIn('status', $completedStatuses);
+        } elseif ($status === 'cancelled' || $status === 'gagal' || $status === 'batal') {
+            $summaryQuery->whereIn('status', $cancelledStatuses);
+        } else {
+            $summaryQuery->whereIn('status', $allowedStatuses);
+        }
+
         if ($request->filled('start_date')) {
             $summaryQuery->whereDate('created_at', '>=', $request->query('start_date'));
         }
@@ -52,7 +88,7 @@ class MerchantReportController extends Controller
             $summaryQuery->whereDate('created_at', '<=', $request->query('end_date'));
         }
 
-        $completedQuery = (clone $summaryQuery)->whereIn('status', ['completed', 'selesai']);
+        $completedQuery = (clone $summaryQuery)->whereIn('status', $completedStatuses);
         $totalRevenue = (float) $completedQuery->sum('total');
         $totalTransactions = $summaryQuery->count();
 
@@ -119,22 +155,22 @@ class MerchantReportController extends Controller
     {
         $this->checkMerchantAccess($request, $merchant);
 
+        $completedStatuses = ['completed', 'selesai'];
+        $cancelledStatuses = ['cancelled', 'rejected', 'undelivered', 'unpicked', 'batal', 'gagal'];
+        $allowedStatuses = array_merge($completedStatuses, $cancelledStatuses);
+
         $query = Order::query()
             ->where('merchant_id', $merchant->id)
             ->with(['items.product', 'user']);
 
         // Apply filters
         $status = $request->query('status');
-        if ($status && $status !== 'all') {
-            if ($status === 'completed') {
-                $query->whereIn('status', ['completed', 'selesai']);
-            } elseif ($status === 'cancelled') {
-                $query->whereIn('status', ['cancelled', 'rejected', 'undelivered', 'unpicked', 'batal']);
-            } elseif ($status === 'waiting_review') {
-                $query->whereIn('status', ['pending', 'paid', 'waiting_review']);
-            } else {
-                $query->where('status', $status);
-            }
+        if ($status === 'completed') {
+            $query->whereIn('status', $completedStatuses);
+        } elseif ($status === 'cancelled' || $status === 'gagal' || $status === 'batal') {
+            $query->whereIn('status', $cancelledStatuses);
+        } else {
+            $query->whereIn('status', $allowedStatuses);
         }
 
         if ($request->filled('start_date')) {
@@ -142,6 +178,26 @@ class MerchantReportController extends Controller
         }
         if ($request->filled('end_date')) {
             $query->whereDate('created_at', '<=', $request->query('end_date'));
+        }
+
+        $search = $request->query('q', $request->query('search'));
+        if (!empty($search)) {
+            $q = trim((string) $search);
+            $query->where(function ($sub) use ($q) {
+                $sub->where('order_code', 'like', "%{$q}%")
+                    ->orWhere('nama', 'like', "%{$q}%")
+                    ->orWhere('tel', 'like', "%{$q}%")
+                    ->orWhereHas('items.product', function ($pq) use ($q) {
+                        $pq->where('name', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('jasa', function ($jq) use ($q) {
+                        $jq->where('title', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('user', function ($uq) use ($q) {
+                        $uq->where('name', 'like', "%{$q}%")
+                           ->orWhere('phone', 'like', "%{$q}%");
+                    });
+            });
         }
 
         if ($request->query('sort_by') === 'oldest') {
@@ -174,21 +230,21 @@ class MerchantReportController extends Controller
     {
         $this->checkMerchantAccess($request, $merchant);
 
+        $completedStatuses = ['completed', 'selesai'];
+        $cancelledStatuses = ['cancelled', 'rejected', 'undelivered', 'unpicked', 'batal', 'gagal'];
+        $allowedStatuses = array_merge($completedStatuses, $cancelledStatuses);
+
         $query = Order::query()
             ->where('merchant_id', $merchant->id)
             ->with(['items.product', 'user']);
 
         $status = $request->query('status');
-        if ($status && $status !== 'all') {
-            if ($status === 'completed') {
-                $query->whereIn('status', ['completed', 'selesai']);
-            } elseif ($status === 'cancelled') {
-                $query->whereIn('status', ['cancelled', 'rejected', 'undelivered', 'unpicked', 'batal']);
-            } elseif ($status === 'waiting_review') {
-                $query->whereIn('status', ['pending', 'paid', 'waiting_review']);
-            } else {
-                $query->where('status', $status);
-            }
+        if ($status === 'completed') {
+            $query->whereIn('status', $completedStatuses);
+        } elseif ($status === 'cancelled' || $status === 'gagal' || $status === 'batal') {
+            $query->whereIn('status', $cancelledStatuses);
+        } else {
+            $query->whereIn('status', $allowedStatuses);
         }
 
         if ($request->filled('start_date')) {
@@ -196,6 +252,26 @@ class MerchantReportController extends Controller
         }
         if ($request->filled('end_date')) {
             $query->whereDate('created_at', '<=', $request->query('end_date'));
+        }
+
+        $search = $request->query('q', $request->query('search'));
+        if (!empty($search)) {
+            $q = trim((string) $search);
+            $query->where(function ($sub) use ($q) {
+                $sub->where('order_code', 'like', "%{$q}%")
+                    ->orWhere('nama', 'like', "%{$q}%")
+                    ->orWhere('tel', 'like', "%{$q}%")
+                    ->orWhereHas('items.product', function ($pq) use ($q) {
+                        $pq->where('name', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('jasa', function ($jq) use ($q) {
+                        $jq->where('title', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('user', function ($uq) use ($q) {
+                        $uq->where('name', 'like', "%{$q}%")
+                           ->orWhere('phone', 'like', "%{$q}%");
+                    });
+            });
         }
 
         if ($request->query('sort_by') === 'oldest') {
