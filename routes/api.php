@@ -78,16 +78,16 @@ Route::prefix('public')->name('public.')->group(function () {
 
     // Public jasa listing (only published/active)
     // Route::get('/jasas', [JasaController::class, 'publicIndex']);
-    
+
     // Jasa Ratings (public - view only) - MUST BE BEFORE ID/SLUG routes
     Route::get('/jasas/{jasaId}/ratings/summary', [RatingController::class, 'jasaSummary'])->name('jasas.ratings.summary');
     Route::get('/jasas/{jasaId}/ratings', [RatingController::class, 'indexForJasa'])->name('jasas.ratings');
-    
+
     // Jasa by ID (numeric only - must come FIRST so it matches before slug)
     Route::get('/jasas/{id}', [JasaController::class, 'publicShow'])
         ->whereNumber('id')
         ->name('jasas.show');
-    
+
     // Jasa by slug (must contain at least one letter, come AFTER numeric check)
     Route::get('/jasas/{slug}', [JasaController::class, 'publicShowBySlug'])
         ->where('slug', '^(?!\d+$).+')
@@ -532,16 +532,18 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
             });
 
-            Route::prefix('orders')->group(function () {
-                Route::get('', [OrderController::class, 'merchantIndex']);
-                Route::get('/{order}', [OrderController::class, 'merchantShow']);
-                Route::post('/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
+            // Orders
+            Route::prefix('orders')->name('merchant.orders.')->group(function () {
+                Route::get('', [OrderController::class, 'index'])->name('index');
+                Route::get('{orderId}', [OrderController::class, 'show'])->name('show');
+                Route::post('{orderId}/update-status', [OrderController::class, 'updateStatus'])->name('update-status');
             });
 
-            Route::prefix('reports')->group(function () {
-                Route::get('transactions', [App\Http\Controllers\MerchantReportController::class, 'index']);
-                Route::get('transactions/export/pdf', [App\Http\Controllers\MerchantReportController::class, 'exportPdf']);
-                Route::get('transactions/export/excel', [App\Http\Controllers\MerchantReportController::class, 'exportExcel']);
+            // Reports
+            Route::prefix('reports')->name('merchant.reports.')->group(function () {
+                Route::get('transactions', [MerchantReportController::class, 'transactions'])->name('transactions');
+                Route::get('transactions/export/pdf', [MerchantReportController::class, 'exportPdf'])->name('export.pdf');
+                Route::get('transactions/export/excel', [MerchantReportController::class, 'exportExcel'])->name('export.excel');
             });
 
             Route::post('payouts', [PayoutController::class, 'requestPayout'])->name('merchant.payouts');
@@ -557,7 +559,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // ===== DASHBOARD STATISTICS =====
         Route::get('/dashboard/statistics', [AdminDashboardController::class, 'statistics'])->name('dashboard.statistics');
         Route::get('/dashboard/orders-revenue', [AdminDashboardController::class, 'ordersRevenue']);
-        Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']); 
+        Route::get('/dashboard/export-pdf', [AdminDashboardController::class, 'exportPdf']);
 
         // ===== DASHBOARD USER MANAGEMENT =====
         Route::get('/dashboard', [AdminUserController::class, 'dashboard'])->name('dashboard');
