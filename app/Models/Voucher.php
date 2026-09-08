@@ -15,6 +15,7 @@ class Voucher extends Model
         'voucher_name',
         'voucher_code',
         'voucher_status',
+        'is_hidden',
         'voucher_type',
         'voucher_description',
         'voucher_start_date',
@@ -32,6 +33,7 @@ class Voucher extends Model
         'value' => 'decimal:2',
         'max_discount_amount' => 'decimal:2',
         'min_purchase_amount' => 'decimal:2',
+        'is_hidden' => 'boolean',
     ];
 
     public function merchant()
@@ -49,6 +51,11 @@ class Voucher extends Model
         return $this->hasMany(VoucherUsage::class);
     }
 
+    public function completedUsages()
+    {
+        return $this->hasMany(VoucherUsage::class)->completed();
+    }
+
     public function merchantsVoucher()
     {
         return $this->belongsToMany(Merchant::class, 'voucher_merchants')
@@ -58,7 +65,14 @@ class Voucher extends Model
 
     public function restrictedProducts()
     {
-        return $this->belongsToMany(Product::class, 'voucher_merchant_products')
+        return $this->morphedByMany(Product::class, 'item', 'voucher_merchant_items')
+            ->withPivot(['merchant_id'])
+            ->withTimestamps();
+    }
+
+    public function restrictedJasas()
+    {
+        return $this->morphedByMany(Jasa::class, 'item', 'voucher_merchant_items')
             ->withPivot(['merchant_id'])
             ->withTimestamps();
     }

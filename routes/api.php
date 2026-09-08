@@ -377,6 +377,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         Route::get('checkout/{merchant:slug}/vouchers', [VoucherController::class, 'customerVouchersByMerchant']);
         Route::post('checkout/{merchant:slug}/vouchers/validate', [VoucherController::class, 'validateVoucher']);
+        Route::post('checkout/vouchers/validate', [VoucherController::class, 'validateVoucher']);
         Route::post('checkout/whatsapp', [CheckoutController::class, 'confirmWhatsappOrder']);
 
         Route::post('jasa-orders', [OrderController::class, 'checkoutJasaDirect']);
@@ -440,7 +441,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/{id}', [JasaController::class, 'destroy']);
         });
 
-        // Create jasa for a merchant (preferred: slug-based)
+        // Jasa for a merchant (get and create: slug-based)
+        Route::get('/merchants/{merchantSlug}/jasas', [JasaController::class, 'publicByMerchant'])
+            ->where('merchantSlug', '^[A-Za-z0-9-]+$');
         Route::post('/merchants/{merchantSlug}/jasas', [JasaController::class, 'storeForMerchantBySlug'])
             ->where('merchantSlug', '^[A-Za-z0-9-]+$');
 
@@ -449,6 +452,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         //     ->whereNumber('merchantId');
 
         Route::prefix('merchant/{merchant:slug}')->group(function () {
+            Route::get('jasas', [JasaController::class, 'publicByMerchant']);
 
             Route::get(
                 'dashboard',

@@ -40,31 +40,7 @@ class HomeController extends Controller
                     'jasas' => function ($q) {
                         $q->where('status', 'published');
                     }
-                ]);
-
-            // 1. Top Merchants (Berdasarkan kelengkapan katalog)
-            $topMerchants = (clone $baseQuery)
-                ->orderByRaw('(products_count + jasas_count) DESC')
-                ->limit($topLimit)
-                ->get();
-
-            $existingIds = $topMerchants->pluck('id')->toArray();
-
-            // 2. New & Trending (Baru bergabung dalam 30 hari terakhir, punya produk)
-            $newMerchants = (clone $baseQuery)
-                ->whereNotIn('merchants.id', $existingIds)
-                ->where('merchants.created_at', '>=', now()->subDays(30))
-                ->orderByRaw('(products_count + jasas_count) DESC')
-                ->limit($newLimit)
-                ->get();
-
-            $existingIds = array_merge($existingIds, $newMerchants->pluck('id')->toArray());
-
-            // 3. Random (Sisanya, menghindari UMKM pasif yang tidak punya produk/jasa)
-            $randomLimitActual = $limit - count($existingIds);
-            $randomMerchants = (clone $baseQuery)
-                ->whereNotIn('merchants.id', $existingIds)
-                ->havingRaw('(products_count + jasas_count) > 0') // Filter UMKM pasif
+                ])
                 ->inRandomOrder()
                 ->limit($randomLimitActual > 0 ? $randomLimitActual : 0)
                 ->get();

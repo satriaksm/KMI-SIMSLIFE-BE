@@ -12,7 +12,7 @@
   </style>
 </head>
 <body>
-  <h3 style="margin-bottom:10px;">Daftar Produk<</h3>
+  <h3 style="margin-bottom:10px;">Daftar Produk</h3>
   <table>
     <thead>
       <tr>

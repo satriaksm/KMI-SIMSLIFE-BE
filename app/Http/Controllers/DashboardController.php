@@ -8,6 +8,8 @@ use App\Models\Category;
 use App\Models\Merchant;
 use App\Models\Jasa;
 use App\Models\Voucher;
+use App\Models\Order;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -26,6 +28,25 @@ class DashboardController extends Controller
 
         $merchantId = $merchant->id;
         $isJasaMerchant = (int) $merchant->segmentation_id === 3;
+
+        /**
+         * =========================
+         * STAT REKAP PESANAN & KEUANGAN
+         * =========================
+         */
+        $allOrders = Order::where('merchant_id', $merchantId);
+        $totalOrders = (clone $allOrders)->count();
+        $pendingOrders = (clone $allOrders)->whereIn('status', ['pending', 'paid', 'waiting_review'])->count();
+        $processingOrders = (clone $allOrders)->whereIn('status', ['processing', 'responsed', 'delivered', 'proses'])->count();
+        $completedOrders = (clone $allOrders)->whereIn('status', ['completed', 'selesai'])->count();
+        $cancelledOrders = (clone $allOrders)->whereIn('status', ['cancelled', 'rejected', 'undelivered', 'unpicked', 'batal'])->count();
+        $todayOrders = (clone $allOrders)->whereDate('created_at', Carbon::today())->count();
+
+        // Rekap Pendapatan
+        $totalRevenue = (float) Order::where('merchant_id', $merchantId)->whereIn('status', ['completed', 'selesai'])->sum('total');
+        $todayRevenue = (float) Order::where('merchant_id', $merchantId)->whereIn('status', ['completed', 'selesai'])->whereDate('created_at', Carbon::today())->sum('total');
+        $thisMonthRevenue = (float) Order::where('merchant_id', $merchantId)->whereIn('status', ['completed', 'selesai'])->whereMonth('created_at', Carbon::now()->month)->whereYear('created_at', Carbon::now()->year)->sum('total');
+        $pendingRevenue = (float) Order::where('merchant_id', $merchantId)->whereIn('status', ['processing', 'responsed', 'delivered', 'proses', 'waiting_review'])->sum('total');
 
         /**
          * =========================
@@ -86,53 +107,67 @@ class DashboardController extends Controller
 
         $voucherUsedCount = DB::table('voucher_usages')
             ->join('vouchers', 'vouchers.id', '=', 'voucher_usages.voucher_id')
+            ->leftJoin('orders', 'orders.id', '=', 'voucher_usages.order_id')
             ->where('vouchers.merchant_id', $merchantId)
+            ->where(function ($q) {
+                $q->whereNull('voucher_usages.order_id')
+                  ->orWhereIn('orders.status', ['completed', 'selesai']);
+            })
             ->count();
 
         /**
          * =========================
-         * CHART KATEGORI (TOP 3 + LAINNYA)
+         * RECENT ORDERS (5 Transaksi Terakhir)
          * =========================
-         * - Untuk merchant produk: pakai relasi products
-         * - Untuk merchant jasa: pakai relasi jasas
          */
-        if ($isJasaMerchant) {
-            $categoryStats = Category::whereHas('jasas', function ($q) use ($merchantId) {
-                $q->where('merchant_id', $merchantId)
-                    ->where('is_active', true);
-            })
-                ->withCount([
-                    'jasas as total' => function ($q) use ($merchantId) {
-                        $q->where('merchant_id', $merchantId)
-                            ->where('is_active', true);
-                    }
-                ])
-                ->orderByDesc('total')
-                ->get();
-        } else {
-            $categoryStats = Category::whereHas('products', function ($q) use ($merchantId) {
-                $q->where('merchant_id', $merchantId)
-                    ->where('status', 'published');
-            })
-                ->withCount([
-                    'products as total' => function ($q) use ($merchantId) {
-                        $q->where('merchant_id', $merchantId)
-                            ->where('status', 'published');
-                    }
-                ])
-                ->orderByDesc('total')
-                ->get();
-        }
+        $recentOrders = Order::where('merchant_id', $merchantId)
+            ->with(['items.product', 'user'])
+            ->latest()
+            ->take(5)
+            ->get()
+            ->map(function ($order) {
+                $isCancelled = in_array($order->status, ['cancelled', 'batal', 'rejected', 'gagal', 'undelivered', 'unpicked'], true);
+                $firstItem = $order->items->first();
+                $firstItemName = $firstItem?->product?->name ?? ($order->order_type === 'jasa' ? 'Layanan Jasa' : 'Item');
+                return [
+                    'id' => $order->id,
+                    'order_code' => $order->order_code ?: ('ORD-' . $order->id),
+                    'order_type' => $order->order_type ?: ($order->jasa_id ? 'jasa' : 'product'),
+                    'customer_name' => $order->nama ?: ($order->user?->name ?? 'Pelanggan'),
+                    'delivery_type' => $isCancelled ? '-' : ($order->delivery_type === 'delivery' ? 'Kirim' : 'Ambil Sendiri'),
+                    'status' => in_array($order->status, ['selesai'], true) ? 'completed' : (in_array($order->status, ['batal'], true) ? 'cancelled' : $order->status),
+                    'total' => (float) $order->total,
+                    'created_at' => $order->created_at?->toIso8601String(),
+                    'items_count' => $order->items->sum('quantity') ?: $order->items->count(),
+                    'first_item_name' => $firstItemName,
+                ];
+            });
 
-        $topCategories = $categoryStats->take(3);
-        $otherTotal = $categoryStats->slice(3)->sum('total');
+        /**
+         * =========================
+         * CHART PESANAN & PENDAPATAN 7 HARI TERAKHIR
+         * =========================
+         */
+        $chartDates = [];
+        $chartOrdersData = [];
+        $chartRevenueData = [];
 
-        $labels = $topCategories->pluck('name')->toArray();
-        $data = $topCategories->pluck('total')->toArray();
+        for ($i = 6; $i >= 0; $i--) {
+            $date = Carbon::today()->subDays($i);
+            $dateStr = $date->toDateString();
+            $chartDates[] = $date->isoFormat('D MMM');
 
-        if ($otherTotal > 0) {
-            $labels[] = 'Lainnya';
-            $data[] = $otherTotal;
+            $dayOrdersCount = Order::where('merchant_id', $merchantId)
+                ->whereDate('created_at', $dateStr)
+                ->count();
+
+            $dayRevenueSum = (float) Order::where('merchant_id', $merchantId)
+                ->whereIn('status', ['completed', 'selesai'])
+                ->whereDate('created_at', $dateStr)
+                ->sum('total');
+
+            $chartOrdersData[] = $dayOrdersCount;
+            $chartRevenueData[] = $dayRevenueSum;
         }
 
         return ApiResponse::success(
@@ -141,6 +176,20 @@ class DashboardController extends Controller
                     'id' => $merchant->id,
                     'slug' => $merchant->slug,
                     'name' => $merchant->name,
+                ],
+                'order_stats' => [
+                    'total' => $totalOrders,
+                    'pending' => $pendingOrders,
+                    'processing' => $processingOrders,
+                    'completed' => $completedOrders,
+                    'cancelled' => $cancelledOrders,
+                    'today' => $todayOrders,
+                ],
+                'revenue_stats' => [
+                    'total_revenue' => $totalRevenue,
+                    'today_revenue' => $todayRevenue,
+                    'this_month_revenue' => $thisMonthRevenue,
+                    'pending_revenue' => $pendingRevenue,
                 ],
                 'stats' => [
                     'total' => $totalProducts,
@@ -157,17 +206,13 @@ class DashboardController extends Controller
                     'expired' => $expiredVouchers,
                     'used' => $voucherUsedCount,
                 ],
+                'recent_orders' => $recentOrders,
                 'charts' => [
-                    'status' => [
-                        'labels' => ['Published', 'Draft', 'Archived'],
-                        'data' => [$published, $draft, $archived],
+                    'orders' => [
+                        'labels' => $chartDates,
+                        'data' => $chartOrdersData,
+                        'revenue_data' => $chartRevenueData,
                     ],
-                    'category' => [
-                        'labels' => $labels,
-                        'datasets' => [
-                            ['data' => $data]
-                        ]
-                    ]
                 ]
             ],
             'Merchant dashboard data retrieved successfully.',

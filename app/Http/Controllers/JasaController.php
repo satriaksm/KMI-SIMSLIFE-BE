@@ -562,9 +562,10 @@ class JasaController extends Controller
             $ids = json_decode($request->input('remove_images'), true);
             if (is_array($ids) && count($ids) > 0) {
                 $images = $jasa->images()->whereIn('id', $ids)->get();
+                $imageService = app(\App\Services\ImageOptimizationService::class);
                 foreach ($images as $image) {
-                    if ($image->image_path && Storage::disk('public')->exists($image->image_path)) {
-                        Storage::disk('public')->delete($image->image_path);
+                    if ($image->image_path) {
+                        $imageService->deleteImages($image->image_path, 'public');
                     }
                     $image->delete();
                 }
@@ -577,9 +578,10 @@ class JasaController extends Controller
             if (!empty($files)) {
                 $currentMaxOrder = (int) $jasa->images()->max('display_order');
                 $order = $currentMaxOrder >= 0 ? $currentMaxOrder + 1 : 0;
+                $imageService = app(\App\Services\ImageOptimizationService::class);
 
                 foreach ($files as $file) {
-                    $path = $file->store("jasa/{$jasa->id}", 'public');
+                    $path = $imageService->processAndStore($file, "jasa/{$jasa->id}", 'public', true);
 
                     $jasa->images()->create([
                         'image_path' => $path,
@@ -738,9 +740,10 @@ class JasaController extends Controller
             if (!empty($files)) {
                 $now = now();
                 $imagesToInsert = [];
+                $imageService = app(\App\Services\ImageOptimizationService::class);
 
                 foreach ($files as $index => $file) {
-                    $path = $file->store("jasa/{$jasa->id}", 'public');
+                    $path = $imageService->processAndStore($file, "jasa/{$jasa->id}", 'public', true);
 
                     $imagesToInsert[] = [
                         'imageable_type' => 'jasa',
@@ -799,10 +802,17 @@ class JasaController extends Controller
      */
     public function destroy($id)
     {
-        $jasa = Jasa::find($id);
+        $jasa = Jasa::with('images')->find($id);
 
         if (!$jasa) {
             return response()->json(['message' => 'Data jasa tidak ditemukan'], 404);
+        }
+
+        $imageService = app(\App\Services\ImageOptimizationService::class);
+        foreach ($jasa->images as $image) {
+            if ($image->image_path) {
+                $imageService->deleteImages($image->image_path, 'public');
+            }
         }
 
         $jasa->delete();

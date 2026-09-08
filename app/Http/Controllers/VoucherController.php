@@ -21,7 +21,8 @@ class VoucherController extends Controller
     public function index(Request $request)
     {
         $query = Voucher::with(['merchant:id,name,logo_path', 'event:id,event_name'])
-            ->active();
+            ->active()
+            ->where('is_hidden', false);
 
         // Filter by merchant
         if ($request->has('merchant_id')) {
@@ -57,6 +58,7 @@ class VoucherController extends Controller
         $validator = Validator::make($request->all(), [
             'voucher_code' => 'required|string|exists:vouchers,voucher_code',
             'order_amount' => 'required|numeric|min:0',
+            'merchant_id' => 'required|exists:merchants,id',
         ]);
 
         if ($validator->fails()) {
@@ -66,7 +68,17 @@ class VoucherController extends Controller
             ], 422);
         }
 
+        $merchantId = $request->merchant_id;
+        $acceptedEventIds = DB::table('event_merchants')
+            ->select('event_id')
+            ->where('merchant_id', $merchantId)
+            ->where('status', 'accepted');
+
         $voucher = Voucher::where('voucher_code', $request->voucher_code)
+            ->where(function ($q) use ($merchantId, $acceptedEventIds) {
+                $q->where('merchant_id', $merchantId)
+                    ->orWhereIn('event_id', $acceptedEventIds);
+            })
             ->active()
             ->first();
 
@@ -77,17 +89,64 @@ class VoucherController extends Controller
             ], 422);
         }
 
-        // Check minimum purchase
-        if ($request->order_amount < $voucher->min_purchase_amount) {
+        // Check restricted products / jasas
+        $eligibleAmount = (float) $request->order_amount;
+        $hasProductRestrictions = $voucher->restrictedProducts()->exists();
+        $hasJasaRestrictions = $voucher->restrictedJasas()->exists();
+
+        if ($hasProductRestrictions) {
+            $allowedProductIds = $voucher->restrictedProducts()->pluck('products.id')->toArray();
+            $items = $request->input('items', []);
+
+            if (!empty($items)) {
+                $eligibleItems = collect($items)->filter(function ($it) use ($allowedProductIds) {
+                    $pid = $it['product_id'] ?? $it['id'] ?? null;
+                    return $pid && in_array((int) $pid, $allowedProductIds, true);
+                });
+
+                if ($eligibleItems->isEmpty()) {
+                    return response()->json([
+                        'valid' => false,
+                        'message' => 'Voucher ini hanya berlaku untuk produk tertentu yang tidak ada dalam pesanan Anda',
+                    ], 422);
+                }
+
+                $eligibleAmount = (float) $eligibleItems->sum(function ($it) {
+                    return (float) ($it['subtotal'] ?? (($it['price'] ?? 0) * ($it['quantity'] ?? 1)));
+                });
+            } elseif ($request->has('product_id')) {
+                if (!in_array((int) $request->product_id, $allowedProductIds, true)) {
+                    return response()->json([
+                        'valid' => false,
+                        'message' => 'Voucher ini tidak berlaku untuk produk yang dipilih',
+                    ], 422);
+                }
+            }
+        } elseif ($hasJasaRestrictions) {
+            $allowedJasaIds = $voucher->restrictedJasas()->pluck('jasas.id')->toArray();
+            if ($request->has('jasa_id')) {
+                if (!in_array((int) $request->jasa_id, $allowedJasaIds, true)) {
+                    return response()->json([
+                        'valid' => false,
+                        'message' => 'Voucher ini tidak berlaku untuk jasa yang dipilih',
+                    ], 422);
+                }
+            }
+        }
+
+        // Check minimum purchase against eligible amount
+        if ($eligibleAmount < (float) $voucher->min_purchase_amount) {
             return response()->json([
                 'valid' => false,
-                'message' => "Minimum purchase amount is Rp " . number_format((float) $voucher->min_purchase_amount, 0, ',', '.'),
+                'message' => "Nilai belanja produk yang memenuhi syarat belum mencapai minimum Rp " . number_format((float) $voucher->min_purchase_amount, 0, ',', '.'),
             ], 422);
         }
 
-        // Check usage limit
+        // Check usage limit (only completed orders count as used)
         if ($voucher->usage_limit) {
-            $totalUsage = VoucherUsage::where('voucher_id', $voucher->id)->count();
+            $totalUsage = VoucherUsage::where('voucher_id', $voucher->id)
+                ->completed()
+                ->count();
             if ($totalUsage >= $voucher->usage_limit) {
                 return response()->json([
                     'valid' => false,
@@ -96,7 +155,7 @@ class VoucherController extends Controller
             }
         }
 
-        // Check user usage limit
+        // Check user usage limit (only completed orders count as used)
         if ($request->user()) {
             $canUse = VoucherUsage::canUseVoucher(
                 $request->user()->id,
@@ -112,14 +171,15 @@ class VoucherController extends Controller
             }
         }
 
-        // Calculate discount
-        $discount = $this->calculateDiscount($voucher, $request->order_amount);
+        // Calculate discount from eligible amount
+        $discount = $this->calculateDiscount($voucher, $eligibleAmount);
 
         return response()->json([
             'valid' => true,
             'voucher' => $voucher,
+            'eligible_amount' => $eligibleAmount,
             'discount_amount' => $discount,
-            'final_amount' => max(0, $request->order_amount - $discount),
+            'final_amount' => max(0, (float) $request->order_amount - $discount),
         ]);
     }
 
@@ -155,7 +215,23 @@ class VoucherController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
+            'voucher_name' => 'required|string|max:100',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) use ($merchant) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],
             'voucher_type' => 'required|in:percent,fixed',
             'voucher_description' => 'nullable|string',
             'value' => 'required|numeric|min:0',
@@ -165,6 +241,7 @@ class VoucherController extends Controller
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'nullable|integer|min:1',
+            'is_hidden' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -172,6 +249,7 @@ class VoucherController extends Controller
         }
 
         $voucher = $merchant->vouchers()->create([
+            'voucher_name' => $request->voucher_name,
             'voucher_code' => strtoupper($request->voucher_code),
             'voucher_type' => $request->voucher_type,
             'voucher_description' => $request->voucher_description,
@@ -183,6 +261,7 @@ class VoucherController extends Controller
             'voucher_end_date' => $request->voucher_end_date,
             'usage_limit_per_user' => $request->usage_limit_per_user,
             'usage_limit' => $request->usage_limit,
+            'is_hidden' => $request->boolean('is_hidden'),
         ]);
 
         return response()->json([
@@ -205,7 +284,11 @@ class VoucherController extends Controller
             'event:id,event_name',
             'usages',
         ])
-            ->withCount('usages');
+            ->withCount([
+                'usages' => function ($q) {
+                    $q->completed();
+                }
+            ]);
 
         // Filter by status
         if ($request->has('voucher_status')) {
@@ -263,7 +346,11 @@ class VoucherController extends Controller
      */
     public function destroy($id)
     {
-        $voucher = Voucher::withCount('usages')->findOrFail($id);
+        $voucher = Voucher::withCount([
+            'usages' => function ($q) {
+                $q->completed();
+            }
+        ])->findOrFail($id);
 
         if ($voucher->usages_count > 0) {
             return response()->json([
@@ -284,19 +371,73 @@ class VoucherController extends Controller
 
         $data = $request->validate([
             'voucher_name' => 'required|string|max:100',
-            'voucher_code' => 'required|string|max:100|unique:vouchers,voucher_code',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) use ($merchant) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],            
             'voucher_description' => 'nullable|string',
             'voucher_type' => 'required|in:percent,fixed',
-            'value' => 'required|numeric|min:0',
+            'value' => [
+                'required',
+                'numeric',
+                'min:0',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('voucher_type') === 'percent' && $value > 100) {
+                        $fail('Maksimal persentase adalah 100');
+                    }
+                },
+            ],
             'voucher_start_date' => 'required|date',
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
             'max_discount_amount' => 'nullable|numeric|min:0',
             'min_purchase_amount' => 'nullable|numeric|min:0',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'nullable|integer|min:1',
+            'is_hidden' => 'nullable|boolean',
+            'applies_to' => 'nullable|in:all,specific',
+            'product_ids' => 'nullable|array',
+            'product_ids.*' => 'integer|exists:products,id',
+            'jasa_ids' => 'nullable|array',
+            'jasa_ids.*' => 'integer|exists:jasas,id',
         ]);
 
-        return $merchant->vouchers()->create($data);
+        $data['is_hidden'] = $request->boolean('is_hidden');
+        $data['voucher_code'] = strtoupper($data['voucher_code']);
+        $data['voucher_status'] = 'active';
+
+        $voucher = $merchant->vouchers()->create($data);
+
+        $appliesTo = $request->input('applies_to', 'all');
+        if ($appliesTo === 'specific') {
+            if (!empty($request->product_ids)) {
+                $syncProducts = [];
+                foreach ($request->product_ids as $pId) {
+                    $syncProducts[$pId] = ['merchant_id' => $merchant->id];
+                }
+                $voucher->restrictedProducts()->sync($syncProducts);
+            }
+            if (!empty($request->jasa_ids)) {
+                $syncJasas = [];
+                foreach ($request->jasa_ids as $jId) {
+                    $syncJasas[$jId] = ['merchant_id' => $merchant->id];
+                }
+                $voucher->restrictedJasas()->sync($syncJasas);
+            }
+        }
+
+        return ApiResponse::success($voucher->fresh(['restrictedProducts', 'restrictedJasas']), 'Voucher berhasil dibuat.', 201);
     }
 
     public function merchantIndex(Request $request, Merchant $merchant)
@@ -316,7 +457,11 @@ class VoucherController extends Controller
 
         $query = $merchant->vouchers()
             ->with('event:id,event_name')
-            ->withCount('usages');
+            ->withCount([
+                'usages' => function ($q) {
+                    $q->completed();
+                }
+            ]);
 
         if (!empty($data['q'])) {
             $q = $data['q'];
@@ -431,8 +576,25 @@ class VoucherController extends Controller
         abort_if((int) $voucher->merchant_id !== (int) $merchant->id, 404);
 
         // Load relasi event dan count usages
-        $voucher->load(['event:id,event_name']);
-        $voucher->loadCount('usages');
+        $voucher->load([
+            'event:id,event_name',
+            'restrictedProducts' => function ($q) {
+                $q->select('products.id', 'products.name', 'products.slug')
+                  ->with('coverImage:id,imageable_id,imageable_type,image_path,is_cover')
+                  ->with(['variants' => function ($vq) {
+                      $vq->select('id', 'product_id', 'price', 'stock');
+                  }]);
+            },
+            'restrictedJasas' => function ($q) {
+                $q->select('jasas.id', 'jasas.title', 'jasas.slug', 'jasas.price', 'jasas.fixed_price', 'jasas.base_price')
+                  ->with('coverImage:id,imageable_id,imageable_type,image_path,is_cover');
+            }
+        ]);
+        $voucher->loadCount([
+            'usages' => function ($q) {
+                $q->completed();
+            }
+        ]);
 
         // Pastikan usages_count selalu integer (default 0)
         $usagesCount = $voucher->usages_count ?? 0;
@@ -440,6 +602,7 @@ class VoucherController extends Controller
         $voucher->is_expired = $voucher->voucher_end_date
             ? Carbon::parse($voucher->voucher_end_date)->isPast()
             : false;
+        $voucher->applies_to = ($voucher->restrictedProducts->isNotEmpty() || $voucher->restrictedJasas->isNotEmpty()) ? 'specific' : 'all';
 
         $voucher->makeHidden([
             'created_at',
@@ -459,29 +622,88 @@ class VoucherController extends Controller
 
         $validated = $request->validate([
             'voucher_name' => 'required|string|max:255',
-            'voucher_code' => 'required|string|max:255',
+            'voucher_code' => [
+                'required',
+                'string',
+                'max:255',
+                function ($attribute, $value, $fail) use ($merchant, $voucher) {
+                    $exists = \App\Models\Voucher::where('voucher_code', $value)
+                        ->where('id', '!=', $voucher->id)
+                        ->where(function ($q) use ($merchant) {
+                            $q->where('merchant_id', $merchant->id)
+                              ->orWhereNull('merchant_id');
+                        })
+                        ->exists();
+                    if ($exists) {
+                        $fail('Kode voucher sudah digunakan.');
+                    }
+                }
+            ],            
             'voucher_description' => 'required|string',
             'voucher_type' => 'required|in:percent,fixed',
-            'value' => 'required|numeric|min:1',
+            'value' => [
+                'required',
+                'numeric',
+                'min:1',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('voucher_type') === 'percent' && $value > 100) {
+                        $fail('Maksimal persentase adalah 100');
+                    }
+                },
+            ],
             'voucher_start_date' => 'required|date',
             'voucher_end_date' => 'required|date|after_or_equal:voucher_start_date',
             'min_purchase_amount' => 'required|numeric|min:0',
             'max_discount_amount' => 'nullable|numeric|min:0|required_if:voucher_type,percent',
             'usage_limit_per_user' => 'required|integer|min:1',
             'usage_limit' => 'required|integer|min:0',
+            'is_hidden' => 'nullable|boolean',
+            'applies_to' => 'nullable|in:all,specific',
+            'product_ids' => 'nullable|array',
+            'product_ids.*' => 'integer|exists:products,id',
+            'jasa_ids' => 'nullable|array',
+            'jasa_ids.*' => 'integer|exists:jasas,id',
         ]);
+
+        if (array_key_exists('is_hidden', $validated)) {
+            $validated['is_hidden'] = $request->boolean('is_hidden');
+        }
+
+        if (isset($validated['voucher_code'])) {
+            $validated['voucher_code'] = strtoupper($validated['voucher_code']);
+        }
 
         // Jika tidak dikirim, set null
         if (
+            isset($validated['max_discount_amount']) &&
             $validated['max_discount_amount'] === 0
         ) {
             $validated['max_discount_amount'] = null;
         }
 
-
         $voucher->update($validated);
 
-        return ApiResponse::success($voucher->fresh(), 'Voucher berhasil diperbarui.');
+        $appliesTo = $request->input('applies_to', 'all');
+        if ($appliesTo === 'specific') {
+            $productIds = $request->input('product_ids', []);
+            $syncProducts = [];
+            foreach ($productIds as $pId) {
+                $syncProducts[$pId] = ['merchant_id' => $merchant->id];
+            }
+            $voucher->restrictedProducts()->sync($syncProducts);
+
+            $jasaIds = $request->input('jasa_ids', []);
+            $syncJasas = [];
+            foreach ($jasaIds as $jId) {
+                $syncJasas[$jId] = ['merchant_id' => $merchant->id];
+            }
+            $voucher->restrictedJasas()->sync($syncJasas);
+        } else {
+            $voucher->restrictedProducts()->detach();
+            $voucher->restrictedJasas()->detach();
+        }
+
+        return ApiResponse::success($voucher->fresh(['restrictedProducts', 'restrictedJasas']), 'Voucher berhasil diperbarui.');
     }
 
     public function merchantDestroy(Merchant $merchant, Voucher $voucher)
@@ -630,14 +852,15 @@ class VoucherController extends Controller
                     ->orWhereIn('event_id', $acceptedEventIds);
             })
             ->active()
+            ->where('is_hidden', false)
 
-            // ⬅️ hitung total pemakaian
-            ->withCount('usages')
-
-            // ⬅️ hitung pemakaian user ini
+            // ⬅️ hitung total pemakaian (hanya pesanan selesai)
             ->withCount([
+                'usages' => function ($q) {
+                    $q->completed();
+                },
                 'usages as user_usages_count' => function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
+                    $q->where('user_id', $userId)->completed();
                 }
             ])
 
@@ -691,6 +914,8 @@ class VoucherController extends Controller
             $voucher->is_expired = $voucher->voucher_end_date
                 ? Carbon::parse($voucher->voucher_end_date)->isPast()
                 : false;
+            $voucher->restricted_product_ids = $voucher->restrictedProducts->pluck('id')->toArray();
+            $voucher->restricted_jasa_ids = $voucher->restrictedJasas->pluck('id')->toArray();
 
             $voucher->makeHidden([
                 'created_at',
@@ -732,7 +957,12 @@ class VoucherController extends Controller
                     ->orWhereIn('event_id', $acceptedEventIds);
             })
             ->active()
-            ->withCount('usages');
+            ->where('is_hidden', false)
+            ->withCount([
+                'usages' => function ($q) {
+                    $q->completed();
+                }
+            ]);
 
         // Filter by minimum purchase amount if provided
         if ($request->has('amount')) {
@@ -743,12 +973,12 @@ class VoucherController extends Controller
             });
         }
 
-        // If user is authenticated, count their usage
+        // If user is authenticated, count their usage (only completed orders)
         $userId = $request->user()?->id;
         if ($userId) {
             $query->withCount([
                 'usages as user_usages_count' => function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
+                    $q->where('user_id', $userId)->completed();
                 }
             ]);
         }
@@ -795,6 +1025,8 @@ class VoucherController extends Controller
             $voucher->is_expired = $voucher->voucher_end_date
                 ? Carbon::parse($voucher->voucher_end_date)->isPast()
                 : false;
+            $voucher->restricted_product_ids = $voucher->restrictedProducts->pluck('id')->toArray();
+            $voucher->restricted_jasa_ids = $voucher->restrictedJasas->pluck('id')->toArray();
 
             $voucher->makeHidden([
                 'usages_count',

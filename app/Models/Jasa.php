@@ -20,6 +20,8 @@ class Jasa extends Model
      */
     protected $hidden = ['image'];
 
+    protected $appends = ['name', 'nama'];
+
     protected $fillable = [
         'merchant_id',
         'title',
@@ -149,5 +151,22 @@ class Jasa extends Model
     public function ratingSummary(): MorphOne
     {
         return $this->morphOne(RatingSummary::class, 'rateable');
+    }
+
+    public function vouchers()
+    {
+        return $this->morphToMany(Voucher::class, 'item', 'voucher_merchant_items')
+            ->withPivot(['merchant_id'])
+            ->withTimestamps();
+    }
+
+    public function getNameAttribute()
+    {
+        return $this->attributes['title'] ?? null;
+    }
+
+    public function getNamaAttribute()
+    {
+        return $this->attributes['title'] ?? null;
     }
 }

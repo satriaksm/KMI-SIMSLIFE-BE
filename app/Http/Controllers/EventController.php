@@ -297,12 +297,18 @@ class EventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
+                $imageService = app(\App\Services\ImageOptimizationService::class);
                 // Delete old banner
                 if ($event->banner_img_path) {
-                    Storage::disk('public')->delete($event->banner_img_path);
+                    $imageService->deleteImages($event->banner_img_path, 'public');
                 }
 
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $validated['banner_img_path'] = $imageService->processAndStore(
+                    $file,
+                    'events/banners',
+                    'public',
+                    false
+                );
             }
         }
 
@@ -323,7 +329,7 @@ class EventController extends Controller
 
         // Delete banner image
         if ($event->banner_img_path) {
-            Storage::disk('public')->delete($event->banner_img_path);
+            app(\App\Services\ImageOptimizationService::class)->deleteImages($event->banner_img_path, 'public');
         }
 
         // Detach merchants
@@ -333,7 +339,7 @@ class EventController extends Controller
         $event->delete();
 
         return response()->json([
-            'message' => 'Event deleted successfully'
+            'message' => 'Event deleted successfully',
         ]);
     }
 
@@ -344,9 +350,10 @@ class EventController extends Controller
     {
         $validated = $request->validate([
             'event_name' => 'required|string|max:255|unique:events,event_name', // ✅ ADDED unique
-            'event_description' => 'nullable|string',
-            'event_start_date' => 'required|date',
-            'event_end_date' => 'required|date|after_or_equal:event_start_date',
+            'description' => 'required|string',
+            'start_date' => 'required|date|after_or_equal:today',
+            'end_date' => 'required|date|after:start_date',
+            'discount' => 'required|string|max:50',
             'banner_img' => 'required|mimes:jpeg,jpg,png,webp,svg|max:5120', // ✅ REQUIRED
             'status' => 'required|in:draft,published,archived',
         ], [
@@ -378,7 +385,13 @@ class EventController extends Controller
                 Storage::disk('public')->put($path, $cleanSVG);
                 $validated['banner_img_path'] = $path;
             } else {
-                $validated['banner_img_path'] = $file->store('events/banners', 'public');
+                $imageService = app(\App\Services\ImageOptimizationService::class);
+                $validated['banner_img_path'] = $imageService->processAndStore(
+                    $file,
+                    'events/banners',
+                    'public',
+                    false
+                );
             }
         }
 

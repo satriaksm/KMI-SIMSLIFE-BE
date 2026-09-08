@@ -1,97 +1,149 @@
 # SUMILIR - Backend (API)
 
-## Deskripsi Singkat 📝
+## Deskripsi Singkat 
 
-Repository ini berisi kode sumber untuk sisi backend (API) dari platform **SUMILIR**. Platform ini adalah aplikasi hyperlocal berbasis kelurahan yang menggabungkan fitur E-commerce (produk & jasa), Komunitas, dan Peta Interaktif untuk memberdayakan UMKM lokal. Backend ini dibangun menggunakan **Laravel** dan berfungsi sebagai penyedia data dan logika bisnis untuk aplikasi Frontend (Vue.js).
+Repository ini berisi kode sumber untuk sisi backend (API) dari platform **SUMILIR** (Sistem Informasi Manajemen Layanan Inovasi & Fleksibilitas Ekonomi UMKM). Platform ini adalah aplikasi *hyperlocal* berbasis kelurahan yang mengintegrasikan Marketplace (produk & jasa), Forum Komunitas, dan Peta Interaktif untuk memberdayakan UMKM lokal.
 
-## Fitur Utama yang Dikelola Backend ✨
+Backend ini dibangun menggunakan **Laravel 12** dan berfungsi sebagai penyedia data serta logika bisnis untuk aplikasi Frontend (Vue 3).
 
-* Manajemen Pengguna & UMKM (Registrasi, Profil, Alamat, Verifikasi)
-* Manajemen Peran & Hak Akses (Customer, UMKM Owner, Admin)
-* Manajemen Katalog Produk (termasuk Varian & Add-on)
-* Manajemen Katalog Jasa (Direct Booking & Konsultasi)
-* Manajemen Inventaris (Stok Produk) & Ketersediaan (Jasa & Produk Non-Stok)
-* Alur Transaksi E-commerce (Keranjang, Checkout, Order - ala Shopee Food)
-* Alur Transaksi POS (termasuk Tahan Transaksi)
-* Manajemen Pengiriman (Pickup & Seller Delivery, Kalkulasi Ongkir Berbasis Zona)
-* Sistem Voucher (UMKM & Event)
-* Sistem Event Promosi
-* Forum Komunitas (Posting & Komentar)
-* Chat Privat (Customer - UMKM) & Konsultasi Jasa
-* Sistem Review & Rating
-* Moderasi Konten (Pelaporan)
-* API untuk data Peta (Lokasi UMKM)
-* Dashboard Admin
+---
 
-## Tech Stack Utama 💻
+## Model Transaksi & Pembayaran 
+
+> Mengingat karakteristik UMKM lokal dan model *hyperlocal*, transaksi dirancang secara langsung, cepat, dan tanpa potongan biaya transaksi (*zero gateway fee*):
+> 1. **Cash on Delivery (COD) / Bayar di Tempat:** Pembeli membayar tunai saat pesanan diantarkan oleh kurir UMKM/penjual.
+> 2. **Ambil di UMKM (Self-Pickup):** Pembeli mengambil langsung ke UMKM dan menyelesaikan pembayaran saat pengambilan.
+> 3. **Transfer Manual / Koordinasi WhatsApp:** Pembeli dan merchant dapat berkoordinasi langsung mengenai bukti transfer atau detail pesanan via tautan chat WhatsApp otomatis dan chat internal.
+
+---
+
+## Fitur Utama yang Dikelola Backend 
+
+* **Manajemen Pengguna & UMKM:**
+  * Autentikasi berbasis token/cookie (Laravel Sanctum).
+  * Manajemen profil, alamat pengiriman, dan verifikasi merchant.
+  * Role & Permission: Customer, UMKM Owner (Merchant), dan Administrator.
+
+* **Katalog Produk & Jasa:**
+  * Manajemen katalog produk dengan varian harga dan add-on.
+  * Manajemen katalog jasa dengan sistem *direct booking*, portofolio, dan konsultasi.
+  * Manajemen stok produk dan ketersediaan slot jasa.
+
+* **Alur Transaksi & Pemesanan (Hyperlocal E-Commerce):**
+  * Keranjang belanja terisolasi per-merchant (seperti alur pemesanan makanan).
+  * Sistem diskon dan voucher (Voucher UMKM & Voucher Event).
+  * Manajemen status pesanan (Menunggu Konfirmasi, Selesai, Dibatalkan).
+
+* **Peta Interaktif (Hyperlocal Map):**
+  * API koordinat lokasi UMKM dan zona pengiriman di wilayah kelurahan.
+
+* **Komunitas & Ulasan:**
+  * Forum diskusi warga/komunitas (posting, komentar, interaksi).
+  * Moderasi konten dan pelaporan ulasan/postingan bermasalah.
+
+* **Laporan & Dashboard:**
+  * Dashboard statistik penjualan untuk UMKM Owner.
+  * Dashboard analitik menyeluruh dan manajemen platform untuk Admin.
+  * Ekspor laporan pesanan (PDF via DomPDF dan Excel via Maatwebsite).
+
+---
+
+## Tech Stack Utama 
 
 * **Framework:** Laravel 12
-* **Bahasa:** PHP
-* **Database:** MySQL [Versi]
-* **Caching/Queues:** Redis [Versi]
-* **Autentikasi API:** Laravel Sanctum
-* **Real-time:** Laravel Websockets (Reverb)
-* **Web Server:** Nginx (Direkomendasikan)
+* **Bahasa:** PHP 8.2+
+* **Database:** MySQL 8.0+
+* **Real-time WebSockets:** Laravel Reverb
+* **Autentikasi:** Laravel Sanctum
+* **Caching & Queue:** Database Driver / Redis
+* **Dokumen & Ekspor:** Barryvdh Laravel-DomPDF & Maatwebsite Excel
+* **Web Server:** Nginx (atau Apache / PHP Built-in Server)
 * **Manajemen Paket:** Composer
 
-## Instalasi 🚀
+---
 
-1.  **Clone repository:**
-    ```bash
-    git clone https://github.com/satriaksm/KMI-SIMSLIFE-BE.git
-    cd KMI-SIMSLIFE-BE
-    ```
-2.  **Install dependensi Composer:**
-    ```bash
-    composer install
-    ```
-3.  **Salin file environment:**
-    ```bash
-    cp .env.example .env
-    ```
-4.  **Konfigurasi file `.env`:**
-    * Sesuaikan detail koneksi database (`DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`).
-    * Konfigurasi koneksi Redis (`REDIS_HOST`, `REDIS_PASSWORD`, `REDIS_PORT`).
-    * Konfigurasi URL aplikasi (`APP_URL`).
-    * Konfigurasi Laravel Websockets (`PUSHER_APP_ID`, `PUSHER_APP_KEY`, etc.).
-5.  **Generate application key:**
-    ```bash
-    php artisan key:generate
-    ```
-6.  **Jalankan migrasi database (dan seeder jika ada):**
-    ```bash
-    php artisan migrate --seed
-    ```
-7.  **(Jika menggunakan Laravel Websockets) Install dependensi NPM:**
-    ```bash
-    npm install
-    # Mungkin perlu build aset jika ada
-    # npm run build 
-    ```
-8.  **Setup storage link:**
-    ```bash
-    php artisan storage:link
-    ```
-9.  **Konfigurasi web server** Anda (Nginx/Apache) agar menunjuk ke direktori `public`.
+## Panduan Instalasi 
 
-## Menjalankan Aplikasi (Development) ▶️
+1. **Clone repository:**
+   ```bash
+   git clone https://github.com/satriaksm/KMI-SIMSLIFE-BE.git
+   cd KMI-SIMSLIFE-BE
+   ```
 
-1.  **Jalankan server development Laravel:**
-    ```bash
-    php artisan serve
-    ```
-2.  **Jalankan queue worker:**
-    ```bash
-    php artisan queue:work
-    ```
-3.  **(Jika menggunakan Laravel Websockets) Jalankan server WebSocket:**
-    ```bash
-    php artisan websockets:serve
-    ```
+2. **Install dependensi PHP:**
+   ```bash
+   composer install
+   ```
 
-Aplikasi backend sekarang berjalan dan siap menerima request API di `APP_URL` yang Anda tentukan (default: `http://localhost:8000`).
+3. **Salin file konfigurasi environment:**
+   ```bash
+   cp .env.example .env
+   ```
 
-## Menjalankan Test ✅
+4. **Konfigurasi `.env`:**
+   Sesuaikan koneksi database dan URL aplikasi:
+   ```env
+   APP_URL=http://localhost:8000
+   FRONTEND_URL=http://localhost:5173
+
+   DB_CONNECTION=mysql
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_DATABASE=sumilir_ta
+   DB_USERNAME=root
+   DB_PASSWORD=
+
+   BROADCAST_CONNECTION=reverb
+   REVERB_APP_ID=local
+   REVERB_APP_KEY=local
+   REVERB_APP_SECRET=local
+   REVERB_HOST=127.0.0.1
+   REVERB_PORT=8081
+   REVERB_SCHEME=http
+   ```
+
+5. **Generate Application Key:**
+   ```bash
+   php artisan key:generate
+   ```
+
+6. **Jalankan Migrasi & Seeder Database:**
+   ```bash
+   php artisan migrate --seed
+   ```
+
+7. **Hubungkan Storage Symlink:**
+   ```bash
+   php artisan storage:link
+   ```
+
+---
+
+## Menjalankan Aplikasi (Development) 
+
+Untuk menjalankan seluruh layanan di lingkungan lokal, buka 3 tab terminal:
+
+1. **Terminal 1 - Server API Laravel:**
+   ```bash
+   php artisan serve
+   ```
+   *(Akan berjalan di `http://localhost:8000`)*
+
+2. **Terminal 2 - Server WebSocket (Reverb):**
+   ```bash
+   php artisan reverb:start --port=8081
+   ```
+   *(Menangani pesan chat dan notifikasi real-time di port 8081)*
+
+3. **Terminal 3 - Queue Worker (Opsional):**
+   ```bash
+   php artisan queue:work
+   ```
+
+---
+
+## Menjalankan Pengujian (Testing) 
 
 ```bash
 php artisan test
+```

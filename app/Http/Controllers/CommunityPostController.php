@@ -609,6 +609,10 @@ class CommunityPostController
         $disk = 'public';
         $path = ltrim($image->post_image_path, '/');
 
+        $size = request()->query('size', 'original');
+        $imageService = app(\App\Services\ImageOptimizationService::class);
+        $path = ltrim($imageService->resolveSizePath($path, $size), '/');
+
         if (!Storage::disk($disk)->exists($path)) {
             abort(404);
         }
@@ -647,11 +651,10 @@ class CommunityPostController
         // Determine starting count for image numbering
         $currentCount = $startIndex !== null ? (int) $startIndex : $post->images()->count();
         $postTitleSlug = $altPrefix ?? Str::slug($post->post_title);
+        $imageService = app(\App\Services\ImageOptimizationService::class);
 
         foreach ($images as $index => $image) {
-            $filename = Str::random(20) . '.' . $image->getClientOriginalExtension();
-            $path = "community/posts/{$post->id}";
-            $fullPath = $image->storeAs($path, $filename, 'public');
+            $fullPath = $imageService->processAndStore($image, "community/posts/{$post->id}", 'public', false);
 
             // Auto-generate alt text: {altPrefix}-{n}
             $imageNumber = $currentCount + $index + 1;

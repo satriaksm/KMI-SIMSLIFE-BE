@@ -244,10 +244,11 @@ class AdminEventController extends Controller
         // Handle banner upload BEFORE status validation
         if ($request->hasFile('banner_img')) {
             $file = $request->file('banner_img');
+            $imageService = app(\App\Services\ImageOptimizationService::class);
             
             // Delete old banner FIRST
-            if ($event->banner_img_path && Storage::disk('public')->exists($event->banner_img_path)) {
-                Storage::disk('public')->delete($event->banner_img_path);
+            if ($event->banner_img_path) {
+                $imageService->deleteImages($event->banner_img_path, 'public');
                 Log::info('[AdminEvent] Old banner deleted', [
                     'event_id' => $event->id,
                     'old_path' => $event->banner_img_path,
@@ -356,7 +357,7 @@ class AdminEventController extends Controller
 
         // Delete banner image
         if ($event->banner_img_path) {
-            Storage::disk('public')->delete($event->banner_img_path);
+            app(\App\Services\ImageOptimizationService::class)->deleteImages($event->banner_img_path, 'public');
         }
 
         // Detach merchants
@@ -604,7 +605,11 @@ class AdminEventController extends Controller
             $vouchers = Voucher::whereNull('event_id')
                 ->where('voucher_status', 'active') 
                 ->with(['usages'])
-                ->withCount('usages')
+                ->withCount([
+                    'usages' => function ($q) {
+                        $q->completed();
+                    }
+                ])
                 ->orderBy('created_at', 'desc')
                 ->get();
 

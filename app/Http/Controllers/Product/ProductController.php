@@ -289,6 +289,9 @@ class ProductController extends Controller
                     'cover_image' => $p->coverImage ? [
                         'id' => $p->coverImage->id,
                         'src_url' => $coverUrl,
+                        'thumb_url' => $p->coverImage->thumb_url,
+                        'medium_url' => $p->coverImage->medium_url,
+                        'urls' => $p->coverImage->urls,
                     ] : null,
                 ];
             })
@@ -819,13 +822,14 @@ class ProductController extends Controller
     {
         $imagesToInsert = [];
         $now = now();
+        $imageService = app(\App\Services\ImageOptimizationService::class);
 
         // Sort by order
         usort($images, fn($a, $b) => $a['order'] <=> $b['order']);
 
         foreach ($images as $index => $imageData) {
             $file = $imageData['file'];
-            $path = $file->store("products/{$product->id}", 'public');
+            $path = $imageService->processAndStore($file, "products/{$product->id}", 'public', true);
 
             $imagesToInsert[] = [
                 'imageable_type' => 'product',
@@ -869,7 +873,8 @@ class ProductController extends Controller
                 // Upload image jika ada (hanya untuk option pertama)
                 if ($usesImages && !empty($optionData['images'])) {
                     $imageFile = $optionData['images'][0]['file'];
-                    $path = $imageFile->store("option-values/{$value->id}", 'public');
+                    $imageService = app(\App\Services\ImageOptimizationService::class);
+                    $path = $imageService->processAndStore($imageFile, "option-values/{$value->id}", 'public', true);
                     $value->update(['image_path' => $path]);
                 }
 
@@ -1462,13 +1467,16 @@ class ProductController extends Controller
                 // upload image jika ada
                 $imagePath = null;
                 if (!empty($opt['images'][0]['file'])) {
-                    $imagePath = $opt['images'][0]['file']
-                        ->store("product-options/{$product->id}", 'public');
+                    $imageService = app(\App\Services\ImageOptimizationService::class);
+                    $imagePath = $imageService->processAndStore($opt['images'][0]['file'], "product-options/{$product->id}", 'public', true);
                 }
 
                 if (!empty($opt['id']) && $existingValues->has($opt['id'])) {
                     // UPDATE
                     $value = $existingValues[$opt['id']];
+                    if ($imagePath && $value->image_path) {
+                        app(\App\Services\ImageOptimizationService::class)->deleteImages($value->image_path, 'public');
+                    }
                     $value->update([
                         'option_value' => $opt['name'],
                         'image_path' => $imagePath ?? $value->image_path,
@@ -1493,7 +1501,7 @@ class ProductController extends Controller
                 ->whereNotIn('id', $keptValueIds)
                 ->each(function (ProductOptionValue $val) {
                     if ($val->image_path) {
-                        Storage::disk('public')->delete($val->image_path);
+                        app(\App\Services\ImageOptimizationService::class)->deleteImages($val->image_path, 'public');
                     }
                     $val->delete();
                 });
@@ -1505,7 +1513,7 @@ class ProductController extends Controller
             ->each(function (ProductOption $opt) {
                 foreach ($opt->values as $val) {
                     if ($val->image_path) {
-                        Storage::disk('public')->delete($val->image_path);
+                        app(\App\Services\ImageOptimizationService::class)->deleteImages($val->image_path, 'public');
                     }
                 }
                 $opt->delete();
@@ -1887,7 +1895,8 @@ class ProductController extends Controller
                     'is_cover' => $isCover,
                 ]);
             } else {
-                $path = $entry['file']->store("products/{$product->id}", 'public');
+                $imageService = app(\App\Services\ImageOptimizationService::class);
+                $path = $imageService->processAndStore($entry['file'], "products/{$product->id}", 'public', true);
 
                 $product->images()->create([
                     'image_path' => $path,
@@ -1963,9 +1972,7 @@ class ProductController extends Controller
             return;
         $disk = config('filesystems.product_disk', 'public');
 
-        if (Storage::disk($disk)->exists($path)) {
-            Storage::disk($disk)->delete($path);
-        }
+        app(\App\Services\ImageOptimizationService::class)->deleteImages($path, $disk);
     }
 
     private function getAddonIdsForProduct(Product $product): array
