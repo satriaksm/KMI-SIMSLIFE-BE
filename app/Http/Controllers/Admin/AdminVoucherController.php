@@ -148,10 +148,10 @@ class AdminVoucherController extends Controller
                 }
             } while ($exists);
 
-            // ✅ Create voucher
+            // Create voucher
             $voucher = Voucher::create($data);
 
-            // ✅ Attach to merchants if event voucher
+            // Attach to merchants if event voucher
             if (!empty($data['event_id']) && !empty($data['merchant_ids'])) {
                 foreach ($data['merchant_ids'] as $merchantId) {
                     $voucher->merchantsVoucher()->attach($merchantId, [

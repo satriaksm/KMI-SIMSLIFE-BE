@@ -107,6 +107,21 @@ class ReportController extends Controller
 
         $report->load(['reason:id,reason_title,reason_description', 'reviewer:id,name', 'reportable']);
 
+        // Notify all admins via email in the background
+        defer(function () use ($report) {
+            try {
+                $admins = User::whereHas('roles', fn($q) => $q->where('name', 'admin'))
+                    ->orWhere('is_super_admin', true)
+                    ->get();
+
+                foreach ($admins as $index => $admin) {
+                    $admin->notify((new \App\Notifications\NewReportAdminNotification($report))->delay(now()->addSeconds($index * 5)));
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning('[ReportController] Admin notify failed: ' . $e->getMessage());
+            }
+        });
+
         return response()->json([
             'message' => 'Laporan berhasil dikirim',
             'data' => $this->transformReportForUser($report),
@@ -136,8 +151,16 @@ class ReportController extends Controller
     public function show(Request $request, $id)
     {
         $report = ContentReport::with(['reason:id,reason_title,reason_description', 'reviewer:id,name', 'reportable'])
-            ->where('user_id', $request->user()->id)
             ->findOrFail($id);
+            
+        $targetUser = $report->getTargetUser();
+        
+        // Memastikan user adalah pelapor ATAU target dari laporan tersebut
+        if ($report->user_id !== $request->user()->id && (!$targetUser || $targetUser->id !== $request->user()->id)) {
+            return response()->json([
+                'message' => 'Anda tidak memiliki akses ke laporan ini'
+            ], 403);
+        }
 
         return response()->json([
             'data' => $this->transformReportForUser($report),

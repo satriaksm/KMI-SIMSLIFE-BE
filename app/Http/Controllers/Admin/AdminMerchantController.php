@@ -7,6 +7,8 @@ use Carbon\Carbon;
 use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Notifications\MerchantApplicationStatusNotification;
+use App\Services\WebPushService;
 use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
@@ -15,6 +17,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\MerchantApprovalMail;
 use App\Mail\MerchantRejectionMail;
+use Illuminate\Validation\Rule;
+use App\Services\ImageOptimizationService;
 
 class AdminMerchantController extends Controller
 {
@@ -63,9 +67,6 @@ class AdminMerchantController extends Controller
      *   }
      * }
      */
-    /**
-     * ADMIN: List all merchants with filters
-     */
     public function index(Request $request)
     {
         $query = Merchant::with([
@@ -97,8 +98,23 @@ class AdminMerchantController extends Controller
             });
         }
 
-        $merchants = $query->latest()
-            ->paginate($request->input('per_page', 15));
+        $sortBy = $request->input('sort_by') ?: 'created_at';
+        $sortOrder = $request->input('sort_order') ?: 'desc';
+
+        if (!in_array($sortBy, ['id', 'name', 'status', 'products_count', 'created_at'])) {
+            $sortBy = 'created_at';
+        }
+        if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
+            $sortOrder = 'desc';
+        }
+
+        if ($sortBy === 'products_count') {
+            $merchants = $query->orderByRaw("products_count $sortOrder")
+                ->paginate($request->input('per_page', 15));
+        } else {
+            $merchants = $query->orderBy($sortBy, $sortOrder)
+                ->paginate($request->input('per_page', 15));
+        }
 
         // Transform for UI (like AdminUserController)
         $merchants->getCollection()->transform(function ($merchant) {
@@ -197,7 +213,6 @@ class AdminMerchantController extends Controller
         $merchant = DB::transaction(function () use ($validated, $admin) {
             $merchant = Merchant::create([
                 'user_id' => $validated['user_id'],
-                'paguyuban_id' => null,
                 'segmentation_id' => $validated['segmentation_id'],
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
@@ -248,9 +263,6 @@ class AdminMerchantController extends Controller
     }
 
     /**
-     * ADMIN: Get single merchant detail
-     */
-    /**
      * Get Merchant Detail (Admin)
      *
      * Get detail of a merchant by ID, including user, segmentation, addresses, products, vouchers, and events.
@@ -281,7 +293,6 @@ class AdminMerchantController extends Controller
             $merchant = Merchant::with([
                 'user',
                 'segmentation',
-                'paguyuban',
                 'primaryAddress.province',
                 'primaryAddress.city',
                 'primaryAddress.district',
@@ -369,7 +380,7 @@ class AdminMerchantController extends Controller
      *   "message": "Merchant sudah disetujui."
      * }
      */
-    public function approve(Request $request, Merchant $merchant)
+    public function approve(Request $request, Merchant $merchant, WebPushService $webPushService)
     {
         // Validasi role admin - Using hasRole helper for safety
         $admin = $request->user();
@@ -392,7 +403,7 @@ class AdminMerchantController extends Controller
             }
 
             $merchant->update([
-                'status' => 'approved',
+                'status'      => 'approved',
                 'response_at' => Carbon::now(),
             ]);
 
@@ -402,7 +413,7 @@ class AdminMerchantController extends Controller
                 $roleId = DB::table('roles')->where('name', 'umkm-owner')->value('id');
                 if (!$roleId) {
                     $roleId = DB::table('roles')->insertGetId([
-                        'name' => 'umkm-owner',
+                        'name'       => 'umkm-owner',
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
@@ -415,17 +426,14 @@ class AdminMerchantController extends Controller
                 );
             }
 
-            // Send Email Notification
-            if ($merchant->user && $merchant->user->email) {
-                Mail::to($merchant->user->email)->send(new MerchantApprovalMail($merchant));
+            if ($merchant->user) {
+                $merchant->user->notify(new MerchantApplicationStatusNotification(
+                    $merchant->fresh(),
+                    'approved'
+                ));
             }
 
             DB::commit();
-
-            return response()->json([
-                'message' => 'Merchant disetujui dan slug telah digenerate.',
-                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('[AdminMerchant] Failed to approve merchant: ' . $e->getMessage());
@@ -434,6 +442,24 @@ class AdminMerchantController extends Controller
                 'message' => 'Gagal menyetujui merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
             ], 500);
         }
+
+        // WebPush adalah non-critical — jalankan di luar transaction agar tidak rollback DB
+        if ($merchant->user) {
+            try {
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'approved'
+                );
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] approve sendMerchantApplicationDecision failed', ['merchant_id' => $merchant->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'message'  => 'Merchant disetujui dan slug telah digenerate.',
+            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+        ]);
     }
 
     // Admin menolak pendaftaran -> status rejected
@@ -457,7 +483,7 @@ class AdminMerchantController extends Controller
      *   "message": "Merchant sudah ditolak."
      * }
      */
-    public function reject(Request $request, Merchant $merchant)
+    public function reject(Request $request, Merchant $merchant, WebPushService $webPushService)
     {
         $admin = $request->user();
         // Using hasRole helper for safety
@@ -475,21 +501,18 @@ class AdminMerchantController extends Controller
         DB::beginTransaction();
         try {
             $merchant->update([
-                'status' => 'rejected',
+                'status'      => 'rejected',
                 'response_at' => Carbon::now(),
             ]);
 
-            // Send Email Notification
-            if ($merchant->user && $merchant->user->email) {
-                Mail::to($merchant->user->email)->send(new MerchantRejectionMail($merchant));
+            if ($merchant->user) {
+                $merchant->user->notify(new MerchantApplicationStatusNotification(
+                    $merchant->fresh(),
+                    'rejected'
+                ));
             }
 
             DB::commit();
-
-            return response()->json([
-                'message' => 'Merchant ditolak.',
-                'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
-            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('[AdminMerchant] Failed to reject merchant: ' . $e->getMessage());
@@ -498,6 +521,24 @@ class AdminMerchantController extends Controller
                 'message' => 'Gagal menolak merchant karena terjadi masalah saat pengiriman email ' . $e->getMessage(),
             ], 500);
         }
+
+        // WebPush adalah non-critical — jalankan di luar transaction
+        if ($merchant->user) {
+            try {
+                $webPushService->sendMerchantApplicationDecision(
+                    $merchant->user,
+                    $merchant->fresh(),
+                    'rejected'
+                );
+            } catch (\Throwable $e) {
+                Log::warning('[WebPush] reject sendMerchantApplicationDecision failed', ['merchant_id' => $merchant->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'message'  => 'Merchant ditolak.',
+            'merchant' => $merchant->fresh()->load(['segmentation', 'primaryAddress']),
+        ]);
     }
 
     /**
@@ -679,7 +720,6 @@ class AdminMerchantController extends Controller
             $merchant = Merchant::with([
                 'user',
                 'segmentation',
-                'paguyuban',
                 'primaryAddress.province',
                 'primaryAddress.city',
                 'primaryAddress.district',
@@ -727,7 +767,7 @@ class AdminMerchantController extends Controller
                     ->where('orders.created_at', '>=', now()->subDays(30))
                     ->selectRaw('
                         COUNT(DISTINCT orders.id) as total_orders,
-                        SUM(order_items.quantity * order_items.price) as total_revenue
+                        SUM(order_items.subtotal) as total_revenue
                     ')
                     ->first();
 
@@ -794,29 +834,34 @@ class AdminMerchantController extends Controller
      */
     public function showLogo(Request $request, Merchant $merchant)
     {
+        $size = $request->query('size', 'original');
         // Support signed URL for secure access
         if ($request->hasValidSignature()) {
-            return $this->streamMerchantLogo($merchant);
+            return $this->streamMerchantLogo($merchant, $size);
         }
 
         // Public access for now (you can add auth checks later)
-        return $this->streamMerchantLogo($merchant);
+        return $this->streamMerchantLogo($merchant, $size);
     }
 
     /**
      * Private method to stream merchant logo
      */
-    private function streamMerchantLogo(Merchant $merchant)
+    private function streamMerchantLogo(Merchant $merchant, string $size = 'original')
     {
         if (empty($merchant->logo_path)) {
             abort(404);
         }
 
         $disk = 'public';
-        $path = ltrim($merchant->logo_path, '/');
+        $originalPath = ltrim($merchant->logo_path, '/');
+        $path = app(ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath;
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
@@ -838,4 +883,40 @@ class AdminMerchantController extends Controller
             'Cache-Control' => 'public, max-age=31536000',
         ]);
     }
+
+    /**
+     * Change merchant status (Admin)
+     */
+    public function changeStatus(Request $request, $id)
+    {
+        $merchant = \App\Models\Merchant::findOrFail($id);
+
+        $validated = $request->validate([
+            'status' => 'required|in:pending,approved,rejected,suspended,archived',
+        ]);
+
+        $oldStatus = $merchant->status;
+        $newStatus = $validated['status'];
+
+        $merchant->update(['status' => $newStatus]);
+
+        // (Tokens deletion removed as it throws 500 without Sanctum DB)
+
+        \App\Models\AdminAction::create([
+            'admin_id'      => \Auth::id(),
+            'action_type'   => 'status_change',
+            'target_type'   => \App\Models\Merchant::class,
+            'target_id'     => $merchant->id,
+            'reason'        => $request->reason ?? 'Perubahan status manual oleh admin',
+            'status_before' => $oldStatus,
+            'status_after'  => $newStatus,
+        ]);
+
+        return response()->json([
+            'message' => 'Status merchant berhasil diubah',
+            'data'    => $merchant->fresh(),
+        ]);
+    }
+
 }
+

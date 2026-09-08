@@ -91,7 +91,8 @@ class HomeController extends Controller
                     $query->whereNotNull('latitude')
                         ->whereNotNull('longitude');
                 })
-                ->inRandomOrder();
+                ->orderByRaw('(products_count + jasas_count) DESC')
+                ->latest();
 
             if ($limit) {
                 $query->limit($limit);

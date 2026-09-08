@@ -7,7 +7,6 @@ use App\Models\User;
 use App\Models\Merchant;
 use App\Models\Product;
 use App\Models\Order;
-use App\Models\Paguyuban;
 use App\Models\ContentReport;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -120,10 +119,6 @@ class AdminDashboardController extends Controller
                     'current' => $this->safeCount(User::whereNotNull('email_verified_at')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(User::whereNotNull('email_verified_at')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
                 ],
-                'paguyubans' => [
-                    'current' => $this->safeCount(Paguyuban::where('is_active', true)->where('created_at', '>=', $startDate)),
-                    'previous' => $this->safeCount(Paguyuban::where('is_active', true)->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
-                ],
                 'products' => [
                     'current' => $this->safeCount(Product::where('status', 'published')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(Product::where('status', 'published')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
@@ -131,6 +126,10 @@ class AdminDashboardController extends Controller
                 'pending_reports' => [
                     'current' => $this->safeCount(ContentReport::where('status', 'pending')->where('created_at', '>=', $startDate)),
                     'previous' => $this->safeCount(ContentReport::where('status', 'pending')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
+                ],
+                'transactions' => [
+                    'current' => $this->safeCount(Order::where('status', 'completed')->where('created_at', '>=', $startDate)),
+                    'previous' => $this->safeCount(Order::where('status', 'completed')->whereBetween('created_at', [$previousStartDate, $previousEndDate])),
                 ],
             ];
 
@@ -151,11 +150,6 @@ class AdminDashboardController extends Controller
                 'previous' => null,
                 'growth' => null
             ],
-            'paguyubans' => [
-                'current' => $this->safeCount(Paguyuban::where('is_active', true)),
-                'previous' => null,
-                'growth' => null
-            ],
             'products' => [
                 'current' => $this->safeCount(Product::where('status', 'published')),
                 'previous' => null,
@@ -163,6 +157,11 @@ class AdminDashboardController extends Controller
             ],
             'pending_reports' => [
                 'current' => $this->safeCount(ContentReport::where('status', 'pending')),
+                'previous' => null,
+                'growth' => null
+            ],
+            'transactions' => [
+                'current' => $this->safeCount(Order::where('status', 'completed')),
                 'previous' => null,
                 'growth' => null
             ],
@@ -330,32 +329,23 @@ class AdminDashboardController extends Controller
     private function getRecentOrders(): array
     {
         try {
-            return DB::table('orders')
-                ->join('jasas', 'orders.jasa_id', '=', 'jasas.id')
-                ->select(
-                    'orders.id',
-                    'orders.nama',
-                    'orders.tel',
-                    'orders.tanggal',
-                    'orders.waktu',
-                    'orders.total',
-                    'jasas.id as jasa_id',
-                    'jasas.title as jasa_title'
-                )
-                ->latest('orders.created_at')
+            return \App\Models\Order::with(['merchant'])
+                ->latest('created_at')
                 ->limit(10)
                 ->get()
                 ->map(fn($order) => [
                     'id' => $order->id,
-                    'nama' => $order->nama,
-                    'tel' => $order->tel,
-                    'tanggal' => $order->tanggal,
-                    'waktu' => $order->waktu,
-                    'total' => (int) $order->total,
-                    'jasa' => [
-                        'id' => $order->jasa_id,
-                        'title' => $order->jasa_title,
+                    'order_code' => $order->order_code,
+                    'nama' => $order->user_name_snapshot ?? 'Customer',
+                    'tel' => $order->user_phone_snapshot ?? '-',
+                    'tanggal' => $order->created_at->format('Y-m-d'),
+                    'waktu' => $order->created_at->format('H:i:s'),
+                    'total' => (int) $order->gross_amount,
+                    'merchant' => [
+                        'id' => $order->merchant_id,
+                        'name' => $order->merchant ? $order->merchant->name : 'Unknown Merchant',
                     ],
+                    'status' => $order->status,
                 ])
                 ->toArray();
         } catch (\Exception $e) {
@@ -493,8 +483,8 @@ class AdminDashboardController extends Controller
             $weekEnd = $weekStart->copy()->endOfWeek()->min($endDate);
 
             try {
-                $orders = Order::whereBetween('created_at', [$weekStart, $weekEnd])->count();
-                $revenue = Order::whereBetween('created_at', [$weekStart, $weekEnd])->sum('total');
+                $orders = Order::whereBetween('created_at', [$weekStart, $weekEnd])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$weekStart, $weekEnd])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
@@ -525,8 +515,8 @@ class AdminDashboardController extends Controller
             $endDate = $startDate->copy()->endOfMonth();
 
             try {
-                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->count();
-                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->sum('total');
+                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
@@ -555,8 +545,8 @@ class AdminDashboardController extends Controller
             $endDate = $startDate->copy()->endOfMonth();
 
             try {
-                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->count();
-                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->sum('total');
+                $orders = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->count();
+                $revenue = Order::whereBetween('created_at', [$startDate, $endDate])->where('status', 'completed')->sum('gross_amount');
             } catch (\Exception $e) {
                 $orders = 0;
                 $revenue = 0;
