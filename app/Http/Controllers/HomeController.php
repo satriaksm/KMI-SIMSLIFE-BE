@@ -19,14 +19,9 @@ class HomeController extends Controller
     public function recommendedMerchants(Request $request)
     {
         try {
-            $limit = (int) $request->input('limit', 10);
-            
-            // Komposisi: 60% Top, 20% New, 20% Random
-            $topLimit = (int) ceil($limit * 0.6);
-            $newLimit = (int) round($limit * 0.2);
-            $randomLimit = $limit - $topLimit - $newLimit;
+            $limit = $request->input('limit', 10);
 
-            $baseQuery = Merchant::query()
+            $merchants = Merchant::query()
                 ->where('merchants.status', 'approved')
                 ->with(['segmentation', 'primaryAddress.village', 'primaryAddress.district', 'primaryAddress.city', 'primaryAddress.province'])
                 ->whereHas('primaryAddress', function ($query) {
@@ -42,14 +37,10 @@ class HomeController extends Controller
                     }
                 ])
                 ->inRandomOrder()
-                ->limit($randomLimitActual > 0 ? $randomLimitActual : 0)
-                ->get();
-
-            // Gabungkan hasil dan petakan koordinat
-            $merchants = $topMerchants
-                ->concat($newMerchants)
-                ->concat($randomMerchants)
+                ->limit($limit)
+                ->get()
                 ->map(function ($merchant) {
+                    // Append coordinates dari primaryAddress ke merchant object
                     $address = $merchant->primaryAddress;
                     if ($address) {
                         $merchant->latitude = $address->latitude;
