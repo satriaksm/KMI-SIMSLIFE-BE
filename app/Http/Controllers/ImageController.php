@@ -98,17 +98,35 @@ class ImageController extends Controller
     private function stream(Image $image, string $disk)
     {
         // Pastikan disk sesuai tipe image
+        
+        $size = request()->query('size', 'original');
+        $imageService = app(\App\Services\ImageOptimizationService::class);
+        $originalPath = ltrim((string) $image->image_path, '/');
+        $path = ltrim($imageService->resolveSizePath($originalPath, $size), '/');
 
-        if (!Storage::disk($disk)->exists($image->image_path)) {
-            abort(404);
+        if (!Storage::disk($disk)->exists($path)) {
+            $path = $originalPath;
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
-        $stream = Storage::disk($disk)->readStream($image->image_path);
+        $stream = Storage::disk($disk)->readStream($path);
+
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'svg' => 'image/svg+xml',
+            'webp' => 'image/webp',
+            'jpg', 'jpeg' => 'image/jpeg',
+            default => 'application/octet-stream',
+        };
 
         return response()->stream(function () use ($stream) {
             fpassthru($stream);
         }, 200, [
-            'Content-Type' => $image->mime_type ?? 'image/jpeg',
+            'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=31536000',
         ]);
     }

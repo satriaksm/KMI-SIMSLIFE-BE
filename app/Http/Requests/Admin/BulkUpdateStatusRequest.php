@@ -40,10 +40,9 @@ class BulkUpdateStatusRequest extends FormRequest
                 Rule::in(['active', 'declining', 'watchlist', 'suspended', 'inactive'])
             ],
             'reason' => [
-                'required',
+                'nullable',
                 'string',
                 'max:500',
-                'min:10'
             ],
         ];
     }
@@ -58,12 +57,10 @@ class BulkUpdateStatusRequest extends FormRequest
         return [
             'user_ids.required' => 'Pilih minimal 1 user.',
             'user_ids.min' => 'Pilih minimal 1 user.',
-            'user_ids.max' => 'Maksimal 100 user per operasi.',
+            'user_ids.max' => 'Maksimal 100 user sekaligus.',
             'user_ids.*.exists' => 'User tidak ditemukan.',
             'status.required' => 'Status wajib dipilih.',
             'status.in' => 'Status tidak valid.',
-            'reason.required' => 'Alasan perubahan status wajib diisi.',
-            'reason.min' => 'Alasan minimal 10 karakter.',
             'reason.max' => 'Alasan maksimal 500 karakter.',
         ];
     }

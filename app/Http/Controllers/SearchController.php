@@ -64,14 +64,14 @@ class SearchController extends Controller
             });
 
         if (!empty($data['q'])) {
-            $query->where(function ($q) use ($data) {
-                $q->where('products.name', 'like', "%{$data['q']}%")
-                    ->orWhereHas(
-                        'merchant',
-                        fn($m) =>
-                        $m->where('name', 'like', "%{$data['q']}%")
-                    );
+            $q = $data['q'];
+            $query->where(function ($qBuilder) use ($q) {
+                $qBuilder->where('products.name', 'like', "%{$q}%")
+                  ->orWhere('products.description', 'like', "%{$q}%");
             });
+            $quotedQ = DB::getPdo()->quote("%{$q}%");
+            $query->addSelect(DB::raw("(CASE WHEN products.name LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
+            $query->orderByDesc('relevance_score');
         }
 
         if (!empty($data['categories'])) {
@@ -94,19 +94,16 @@ class SearchController extends Controller
                 ->whereColumn('product_id', 'products.id'),
         ]);
 
-        if (isset($data['min_price'])) {
-            $query->whereRaw(
-                '(select MIN(price) from product_variants where product_id = products.id) >= ?',
-                [$data['min_price']]
-            );
+        if (isset($data['min_price']) || isset($data['max_price'])) {
+            $min = $data['min_price'] ?? 0;
+            $max = $data['max_price'] ?? PHP_INT_MAX;
+
+            $query->whereHas('variants', function ($q) use ($min, $max) {
+                $q->whereBetween('price', [$min, $max])
+                    ->where('stock', '>', 0);
+            });
         }
 
-        if (isset($data['max_price'])) {
-            $query->whereRaw(
-                '(select MAX(price) from product_variants where product_id = products.id) <= ?',
-                [$data['max_price']]
-            );
-        }
 
         $sort = $data['sort'] ?? 'latest';
 
@@ -239,6 +236,7 @@ class SearchController extends Controller
                 }
 
                 unset($product->coverImage);
+
                 return $product;
             })
             ->values();
@@ -265,7 +263,7 @@ class SearchController extends Controller
             // Normalize jasa price so it works with filters/sorting.
             // Priority: fixed_price -> base_price -> price. Treat 0 as NULL.
             // NOTE: Do NOT default to 0, otherwise missing prices sort as the cheapest.
-            $priceExpr = "COALESCE(NULLIF(jasas.fixed_price, 0), NULLIF(jasas.base_price, 0), NULLIF(jasas.price, 0))";
+            $priceExpr = "COALESCE(NULLIF(jasas.fixed_price, 0), NULLIF(jasas.base_price, 0))";
 
             $jasaQuery = Jasa::query()
                 ->select([
@@ -273,10 +271,8 @@ class SearchController extends Controller
                     'jasas.slug',
                     'jasas.merchant_id',
                     'jasas.title',
-                    'jasas.image',
                     'jasas.fixed_price',
                     'jasas.base_price',
-                    'jasas.price',
                     'jasas.created_at',
                 ])
                 ->with([
@@ -285,10 +281,7 @@ class SearchController extends Controller
                     'images:id,imageable_id,imageable_type,image_path,is_cover',
                 ])
                 ->where(function ($q) {
-                    $q->whereIn('status', ['published', 'active'])
-                        ->orWhere(function ($sub) {
-                            $sub->whereNull('status')->where('is_active', true);
-                        });
+                    $q->whereIn('status', ['published', 'active']);
                 })
                 ->whereHas('merchant', function ($q) {
                     $q->where('status', 'approved');
@@ -298,8 +291,11 @@ class SearchController extends Controller
                 $q = $data['q'];
                 $jasaQuery->where(function ($sub) use ($q) {
                     $sub->where('jasas.title', 'like', "%{$q}%")
-                        ->orWhereHas('merchant', fn($m) => $m->where('name', 'like', "%{$q}%"));
+                        ->orWhere('jasas.description', 'like', "%{$q}%");
                 });
+                $quotedQ = DB::getPdo()->quote("%{$q}%");
+                $jasaQuery->addSelect(DB::raw("(CASE WHEN jasas.title LIKE {$quotedQ} THEN 2 ELSE 1 END) as relevance_score"));
+                $jasaQuery->orderByDesc('relevance_score');
             }
 
             if (!empty($data['categories'])) {
@@ -470,6 +466,7 @@ class SearchController extends Controller
                             'src_url' => route('images.show', ['image' => $cover->id]),
                         ]
                         : null;
+
                     return $payload;
                 })
                 ->values();
@@ -482,16 +479,21 @@ class SearchController extends Controller
         }
 
         return ApiResponse::success(
-            $items,
+            [
+                'products' => $items,
+                'jasas' => $jasasItems,
+            ],
             'Products retrieved successfully.',
             200,
             [
-                'current_page' => $result->currentPage(),
-                'last_page' => $result->lastPage(),
-                'total' => $result->total(),
-                // Additional results
-                'jasas' => $jasasItems,
+                'products_meta' => [
+                    'current_page' => $result->currentPage(),
+                    'last_page' => $result->lastPage(),
+                    'total' => $result->total(),
+                ],
                 'jasas_meta' => $jasasMeta,
+                // Additional results
+
             ]
         );
     }
@@ -504,17 +506,11 @@ class SearchController extends Controller
             'segments' => ['nullable', 'array'],
             'segments.*' => ['string'],
 
-            'categories' => ['nullable', 'array'],
-            'categories.*' => ['string'],
-
-            'min_price' => ['nullable', 'numeric', 'min:0'],
-            'max_price' => ['nullable', 'numeric', 'min:0'],
-
-            'sort' => ['nullable', 'in:latest,oldest,most_products,nearest'],
+            'sort' => ['nullable', 'in:latest,oldest,nearest'],
             // Optional tiebreaker when sort=nearest
-            'secondary_sort' => ['nullable', 'in:latest,oldest,most_products', 'prohibited_unless:sort,nearest'],
+            'secondary_sort' => ['nullable', 'in:latest,oldest', 'prohibited_unless:sort,nearest'],
             // Optional third-level tiebreaker when sort=nearest
-            'tertiary_sort' => ['nullable', 'in:latest,oldest,most_products', 'prohibited_unless:sort,nearest'],
+            'tertiary_sort' => ['nullable', 'in:latest,oldest', 'prohibited_unless:sort,nearest'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             'is_open' => ['nullable', 'boolean'],
 
@@ -552,16 +548,20 @@ class SearchController extends Controller
                         });
                 },
                 'jasas as jasas_count' => function ($q) {
-                    // Count jasas where is_active=true (this covers newly created jasas
-                    // that have default status='draft' but is_active=true, as well as
-                    // jasas with status='active'/'published' synced to is_active=true).
-                    $q->where('is_active', true);
+
+                    $q->where('status', 'published');
                 },
             ]);
 
 
         if (!empty($data['q'])) {
-            $query->where('merchants.name', 'like', "%{$data['q']}%");
+            $q = $data['q'];
+            $query->where('merchants.name', 'like', "%{$q}%");
+            
+            // Relevance score can just be 1 since we only search by name,
+            // or we keep it 2 for consistency with the frontend.
+            $query->addSelect(DB::raw("2 as relevance_score"));
+            $query->orderByDesc('relevance_score');
         }
 
         if (!empty($data['segments'])) {
@@ -652,7 +652,6 @@ class SearchController extends Controller
                 match ($s) {
                     'latest' => $query->orderByDesc('merchants.created_at'),
                     'oldest' => $query->orderBy('merchants.created_at'),
-                    'most_products' => $query->orderByRaw('(products_count + jasas_count) DESC'),
                     default => null,
                 };
             }
@@ -664,8 +663,6 @@ class SearchController extends Controller
             match ($sort) {
                 'latest' => $query->orderByDesc('merchants.created_at'),
                 'oldest' => $query->orderBy('merchants.created_at'),
-                'most_products' => $query
-                    ->orderByRaw('(products_count + jasas_count) DESC'),
                 default => null,
             };
         }

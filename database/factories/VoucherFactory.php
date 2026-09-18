@@ -14,6 +14,7 @@ class VoucherFactory extends Factory
         return [
             'merchant_id' => null,
             'event_id' => null,
+            'voucher_name' => $this->faker->words(3, true),
             'voucher_code' => strtoupper(Str::random(8)),
             'voucher_status' => 'active',
             'voucher_type' => $this->faker->randomElement(['percent', 'fixed']),

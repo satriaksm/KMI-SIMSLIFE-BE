@@ -206,6 +206,7 @@ class AuthController extends Controller
             'email' => $user->email,
             'phone' => $user->phone,
             'profile_picture' => $profilePictureUrl,
+            'profile_picture_urls' => $user->profile_picture_urls,
             'roles' => $user->roles->pluck('name'),
             'merchants' => $user->merchants,
             'is_super_admin' => (bool) $user->is_super_admin,

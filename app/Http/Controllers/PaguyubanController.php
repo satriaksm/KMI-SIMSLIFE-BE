@@ -51,8 +51,13 @@ class PaguyubanController extends Controller
         $data = $validator->validated();
 
         if ($request->hasFile('image')) {
-            $data['image_path'] = $request->file('image')
-                ->store('paguyubans', 'public');
+            $imageService = app(\App\Services\ImageOptimizationService::class);
+            $data['image_path'] = $imageService->processAndStore(
+                $request->file('image'),
+                'paguyubans',
+                'public',
+                false
+            );
         }
 
         $paguyuban = Paguyuban::create($data);
@@ -83,12 +88,17 @@ class PaguyubanController extends Controller
         $data = $validator->validated();
 
         if ($request->hasFile('image')) {
+            $imageService = app(\App\Services\ImageOptimizationService::class);
             // Delete old image
             if ($paguyuban->image_path) {
-                Storage::disk('public')->delete($paguyuban->image_path);
+                $imageService->deleteImages($paguyuban->image_path, 'public');
             }
-            $data['image_path'] = $request->file('image')
-                ->store('paguyubans', 'public');
+            $data['image_path'] = $imageService->processAndStore(
+                $request->file('image'),
+                'paguyubans',
+                'public',
+                false
+            );
         }
 
         $paguyuban->update($data);
@@ -112,7 +122,7 @@ class PaguyubanController extends Controller
 
         // Delete image
         if ($paguyuban->image_path) {
-            Storage::disk('public')->delete($paguyuban->image_path);
+            app(\App\Services\ImageOptimizationService::class)->deleteImages($paguyuban->image_path, 'public');
         }
 
         $paguyuban->delete();
