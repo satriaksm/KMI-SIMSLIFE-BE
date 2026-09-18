@@ -29,10 +29,9 @@ class ChangeUserStatusRequest extends FormRequest
                 Rule::in(['active', 'declining', 'watchlist', 'suspended', 'inactive'])
             ],
             'reason' => [
-                'required',
+                'nullable',
                 'string',
                 'max:500',
-                'min:10'
             ],
         ];
     }
@@ -47,8 +46,6 @@ class ChangeUserStatusRequest extends FormRequest
         return [
             'status.required' => 'Status wajib dipilih.',
             'status.in' => 'Status tidak valid.',
-            'reason.required' => 'Alasan perubahan status wajib diisi.',
-            'reason.min' => 'Alasan minimal 10 karakter.',
             'reason.max' => 'Alasan maksimal 500 karakter.',
         ];
     }
