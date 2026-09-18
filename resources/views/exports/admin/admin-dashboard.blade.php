@@ -340,16 +340,6 @@
                 </div>
 
                 <div class="summary-item">
-                    <span class="summary-number">{{ number_format($data['overview']['paguyubans']['current']) }}</span>
-                    <span class="summary-label">Total Paguyuban</span>
-                    @if($data['overview']['paguyubans']['growth'] !== null)
-                        <div class="summary-growth {{ $data['overview']['paguyubans']['growth'] >= 0 ? 'positive' : 'negative' }}">
-                            {{ $data['overview']['paguyubans']['growth'] >= 0 ? '▲' : '▼' }} {{ abs($data['overview']['paguyubans']['growth']) }}%
-                        </div>
-                    @endif
-                </div>
-
-                <div class="summary-item">
                     <span class="summary-number">{{ number_format($data['overview']['products']['current']) }}</span>
                     <span class="summary-label">Total Products</span>
                     @if($data['overview']['products']['growth'] !== null)
