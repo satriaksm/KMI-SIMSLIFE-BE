@@ -3,9 +3,10 @@
 namespace Database\Factories;
 
 use App\Models\Product;
+use App\Models\Category;
 use App\Models\Merchant;
-use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
+use Illuminate\Database\Eloquent\Factories\Factory;
 
 class ProductFactory extends Factory
 {

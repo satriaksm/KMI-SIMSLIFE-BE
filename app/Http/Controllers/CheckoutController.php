@@ -22,8 +22,8 @@ class CheckoutController extends Controller
         $data = $request->validate([
             'merchant_slug' => 'required|string',
             'mode' => 'required|in:product,cart',
-            'shipping_method' => 'required|in:pickup,delivery',
-            'payment_method' => 'required|in:COD,QRIS',
+            'shipping_method' => 'nullable|string|max:50',
+            'payment_method' => 'nullable|string|max:50',
             'customer_name' => 'required|string|max:255',
             'customer_phone' => 'required|string|max:20',
             'delivery_address' => 'nullable|string',
@@ -56,8 +56,8 @@ class CheckoutController extends Controller
         }
 
         $mode = $data['mode'];
-        $shippingMethod = $data['shipping_method'];
-        $paymentMethod = $data['payment_method'];
+        $shippingMethod = $data['shipping_method'] ?? 'WhatsApp';
+        $paymentMethod = $data['payment_method'] ?? 'WhatsApp';
         $voucherCode = trim((string) ($data['voucher_code'] ?? ''));
         $shippingFee = (int) ($data['shipping_fee'] ?? 0);
         $cartItemIds = collect($data['cart_item_ids'] ?? [])
@@ -219,14 +219,37 @@ class CheckoutController extends Controller
                         $fail('Voucher tidak valid atau sudah tidak aktif', 422);
                     }
 
-                    if ($grossSubtotal < (int) $voucher->min_purchase_amount) {
-                        $fail('Nilai belanja belum memenuhi minimum voucher', 422);
+                    // Check if voucher has restricted products
+                    $isRestricted = $voucher->restrictedProducts()->exists();
+                    $eligibleSubtotal = 0;
+
+                    if ($isRestricted) {
+                        $allowedProductIds = $voucher->restrictedProducts()->pluck('products.id')->toArray();
+                        $eligibleItems = collect($orderItems)->filter(function ($item) use ($allowedProductIds) {
+                            return in_array((int) $item['product_id'], $allowedProductIds, true);
+                        });
+
+                        if ($eligibleItems->isEmpty()) {
+                            $fail('Voucher ini hanya berlaku untuk produk tertentu yang tidak ada dalam pesanan Anda', 422);
+                        }
+
+                        $eligibleSubtotal = (int) $eligibleItems->sum('subtotal');
+
+                        if ($eligibleSubtotal < (int) $voucher->min_purchase_amount) {
+                            $fail('Nilai belanja produk yang memenuhi syarat voucher belum memenuhi minimum Rp ' . number_format((float) $voucher->min_purchase_amount, 0, ',', '.'), 422);
+                        }
+                    } else {
+                        $eligibleSubtotal = $grossSubtotal;
+
+                        if ($grossSubtotal < (int) $voucher->min_purchase_amount) {
+                            $fail('Nilai belanja belum memenuhi minimum voucher', 422);
+                        }
                     }
 
                     $totalUsed = VoucherUsage::query()
                         ->where('voucher_id', $voucher->id)
+                        ->completed()
                         ->lockForUpdate()
-                        ->get()
                         ->count();
 
                     if ($voucher->usage_limit !== null && $totalUsed >= (int) $voucher->usage_limit) {
@@ -236,8 +259,8 @@ class CheckoutController extends Controller
                     $userUsed = VoucherUsage::query()
                         ->where('voucher_id', $voucher->id)
                         ->where('user_id', $user->id)
+                        ->completed()
                         ->lockForUpdate()
-                        ->get()
                         ->count();
 
                     if (
@@ -248,9 +271,9 @@ class CheckoutController extends Controller
                     }
 
                     if ($voucher->voucher_type === 'fixed') {
-                        $discountAmount = min((int) $voucher->value, $grossSubtotal);
+                        $discountAmount = min((int) $voucher->value, $eligibleSubtotal);
                     } elseif ($voucher->voucher_type === 'percent') {
-                        $discountAmount = (int) floor(($grossSubtotal * (float) $voucher->value) / 100);
+                        $discountAmount = (int) floor(($eligibleSubtotal * (float) $voucher->value) / 100);
 
                         if ($voucher->max_discount_amount) {
                             $discountAmount = min($discountAmount, (int) $voucher->max_discount_amount);
@@ -261,9 +284,9 @@ class CheckoutController extends Controller
                 $finalTotal = max(0, $grossSubtotal + $shippingFee - $discountAmount);
                 $pickupAddress = trim((string) ($merchant->address ?? ''));
                 $deliveryAddress = trim((string) ($data['delivery_address'] ?? ''));
-                $orderAddress = $shippingMethod === 'delivery'
-                    ? ($deliveryAddress !== '' ? $deliveryAddress : $pickupAddress)
-                    : ($pickupAddress !== '' ? $pickupAddress : $deliveryAddress);
+                $orderAddress = $deliveryAddress !== '' 
+                    ? $deliveryAddress 
+                    : ($pickupAddress !== '' ? $pickupAddress : 'Konfirmasi via WhatsApp');
 
                 $order = Order::create([
                     'user_id' => $user->id,
@@ -278,7 +301,12 @@ class CheckoutController extends Controller
                     'tanggal' => $now->toDateString(),
                     'waktu' => $now->format('H:i'),
                     'metode_pembayaran' => $paymentMethod,
+                    'payment_method' => $paymentMethod,
+                    'delivery_type' => $shippingMethod,
                     'promo_code' => $voucher?->voucher_code,
+                    'subtotal' => $grossSubtotal,
+                    'discount_total' => $discountAmount,
+                    'shipping_fee' => $shippingFee,
                     'total' => $finalTotal,
                     'status' => 'pending',
                 ]);

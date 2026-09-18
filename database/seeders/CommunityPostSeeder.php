@@ -35,68 +35,69 @@ class CommunityPostSeeder extends Seeder
             $query->where('name', 'admin');
         })->first();
 
-        $this->command->info('Creating community posts...');
+        $this->command->info('Creating community posts without duplicates...');
 
-        $this->command->info('- Creating popular posts (10)...');
-        $customers->random(min(5, $customers->count()))->each(function ($user) {
-            CommunityPost::factory()
-                ->count(2)
-                ->published()
-                ->popular()
-                ->postFactory()
-                ->create(['user_id' => $user->id])
-                ->each(function ($post) {
-                    $this->createImagesForPost($post, rand(1, 3));
-                });
-        });
+        $topics = [
+            [
+                'title' => 'Cara daftar kur untuk UMKM?',
+                'content' => 'Halo bapak/ibu, saya baru mulai jualan, kira-kira kalau mau daftar KUR persyaratannya apa saja ya? Apakah butuh jaminan? Terimakasih.',
+            ],
+            [
+                'title' => 'Trik foto produk makanan dengan HP',
+                'content' => 'Cuma mau share, ternyata pakai pencahayaan alami atau ring light murah aja udah cukup banget buat bikin foto produk jualan makin menarik. Hasilnya beda jauh loh! Jangan lupa diedit dikit brightness-nya.',
+            ],
+            [
+                'title' => 'Promo akhir bulan untuk pelanggan setia',
+                'content' => 'Tanya dong, strategi promo akhir bulan yang paling efektif buat naikin loyalitas pelanggan itu mending diskon persenan atau beli 1 gratis 1 ya?',
+            ],
+            [
+                'title' => 'Dimana supplier kardus murah di Banyuanyar?',
+                'content' => 'Bagi teman-teman UMKM yang kesulitan cari packaging murah, coba cek grosir di dekat alun-alun, mereka lagi diskon besar-besaran. Ada rekomendasi lain nggak?',
+            ],
+            [
+                'title' => 'Berbagi pengalaman pertama jualan online',
+                'content' => 'Saya ingin sedikit berbagi cerita tentang bagaimana saya bisa tembus omset 10 juta pertama di bulan ke-3. Intinya konsisten posting, cepat balas chat, dan jangan pelit ramah ke pelanggan.',
+            ],
+            [
+                'title' => 'Rekomendasi jasa kurir yang cepat untuk makanan',
+                'content' => 'Buat yang punya usaha kuliner, kalian mending pakai jasa kirim instan ojol biasa atau daftar jadi merchant resminya sih? Share pengalamannya dong, kadang suka bingung soal fee aplikasinya.',
+            ],
+            [
+                'title' => 'Ada yang pernah coba iklan di Instagram?',
+                'content' => 'Lagi mikir mau bakar uang dikit buat IG Ads nih. Kira-kira budget 50rb per hari efektif nggak ya buat naikin penjualan makanan ringan? Mohon pencerahannya para suhu.',
+            ],
+            [
+                'title' => 'Bagaimana cara urus izin PIRT?',
+                'content' => 'Halo kawan-kawan, saya jualan keripik pisang dan sambal kemasan. Ingin urus PIRT supaya bisa masuk ke minimarket, langkah pertamanya apa saja ya? Apakah ribet?',
+            ],
+            [
+                'title' => 'Pentingnya pencatatan keuangan untuk UMKM',
+                'content' => 'Sering kali jualan laris tapi pas dicek kok uangnya nggak kumpul ya? Ternyata kecampur sama uang pribadi. Buat teman-teman, tolong banget biasakan pisahkan rekening usaha dan pribadi!',
+            ],
+            [
+                'title' => 'Rekomendasi kemasan eco-friendly',
+                'content' => 'Sekarang banyak pelanggan yang peduli lingkungan. Ada yang tahu vendor kemasan dari bahan cassava (singkong) atau kertas daur ulang yang harganya masih masuk akal?',
+            ],
+        ];
 
-        //publisheds
-        $this->command->info('Creating published posts (30)...');
-        $customers->each(function ($user) {
-            $postCount = rand(2, 8);
-            CommunityPost::factory()
-                ->count($postCount)
-                ->published()
-                ->postFactory()
-                ->create(['user_id' => $user->id])
-                ->each(function ($post) {
-                    // Random: some with images, some without
-                    if (rand(1, 100) <= 70) { // 70% posts have images
-                        $imageCount = rand(0, 5);
-                        if ($imageCount > 0) {
-                            $this->createImagesForPost($post, $imageCount);
-                        }
-                    }
-                });
-        });
+        foreach ($topics as $index => $topic) {
+            $status = 'published';
+            if ($index === 8) $status = 'draft';
+            if ($index === 9) $status = 'archived';
 
-        // drafts
-        $this->command->info('Creating draft posts (5)...');
-        $customers->random(min(3, $customers->count()))->each(function ($user) {
-            CommunityPost::factory()
-                ->count(rand(1, 2))
-                ->draft()
-                ->postFactory()
-                ->create(['user_id' => $user->id])
-                ->each(function ($post) {
-                    if (rand(1, 100) <= 50) {
-                        $this->createImagesForPost($post, rand(1, 3));
-                    }
-                });
-        });
+            $isPopular = ($index < 3);
 
-        // admins posts
-        if ($admin) {
-            $this->command->info('Creating admin announcement posts (3)...');
-            CommunityPost::factory()
-                ->count(3)
-                ->published()
-                ->postFactory()
-                ->create(['user_id' => $admin->id])
-                ->each(function ($post) {
-                    $this->createImagesForPost($post, rand(1, 2));
-                });
+            CommunityPost::create([
+                'user_id' => $customers->random()->id,
+                'post_title' => $topic['title'],
+                'post_content' => $topic['content'],
+                'post_slug' => Str::slug($topic['title']) . '-' . Str::random(5),
+                'post_status' => $status,
+                'views_count' => $isPopular ? rand(500, 5000) : rand(10, 200),
+            ]);
         }
+
+
 
         $totalPosts = CommunityPost::count();
         $totalImages = CommunityPostImage::count();

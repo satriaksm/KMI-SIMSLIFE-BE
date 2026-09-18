@@ -25,6 +25,7 @@ class Merchant extends Model
         'name',
         'slug',
         'phone',
+        'NPWP',
         'description',
         'logo_path',
         'cover_path',
@@ -42,7 +43,7 @@ class Merchant extends Model
         'operational_hours' => 'array',
     ];
 
-    protected $appends = ['logo_url', 'banner_url', 'is_open_now', 'address', 'alamat'];
+    protected $appends = ['logo_url', 'logo_urls', 'banner_url', 'banner_urls', 'is_open_now', 'address', 'alamat'];
 
     protected static function boot()
     {
@@ -190,6 +191,20 @@ class Merchant extends Model
         ]);
     }
 
+    public function getLogoUrlsAttribute(): ?array
+    {
+        if (empty($this->logo_path)) {
+            return null;
+        }
+
+        $v = basename((string) $this->logo_path);
+        return [
+            'original' => route('merchant_profile_pictures.show', ['merchant' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('merchant_profile_pictures.show', ['merchant' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('merchant_profile_pictures.show', ['merchant' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
+    }
+
     // Accessor untuk Banner/Cover URL
     public function getBannerUrlAttribute()
     {
@@ -202,6 +217,20 @@ class Merchant extends Model
             // Query param for cache-busting (no extra path segment)
             'v' => basename((string) $this->cover_path),
         ]);
+    }
+
+    public function getBannerUrlsAttribute(): ?array
+    {
+        if (empty($this->cover_path)) {
+            return null;
+        }
+
+        $v = basename((string) $this->cover_path);
+        return [
+            'original' => route('merchant_banner.show', ['merchant' => $this->id, 'size' => 'original', 'v' => $v]),
+            'medium' => route('merchant_banner.show', ['merchant' => $this->id, 'size' => 'medium', 'v' => $v]),
+            'thumb' => route('merchant_banner.show', ['merchant' => $this->id, 'size' => 'thumb', 'v' => $v]),
+        ];
     }
 
     public function getIsOpenNowAttribute(): bool

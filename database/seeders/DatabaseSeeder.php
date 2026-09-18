@@ -8,22 +8,29 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        $sqlPath = base_path('wilayah-data.sql');
+        if (file_exists($sqlPath)) {
+            $this->command->info('Mengimpor data wilayah dari wilayah-data.sql...');
+            \Illuminate\Support\Facades\DB::unprepared(file_get_contents($sqlPath));
+            $this->command->info('Data wilayah berhasil diimpor.');
+        } else {
+            $this->command->warn('File wilayah-data.sql tidak ditemukan.');
+        }
+
         $this->call([
-            MasterDataSeeder::class,
             CategorySeeder::class,
             RoleSeeder::class,
-            UserSeeder::class,
             SegmentationSeeder::class,
+            ReportReasonSeeder::class,
+
+            UserSeeder::class,
             MerchantSeeder::class,
-            JasaSeeder::class,
-            ProductSeeder::class,
             VoucherSeeder::class,
-            PaguyubanSeeder::class,
+            // JasaSeeder::class,
+            ProductSeeder::class,
             CommunityPostSeeder::class,
             PostCommentSeeder::class,
-            ReportReasonSeeder::class,
-            ContentReportSeeder::class,
-           // AddressSeeder::class,
+            // ContentReportSeeder::class,
             EventSeeder::class,
         ]);
     }

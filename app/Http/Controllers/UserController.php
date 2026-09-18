@@ -53,7 +53,7 @@ class UserController
         $rules = [
             'name' => 'sometimes|string|max:255',
             'phone' => 'sometimes|string|max:20',
-            'nik' => 'sometimes|nullable|string|max:20',
+            'nik' => 'sometimes|nullable|string|max:20|unique:users,nik,' . $user->id,
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'profile_picture' => 'sometimes|image|mimes:jpeg,png,jpg,gif,svg|max:5048',
 
@@ -88,11 +88,12 @@ class UserController
                     'size' => $file->getSize(),
                 ]);
 
+                $imageService = app(\App\Services\ImageOptimizationService::class);
                 // Delete old picture if it exists
                 if ($user->profile_picture_path) {
-                    Storage::disk('public')->delete($user->profile_picture_path);
+                    $imageService->deleteImages($user->profile_picture_path, 'public');
                 }
-                $path = $file->store('profile_pictures', 'public');
+                $path = $imageService->processAndStore($file, 'profile_pictures', 'public', true);
                 $user->profile_picture_path = $path;
             }
 
@@ -219,14 +220,15 @@ class UserController
 
     public function profilePictureShow(Request $request, User $user)
     {
+        $size = $request->query('size', 'original');
         // Signed URL is supported (mirrors Product Image access pattern)
         if ($request->hasValidSignature()) {
-            return $this->streamUserProfilePicture($user);
+            return $this->streamUserProfilePicture($user, $size);
         }
 
         // For now, profile pictures are treated as public avatars.
         // If you want to restrict this later, add auth/ownership checks here.
-        return $this->streamUserProfilePicture($user);
+        return $this->streamUserProfilePicture($user, $size);
     }
 
     /**
@@ -275,17 +277,22 @@ class UserController
         }
     }
 
-    private function streamUserProfilePicture(User $user)
+  private function streamUserProfilePicture(User $user, string $size = 'original')
     {
         if (empty($user->profile_picture_path)) {
             abort(404);
         }
 
         $disk = 'public';
-        $path = ltrim($user->profile_picture_path, '/');
+        $originalPath = ltrim($user->profile_picture_path, '/');
+        
+        $path = app(\App\Services\ImageOptimizationService::class)->resolveSizePath($originalPath, $size);
 
         if (!Storage::disk($disk)->exists($path)) {
-            abort(404);
+            $path = $originalPath; // Fallback to original
+            if (!Storage::disk($disk)->exists($path)) {
+                abort(404);
+            }
         }
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
